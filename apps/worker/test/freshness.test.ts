@@ -3,64 +3,46 @@ import { FRESH_LAUNCH_WINDOW_BLOCKS, checkTokenFreshness } from '../src/watcher/
 
 const TOKEN = '0x1111111111111111111111111111111111111111';
 
-function fakeBlockscout(opts: {
-  creationTxHash?: string | null;
-  creationBlock?: number | null;
-  throwOnAddress?: boolean;
-  throwOnTx?: boolean;
-}) {
+function fakeClient(opts: { codeAtCheckBlock?: `0x${string}` | undefined; throws?: boolean }) {
   return {
-    getAddress: async () => {
-      if (opts.throwOnAddress) throw new Error('blockscout down');
-      return { hash: TOKEN, is_contract: true, creation_transaction_hash: opts.creationTxHash ?? null };
-    },
-    getTransaction: async () => {
-      if (opts.throwOnTx) throw new Error('blockscout down');
-      return { hash: 'x', block_number: opts.creationBlock ?? null, from: { hash: '0x0' }, to: null };
+    getCode: async () => {
+      if (opts.throws) throw new Error('missing trie node');
+      return opts.codeAtCheckBlock;
     },
   };
 }
 
 describe('checkTokenFreshness', () => {
-  it('is fresh when the token was created at/near the pool block', async () => {
-    const bs = fakeBlockscout({ creationTxHash: '0xabc', creationBlock: 1000 });
-    const r = await checkTokenFreshness(bs, TOKEN, 1002n);
+  it('is fresh when the token has no code at the window start (just deployed)', async () => {
+    const client = fakeClient({ codeAtCheckBlock: undefined });
+    const r = await checkTokenFreshness(client, TOKEN, 100_000n);
     expect(r.reason).toBe('fresh');
     expect(r.isFreshLaunch).toBe(true);
-    expect(r.ageBlocksAtPool).toBe(2n);
+    expect(r.checkedAtBlock).toBe(100_000n - FRESH_LAUNCH_WINDOW_BLOCKS);
   });
 
-  it('is preexisting when the token predates the pool by more than the fresh window', async () => {
-    const bs = fakeBlockscout({ creationTxHash: '0xabc', creationBlock: 1000 });
-    const poolBlock = 1000n + FRESH_LAUNCH_WINDOW_BLOCKS + 1n;
-    const r = await checkTokenFreshness(bs, TOKEN, poolBlock);
+  it('is fresh when getCode returns bare "0x"', async () => {
+    const client = fakeClient({ codeAtCheckBlock: '0x' });
+    const r = await checkTokenFreshness(client, TOKEN, 100_000n);
+    expect(r.reason).toBe('fresh');
+  });
+
+  it('is preexisting when the token already had code at the window start', async () => {
+    const client = fakeClient({ codeAtCheckBlock: '0x6080604052' });
+    const r = await checkTokenFreshness(client, TOKEN, 100_000n);
     expect(r.reason).toBe('preexisting');
     expect(r.isFreshLaunch).toBe(false);
   });
 
-  it('is right at the window boundary: exactly the window is still fresh', async () => {
-    const bs = fakeBlockscout({ creationTxHash: '0xabc', creationBlock: 1000 });
-    const poolBlock = 1000n + FRESH_LAUNCH_WINDOW_BLOCKS;
-    const r = await checkTokenFreshness(bs, TOKEN, poolBlock);
-    expect(r.reason).toBe('fresh');
+  it('checks near block 0 when the pool is close to genesis', async () => {
+    const client = fakeClient({ codeAtCheckBlock: undefined });
+    const r = await checkTokenFreshness(client, TOKEN, 10n);
+    expect(r.checkedAtBlock).toBe(0n);
   });
 
-  it('is inconclusive (and defaults fresh) with no creation tx on record', async () => {
-    const bs = fakeBlockscout({ creationTxHash: null });
-    const r = await checkTokenFreshness(bs, TOKEN, 1000n);
-    expect(r.reason).toBe('inconclusive');
-    expect(r.isFreshLaunch).toBe(true);
-  });
-
-  it('is inconclusive when the creation tx has no block yet', async () => {
-    const bs = fakeBlockscout({ creationTxHash: '0xabc', creationBlock: null });
-    const r = await checkTokenFreshness(bs, TOKEN, 1000n);
-    expect(r.reason).toBe('inconclusive');
-  });
-
-  it('is inconclusive when Blockscout errors', async () => {
-    const bs = fakeBlockscout({ throwOnAddress: true });
-    const r = await checkTokenFreshness(bs, TOKEN, 1000n);
+  it('is inconclusive (and defaults fresh) when the RPC can\'t answer for that block', async () => {
+    const client = fakeClient({ throws: true });
+    const r = await checkTokenFreshness(client, TOKEN, 100_000n);
     expect(r.reason).toBe('inconclusive');
     expect(r.isFreshLaunch).toBe(true);
   });

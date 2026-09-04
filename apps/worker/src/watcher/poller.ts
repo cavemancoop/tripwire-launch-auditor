@@ -1,7 +1,6 @@
 import { getChainConfig } from '@launch-auditor/chain';
 import type { PublicClient } from 'viem';
 import { loadEnv } from '../env';
-import { blockscout } from './blockscoutClient';
 import { POOLS_STREAM, getCursor, setCursor } from './cursor';
 import { detectPools, type DetectedPool } from './detect';
 import { ingestPool } from './ingest';
@@ -75,7 +74,6 @@ export async function pollOnce(
         client,
         chainId,
         quotaPerCreator24h: env.quotaPerCreator24h,
-        blockscout: blockscout(),
       });
       if (id) launchesIndexed += 1;
     } catch (err) {

@@ -5,7 +5,7 @@ import { getQueues, T10_DELAY_MS } from '../queues';
 import { classifyPair } from './classify';
 import type { DetectedPool } from './detect';
 import { computeIndexFeatures } from './features';
-import { checkTokenFreshness, type FreshnessBlockscout } from './freshness';
+import { checkTokenFreshness } from './freshness';
 import { creatorQuotaExceeded } from './quota';
 import { withRetry } from './retry';
 
@@ -13,7 +13,6 @@ export interface IngestDeps {
   client: PublicClient;
   chainId: number;
   quotaPerCreator24h: number;
-  blockscout: FreshnessBlockscout;
   /** override the T+10m enqueue (tests) */
   enqueueT10?: (launchId: string) => Promise<void>;
 }
@@ -49,12 +48,12 @@ export async function ingestPool(
   // A new pool isn't the same thing as a new token launch: two long-established
   // assets (e.g. a tokenized stock / USDG pair) can get a fresh pool. Only index
   // this as a launch if the token side was actually just deployed.
-  const freshness = await checkTokenFreshness(deps.blockscout, token, blockNumber);
+  const freshness = await checkTokenFreshness(client, token as Hex, blockNumber);
   if (!freshness.isFreshLaunch) {
     // eslint-disable-next-line no-console
     console.log(
       `[watcher] skipping ${token} at block ${blockNumber}: not a new-token launch ` +
-        `(existed ${freshness.ageBlocksAtPool} blocks already, tx ${txHash})`,
+        `(had code by block ${freshness.checkedAtBlock}, tx ${txHash})`,
     );
     return null;
   }
@@ -119,14 +118,11 @@ export async function ingestPool(
               viaCandidate: attribution.viaCandidate,
             },
             pairClassification: { token, quote, confident },
-            // bigints aren't valid JSON — narrow to numbers for storage
+            // bigints aren't valid JSON — narrow to a number for storage
             tokenFreshness: {
               isFreshLaunch: freshness.isFreshLaunch,
               reason: freshness.reason,
-              tokenCreationBlock:
-                freshness.tokenCreationBlock !== null ? Number(freshness.tokenCreationBlock) : null,
-              ageBlocksAtPool:
-                freshness.ageBlocksAtPool !== null ? Number(freshness.ageBlocksAtPool) : null,
+              checkedAtBlock: Number(freshness.checkedAtBlock),
             },
             creatorDevbuyPct: { launchTx: txHash },
           },

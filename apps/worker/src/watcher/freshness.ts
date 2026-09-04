@@ -1,19 +1,19 @@
-import type { BlockscoutClient } from '@launch-auditor/chain';
+import type { Address, PublicClient } from 'viem';
 
 /**
- * A fresh Uniswap pool is not the same thing as a new token launch: someone can
- * create a brand-new pool for two assets that have both existed for months
- * (e.g. a tokenized-stock / USDG pair getting a new fee tier). Spec §0 is about
- * *new token launches* — so before indexing a detected pool as a launch, check
- * whether its classified "token" side was actually just deployed.
+ * A fresh Uniswap pool is not the same thing as a new token launch: someone
+ * can create a brand-new pool for two assets that have both existed for
+ * months (e.g. a tokenized-stock / USDG pair getting a new fee tier). Before
+ * indexing a detected pool as a launch, check whether its "token" side
+ * already had code well before the pool was created — if so, it's not new.
  *
- * Method: Blockscout already indexes each contract's creation tx regardless of
- * RPC node pruning (staying inside the index lane's RPC+Blockscout-only rule,
- * spec §3.1). If the token's creation predates the pool by more than the fresh
- * window, it's not a launch. If Blockscout can't say (API hiccup, not indexed
- * yet), default to treating it as fresh — a long-established token (the case
- * we're guarding against) is essentially always resolvable; only a genuinely
- * brand-new one is ever ambiguous, and "index it" is the right call for that.
+ * This checks via `eth_getCode` at `poolBlock - windowBlocks`, not Blockscout:
+ * Blockscout sits behind Cloudflare and returns 403 to a plain server-side
+ * fetch (confirmed directly — a Node client is not a browser), so it cannot
+ * be a runtime dependency here even though it's allowed by spec §3.1's
+ * "RPC + Blockscout only" rule. Chain 4663's RPC retains full historical
+ * state (confirmed: `eth_getCode` resolves correctly across a 54M-block gap),
+ * so one `getCode` call settles it with no third-party dependency.
  */
 export const FRESH_LAUNCH_WINDOW_BLOCKS = 36_000n; // ~1h at chain 4663's ~0.1s blocks
 
@@ -21,42 +21,29 @@ export type FreshnessReason = 'fresh' | 'preexisting' | 'inconclusive';
 
 export interface FreshnessCheck {
   isFreshLaunch: boolean;
-  tokenCreationBlock: bigint | null;
-  ageBlocksAtPool: bigint | null;
   reason: FreshnessReason;
+  checkedAtBlock: bigint;
 }
 
-export type FreshnessBlockscout = Pick<BlockscoutClient, 'getAddress' | 'getTransaction'>;
+export type FreshnessClient = Pick<PublicClient, 'getCode'>;
 
 export async function checkTokenFreshness(
-  client: FreshnessBlockscout,
-  tokenAddress: string,
+  client: FreshnessClient,
+  tokenAddress: Address,
   poolBlockNumber: bigint,
   windowBlocks: bigint = FRESH_LAUNCH_WINDOW_BLOCKS,
 ): Promise<FreshnessCheck> {
-  const inconclusive: FreshnessCheck = {
-    isFreshLaunch: true,
-    tokenCreationBlock: null,
-    ageBlocksAtPool: null,
-    reason: 'inconclusive',
-  };
-
+  const checkedAtBlock = poolBlockNumber > windowBlocks ? poolBlockNumber - windowBlocks : 0n;
   try {
-    const addr = await client.getAddress(tokenAddress);
-    const creationTxHash = addr.creation_transaction_hash;
-    if (!creationTxHash) return inconclusive;
-
-    const tx = await client.getTransaction(creationTxHash);
-    if (tx.block_number === null || tx.block_number === undefined) return inconclusive;
-
-    const creationBlock = BigInt(tx.block_number);
-    const ageBlocksAtPool = poolBlockNumber > creationBlock ? poolBlockNumber - creationBlock : 0n;
-
-    if (ageBlocksAtPool > windowBlocks) {
-      return { isFreshLaunch: false, tokenCreationBlock: creationBlock, ageBlocksAtPool, reason: 'preexisting' };
-    }
-    return { isFreshLaunch: true, tokenCreationBlock: creationBlock, ageBlocksAtPool, reason: 'fresh' };
+    const code = await client.getCode({ address: tokenAddress, blockNumber: checkedAtBlock });
+    const hadCodeAlready = Boolean(code) && code !== '0x';
+    return {
+      isFreshLaunch: !hadCodeAlready,
+      reason: hadCodeAlready ? 'preexisting' : 'fresh',
+      checkedAtBlock,
+    };
   } catch {
-    return inconclusive;
+    // RPC couldn't answer for this historical block — don't block indexing on it
+    return { isFreshLaunch: true, reason: 'inconclusive', checkedAtBlock };
   }
 }

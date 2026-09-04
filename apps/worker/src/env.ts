@@ -1,3 +1,6 @@
+import { existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+
 export interface WorkerEnv {
   chainId: number;
   rpcUrl: string;
@@ -11,7 +14,43 @@ export interface WorkerEnv {
   maxSpanBlocks: bigint;
 }
 
+let dotenvLoaded = false;
+
+/**
+ * Load the repo-root `.env` into `process.env`, once per process. Nothing here
+ * was doing this before — every script just read `process.env` directly, which
+ * only worked when whatever shell launched it happened to already have those
+ * variables (a terminal profile, a prior `dotenv`-aware command, etc). That's
+ * not something to depend on: a genuinely fresh shell, CI, or a differently
+ * configured machine gets "RH_RPC_URL is not set" even with a real `.env` on
+ * disk. `pnpm --filter` runs each script with cwd set to that package's own
+ * directory, so walk up looking for `.env` rather than assuming the repo root.
+ * Uses Node's built-in loader (stable since v20.12/v21.7), which — like
+ * dotenv — never overrides a variable already set in the real environment
+ * (so Railway/production env vars always win over any stray `.env`).
+ */
+function ensureDotenvLoaded(): void {
+  if (dotenvLoaded) return;
+  dotenvLoaded = true;
+  let dir = process.cwd();
+  for (let i = 0; i < 6; i += 1) {
+    const candidate = join(dir, '.env');
+    if (existsSync(candidate)) {
+      try {
+        process.loadEnvFile(candidate);
+      } catch {
+        // malformed .env — fall through and use whatever process.env already has
+      }
+      return;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) return;
+    dir = parent;
+  }
+}
+
 export function loadEnv(): WorkerEnv {
+  ensureDotenvLoaded();
   const rpcUrl = process.env.RH_RPC_URL ?? '';
   return {
     chainId: Number(process.env.CHAIN_ID ?? 4663),
