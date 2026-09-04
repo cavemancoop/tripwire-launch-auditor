@@ -132,3 +132,36 @@ RPC wired: `RH_RPC_URL=https://rpc.ordofi.network` (chain 4663, ~10 blocks/s,
   confirm `SELECT count(*) FROM launches` grows with T+10m features filling in; spot-check
   one launch on Blockscout. Then trace one real launch per pad to fill in
   `config/chain.4663.json` `factories` and flip `verified`.
+
+## M1.1 — watcher hardening from live operation (2026-09-04)
+
+Three real bugs found by actually running the watcher and doing the guide's own
+spot-check, not by review:
+
+1. **RPC-lag wedge** (`9c3aa4f`): head lag was 2 blocks on a ~10-blocks/s,
+   load-balanced RPC; a follow-up read for a just-seen pool would sometimes
+   miss, and that exception aborted the whole poll before the cursor saved —
+   so the poller retried the identical window forever. Fixed: head lag 60,
+   retry-with-backoff on the per-pool reads, per-pool error isolation (cursor
+   holds just before the earliest failure, everything else still commits),
+   and a stuck-poll escape hatch that abandons + logs a replay hint after 6
+   no-progress polls. `pnpm verify` also no longer fails when `dev:worker` has
+   the Prisma engine file locked.
+2. **Command-argument gap**: `watcher:recent` only took a row count; added
+   `<from>-<to>` block-range and `--from`/`--to` forms so a range copied
+   straight from a `[watcher]` log line works.
+3. **Spec-correctness bug** (`5387104`): a fresh Uniswap pool between two
+   already-established tokens (found via a DDOG/USDG spot-check) was being
+   recorded as a new-token launch. Added `checkTokenFreshness` — Blockscout's
+   indexed contract-creation tx tells us whether the token predates the pool
+   by more than ~1h; if so, skip it. `pnpm watcher:prune-stale [--apply]`
+   re-checks already-indexed launches and removes the false positives.
+
+Config also had unverified launchpad **marketing-site URLs stripped** after one
+turned out to be a phishing clone (Cooper, `f0e823f`) — launchpad factory
+confirmation is on-chain only (Blockscout token → creation tx → factory) from here.
+
+### Verify
+- `pnpm verify` green (63 tests).
+- Ran `pnpm watcher:prune-stale` (dry run) against the live data accumulated before
+  this fix — see the session for the count of pre-existing-token false positives found.
