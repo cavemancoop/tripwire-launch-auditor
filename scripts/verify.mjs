@@ -8,18 +8,42 @@ process.env.DATABASE_URL ??=
   'postgresql://placeholder:placeholder@localhost:5432/placeholder?schema=public';
 
 const SCHEMA = 'packages/db/prisma/schema.prisma';
+
+const run = (cmd) => execSync(cmd, { stdio: 'inherit' });
+
+// prisma generate rewrites a native engine .dll/.node; on Windows that fails
+// with EPERM/EBUSY while another process (e.g. `pnpm dev:worker`) has it loaded.
+// The schema is still validated below, so treat a lock as a skip, not a failure.
+const LOCK = /EPERM|EBUSY|EACCES|operation not permitted|resource busy|used by another process/i;
+function generate() {
+  try {
+    execSync(`pnpm exec prisma generate --schema ${SCHEMA}`, { encoding: 'utf8', stdio: 'pipe' });
+  } catch (err) {
+    const out = `${err.stdout ?? ''}${err.stderr ?? ''}${err.message ?? ''}`;
+    process.stdout.write(out);
+    if (LOCK.test(out)) {
+      process.stdout.write(
+        '\n⚠ prisma generate skipped — engine file locked by a running process ' +
+          '(stop `pnpm dev:worker` / node to regenerate). Using the existing client.\n',
+      );
+      return;
+    }
+    throw err;
+  }
+}
+
 const steps = [
-  ['Prisma client generate', `pnpm exec prisma generate --schema ${SCHEMA}`],
-  ['Prisma schema validate', `pnpm exec prisma validate --schema ${SCHEMA}`],
-  ['Typecheck (all packages)', 'pnpm -r --workspace-concurrency=1 typecheck'],
-  ['Tests (vitest)', 'pnpm -r --workspace-concurrency=1 test'],
+  ['Prisma client generate', generate],
+  ['Prisma schema validate', () => run(`pnpm exec prisma validate --schema ${SCHEMA}`)],
+  ['Typecheck (all packages)', () => run('pnpm -r --workspace-concurrency=1 typecheck')],
+  ['Tests (vitest)', () => run('pnpm -r --workspace-concurrency=1 test')],
 ];
 
 let failed = null;
-for (const [name, cmd] of steps) {
+for (const [name, step] of steps) {
   process.stdout.write(`\n▶ ${name}\n`);
   try {
-    execSync(cmd, { stdio: 'inherit' });
+    step();
   } catch {
     failed = name;
     break;

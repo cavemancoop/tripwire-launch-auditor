@@ -6,6 +6,7 @@ import { classifyPair } from './classify';
 import type { DetectedPool } from './detect';
 import { computeIndexFeatures } from './features';
 import { creatorQuotaExceeded } from './quota';
+import { withRetry } from './retry';
 
 export interface IngestDeps {
   client: PublicClient;
@@ -43,11 +44,15 @@ export async function ingestPool(
   });
   if (existing) return null;
 
-  const [tx, receipt, block] = await Promise.all([
-    client.getTransaction({ hash: txHash as Hex }),
-    client.getTransactionReceipt({ hash: txHash as Hex }),
-    client.getBlock({ blockNumber }),
-  ]);
+  // A just-seen tx/block can read back as "not found" from a lagging RPC node
+  // (load balancing) or a shallow reorg — retry with backoff before giving up.
+  const [tx, receipt, block] = await withRetry(() =>
+    Promise.all([
+      client.getTransaction({ hash: txHash as Hex }),
+      client.getTransactionReceipt({ hash: txHash as Hex }),
+      client.getBlock({ blockNumber }),
+    ]),
+  );
 
   const creator = tx.from;
   const touched = new Set<string>([

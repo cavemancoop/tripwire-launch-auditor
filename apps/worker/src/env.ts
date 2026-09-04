@@ -5,8 +5,10 @@ export interface WorkerEnv {
   redisUrl: string;
   pollIntervalMs: number;
   quotaPerCreator24h: number;
-  /** blocks behind head to treat as final (reorg buffer) */
+  /** blocks behind head to treat as settled (reorg + load-balanced-RPC lag buffer) */
   headLagBlocks: bigint;
+  /** max blocks advanced per poll, so a big catch-up is chunked with cursor saves */
+  maxSpanBlocks: bigint;
 }
 
 export function loadEnv(): WorkerEnv {
@@ -18,6 +20,7 @@ export function loadEnv(): WorkerEnv {
     redisUrl: process.env.REDIS_URL ?? 'redis://localhost:6379',
     pollIntervalMs: Number(process.env.WATCHER_POLL_INTERVAL_MS ?? 2000),
     quotaPerCreator24h: Number(process.env.QUOTA_PER_CREATOR_24H ?? 5),
-    headLagBlocks: BigInt(process.env.WATCHER_HEAD_LAG_BLOCKS ?? 2),
+    headLagBlocks: BigInt(process.env.WATCHER_HEAD_LAG_BLOCKS ?? 60),
+    maxSpanBlocks: BigInt(process.env.WATCHER_MAX_SPAN_BLOCKS ?? 4000),
   };
 }
