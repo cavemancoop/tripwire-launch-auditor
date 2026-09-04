@@ -1,0 +1,27 @@
+{
+  "name": "launch-auditor",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@11.25.0",
+  "scripts": {
+    "verify": "node scripts/verify.mjs",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "db:generate": "pnpm --filter @launch-auditor/db exec prisma generate",
+    "db:validate": "pnpm --filter @launch-auditor/db exec prisma validate",
+    "db:migrate": "pnpm --filter @launch-auditor/db exec prisma migrate dev",
+    "db:studio": "pnpm --filter @launch-auditor/db exec prisma studio",
+    "dev:api": "pnpm --filter @launch-auditor/api dev",
+    "dev:worker": "pnpm --filter @launch-auditor/worker dev"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

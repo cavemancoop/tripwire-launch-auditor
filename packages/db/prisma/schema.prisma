@@ -1,0 +1,328 @@
+// Launch Auditor — schema for the seven tables named in the build guide:
+// launches, features, reports, commits, outcomes, lifecycle_log, receipts.
+// Modelled from spec §1 (outcomes + horizons), §3.3 (feature vector v0), §6 (commitment).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────── Enums ───────────────────────────────
+
+enum LaunchSource {
+  noxa
+  pons
+  raw
+}
+
+/// Index lane = every launch, event-derived features only (spec §3.1).
+/// Qualified lane = >=2000 USD liq-equiv or >=25 unique buyers in 10m, or any paid request.
+enum Lane {
+  index
+  qualified
+}
+
+/// The four mechanical outcomes (spec §1).
+enum OutcomeLabel {
+  INSIDER_EXIT
+  SELL_IMPAIRED
+  LIQ_IMPAIRED
+  DRAWDOWN_80
+}
+
+enum OutcomeStatus {
+  PENDING       // horizon not reached yet
+  RESOLVED      // value is set
+  NA            // not applicable (launchpad token for SELL_IMPAIRED / LIQ_IMPAIRED)
+  UNRESOLVABLE  // data unavailable at the horizon check
+}
+
+/// Forecasters scored side by side (spec §2).
+enum ForecasterKind {
+  base_rate
+  heuristic_v1
+  det_v0
+  det_v1
+  llm_deepdive_v0
+  scanhood
+  goplus
+}
+
+/// Metabolism state machine (spec §8, v0.1 §7.2).
+enum LifecycleState {
+  NO_KEY
+  ACTIVE
+  DRAINING
+  ROTATING
+  REVOKING
+  STARVED
+}
+
+enum CommitKind {
+  REPORT_BATCH     // Merkle root of report hashes (every 5 min or 200 leaves)
+  ARTIFACT         // feature-code / weight / outcome-rule / scorer hashes + model id
+  SIGNER_ROTATION  // agent EIP-712 signer rotation
+}
+
+// ───────────────────────────── Launches ─────────────────────────────
+
+model Launch {
+  id                     String       @id @default(cuid())
+  chainId                Int
+  source                 LaunchSource
+  lpLockedByConstruction Boolean      @default(false) // §3.3.1
+
+  tokenAddress   String
+  poolAddress    String?
+  creatorAddress String
+  launchBlock    BigInt
+  launchTxHash   String
+  launchAt       DateTime?
+
+  lane          Lane    @default(index)
+  quotaExceeded Boolean @default(false) // >5 launches by this creator in 24h: indexed, not scored (§3.1)
+  retrospective Boolean @default(false) // backfill rows (spec §7)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  feature  Feature?
+  reports  Report[]
+  outcomes Outcome[]
+
+  @@unique([chainId, tokenAddress])
+  @@index([source, launchBlock])
+  @@index([creatorAddress])
+  @@index([lane, createdAt])
+  @@map("launches")
+}
+
+// ───────────────────────────── Features ─────────────────────────────
+// Deterministic feature vector v0 (spec §3.3). One row per launch.
+// Every value is reproducible from RPC + Blockscout at the stated block,
+// except external scanner outputs, stored verbatim with a fetch timestamp.
+
+model Feature {
+  id       String @id @default(cuid())
+  launchId String @unique
+  launch   Launch @relation(fields: [launchId], references: [id], onDelete: Cascade)
+
+  schemaVersion String @default("v0")
+
+  // §3.3.2
+  creatorDevbuyPct Float?
+
+  // §3.3.3  (creator_prior_* are empty at start, filled by backfill §7)
+  creatorAgeDays              Float?
+  creatorPriorLaunches        Int?
+  creatorPriorInsiderExitRate Float?
+
+  // §3.3.4  (at T+10m)
+  clusterSize      Int?
+  clusterSupplyPct Float?
+
+  // §3.3.5  (at T+10m)
+  top10NoncreatorPct Float?
+
+  // §3.3.6  (at T+10m)
+  uniqueBuyers10m Int?
+  buysPerBuyer10m Float?
+  microbuyShare10m Float?
+
+  // §3.3.7
+  liquidityUsd10m Float?
+  sellImpactBps   Int?
+
+  // §3.3.8  (presence only)
+  hasX    Boolean?
+  hasSite Boolean?
+
+  // §3.3.9  (non-launchpad only; from GoPlus/ScanHood cross-check + own eth_call sell quote)
+  verified       Boolean?
+  ownerRenounced Boolean?
+  mintable       Boolean?
+  lpHolderType   String?
+  sellSimOk      Boolean?
+  sellTaxBps     Int?
+
+  // provenance: feature key -> { source, block, fetchedAt }
+  provenance Json @default("{}")
+
+  // verbatim external scanner payloads with fetch timestamps (spec §2, §3.3)
+  goplusRaw        Json?
+  goplusFetchedAt  DateTime?
+  scanhoodRaw      Json?
+  scanhoodFetchedAt DateTime?
+
+  indexLaneComputedAt DateTime? // §3.3 items 1, 2, 8 — immediately
+  t10ComputedAt       DateTime? // §3.3 items 4, 5, 6, 7 — at T+10m
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("features")
+}
+
+// ───────────────────────────── Reports ──────────────────────────────
+// One row per (launch, forecaster). Holds the four outcome probabilities,
+// the canonical JSON that was hashed, the EIP-712 signature, and the commit link.
+
+model Report {
+  id                String         @id @default(cuid())
+  launchId          String
+  launch            Launch         @relation(fields: [launchId], references: [id], onDelete: Cascade)
+  forecaster        ForecasterKind
+  forecasterVersion String
+
+  // outcome probabilities (spec §1); null where N/A for this token type / horizon
+  pInsiderExit6h  Float?
+  pInsiderExit24h Float?
+  pInsiderExit72h Float?
+  pSellImpaired1h Float?
+  pSellImpaired24h Float?
+  pLiqImpaired24h Float?
+  pLiqImpaired7d  Float?
+  pDrawdown80_24h Float?
+  pDrawdown80_7d  Float?
+
+  confidence Float?
+  evidence   Json?  // [{ claim, tx_or_url }]
+
+  canonicalJson String  // RFC 8785 canonical form that was hashed
+  reportHash    String  @unique // keccak256(canonicalJson)
+  eip712Signature String?
+  signerAddress   String?
+
+  createdAtBlock BigInt?
+  retrospective  Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  // commitment link (spec §6). merkleLeafHash == reportHash for report batches.
+  commitId      String?
+  commit        Commit? @relation(fields: [commitId], references: [id])
+  merkleLeafHash String?
+
+  @@index([launchId, forecaster])
+  @@index([forecaster, createdAt])
+  @@index([commitId])
+  @@map("reports")
+}
+
+// ──────────────────────────── Commitment ────────────────────────────
+// CommitRegistry batches (spec §6): Merkle root of report hashes every 5 min
+// or 200 leaves; also commits feature-code / weight / outcome-rule / scorer
+// hashes and the model id on first run.
+
+model Commit {
+  id         String     @id @default(cuid())
+  kind       CommitKind
+  chainId    Int
+  merkleRoot String
+  leafCount  Int        @default(0)
+
+  // proofs, filled by the commit job (M3): [{ reportHash, leafHash, index, proof: string[] }]
+  leaves Json @default("[]")
+
+  // ARTIFACT commits carry the frozen hashes + model id
+  featureCodeHash String?
+  weightHash      String?
+  outcomeRuleHash String?
+  scorerHash      String?
+  modelId         String?
+
+  txHash      String?
+  blockNumber BigInt?
+  committedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  reports Report[]
+
+  @@index([kind, createdAt])
+  @@index([txHash])
+  @@map("commits")
+}
+
+// ──────────────────────────── Outcomes ──────────────────────────────
+// Resolved per (launch, label, horizon, rule version) — spec §1.
+
+model Outcome {
+  id       String       @id @default(cuid())
+  launchId String
+  launch   Launch       @relation(fields: [launchId], references: [id], onDelete: Cascade)
+  label    OutcomeLabel
+  horizon  String        // "1h" | "6h" | "24h" | "72h" | "7d"
+
+  status      OutcomeStatus @default(PENDING)
+  value       Boolean?      // resolved outcome; null while PENDING / NA / UNRESOLVABLE
+  ruleVersion String        @default("v1")
+  evidence    Json?         // tx hashes / measurements backing the resolution
+
+  horizonAt  DateTime?      // wall-clock time the horizon check is due
+  measuredAt DateTime?
+  retrospective Boolean     @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([launchId, label, horizon, ruleVersion])
+  @@index([status, horizonAt])
+  @@map("outcomes")
+}
+
+// ─────────────────────── Metabolism lifecycle log ───────────────────
+// Signed row for every state transition and every 60s snapshot (spec §8).
+
+model LifecycleLog {
+  id        String  @id @default(cuid())
+  isSnapshot Boolean @default(false) // false = transition, true = 60s snapshot
+
+  prevState LifecycleState?
+  newState  LifecycleState
+  reason    String
+
+  keyId         String?
+  keyHashPrefix String?
+
+  balanceUsd      Float?
+  keyRemainingUsd Float?
+  reserveUsd      Float?
+
+  // IDS check inputs: our local per-call ledger vs orbio_get_key_status
+  ledgerSpendUsd   Float?
+  providerSpendUsd Float?
+  idsMismatch      Boolean @default(false)
+
+  signature String?  // signed lifecycle row
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([newState, createdAt])
+  @@map("lifecycle_log")
+}
+
+// ──────────────────────────── Receipts ──────────────────────────────
+// Every paid call (spec §9). x402 settlement tx or design-partner API key.
+
+model Receipt {
+  id       String @id @default(cuid())
+  endpoint String // "/v1/deepdive" | "/v1/report" | ...
+
+  tokenAddress String?
+  payerAddress String?
+  asset        String  @default("USDG")
+  amount       String  // decimal string
+  chainId      Int
+
+  txHash   String? // x402 settlement; null when apiKeyId is set
+  apiKeyId String? // design-partner key used instead of x402
+
+  createdAt DateTime @default(now())
+
+  @@index([endpoint, createdAt])
+  @@index([txHash])
+  @@map("receipts")
+}

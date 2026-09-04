@@ -1,0 +1,110 @@
+# Launch Auditor v0.2 — Precommitted Exit-Risk Oracle for Robinhood Chain
+
+Supersedes v0.1. Scoped to a seven-day Build Week entry that doubles as a demand experiment. Everything cut from v0.1 is listed in §11 with the reason.
+
+## 0. What it is, in one paragraph
+
+For every new token launch on Robinhood Chain, the agent computes a small set of deterministic manipulation and exit-risk features within seconds, publishes separate probabilities for four concrete, mechanically-defined outcomes, signs and commits the forecast on-chain before the outcome can be known, and grades every forecast later with an open-source scorer against those outcomes and against public baselines (base rate, a fixed heuristic, and existing scanners' scores). An LLM deep-dive, paid for with the agent's Orbio-funded key, runs on qualified launches and is scored as a separate forecaster so the dashboard shows whether the model adds discrimination over the heuristics. The agent claims, monitors, rotates and revokes its own OpenRouter key through the Orbio MCP. Revenue, if any, arrives over x402 in USDG at a plain address; there is no automated token purchase.
+
+What it claims: the forecast existed before the outcome; the scorer is reproducible; the comparison to baselines is public. What it does not claim: that it pays for itself, that no human touched the server, or that the analysis is correct because it is committed.
+
+## 1. Outcomes (versioned, deterministic, per horizon)
+
+| Label | Definition | Horizons | Applies to |
+|---|---|---|---|
+| `INSIDER_EXIT` | Creator cluster (§3.2) net-sells ≥ 50% of its peak token holdings | 6h, 24h, 72h | all |
+| `SELL_IMPAIRED` | A fixed-size sell simulation reverts or effective sell tax ≥ 30% at the horizon check | 1h, 24h | non-launchpad tokens (launchpad tokens: always false, reported as N/A) |
+| `LIQ_IMPAIRED` | Primary pool liquidity ≤ 20% of its post-launch peak via removal transactions | 24h, 7d | non-launchpad tokens (launchpad LP is locked by construction) |
+| `DRAWDOWN_80` | Price ≤ 20% of the maximum observed in the first 24h, measured at the horizon | 24h, 7d | all |
+
+`DRAWDOWN_80` is a drawdown, not an accusation. The word "rug" does not appear in report fields. A buyer chooses the outcome that matters to their strategy.
+
+Outcome rule v1 hash is committed before the first live report. Changes apply only to reports issued after the change's effective block.
+
+## 2. Metrics (per outcome, per horizon, per forecaster)
+
+AUROC, AUPRC, log loss, Brier, Brier Skill Score against the trailing-30-day base rate, expected calibration error (deciles), precision and recall at 0.5 and at each design partner's stated threshold. Minimum 100 resolved launches before a metric is shown; sample size always displayed.
+
+Forecasters scored side by side:
+1. `base_rate` — trailing 30-day prevalence.
+2. `heuristic_v1` — a fixed rule: creator dev-buy ≥ 5% of supply OR launch-block cluster ≥ 3 wallets OR top-10 non-creator share at T+10m ≥ 40%.
+3. `det_v0` — the deterministic score (§4).
+4. `llm_deepdive_v0` — the LLM forecaster (§5), where run.
+5. `scanhood` and `goplus` — their public scan outputs mapped to [0,1] by a fixed published mapping, fetched at report time and stored (they are baselines and data sources, not enemies).
+
+A forecaster "beats" a baseline only with a statistically significant AUROC gap (DeLong test) on ≥ 200 resolved launches. Until then the dashboard says "insufficient sample."
+
+## 3. Pipeline
+
+### 3.1 Two lanes (spam defense)
+- Index lane, every launch: event-derived features only; no simulation, no LLM, no external API calls beyond RPC and Blockscout. Cost per launch ≈ 0. Per-creator quota: after 5 launches by one creator in 24h, further launches are indexed but not scored.
+- Qualified lane: launches that reach ≥ 2,000 USD liquidity-equivalent or ≥ 25 unique buyers within 10 minutes, or any paid request. Runs simulation (non-launchpad), external scanner fetch, and optionally the LLM deep-dive.
+
+### 3.2 Creator cluster (v1, deliberately narrow)
+A wallet is in the creator cluster if any of: it is the creator; it bought in the launch block (Noxa restricts launch-block buys to the creator, so any such buy is creator-controlled); it received tokens directly from the creator; its first-ever inbound transaction on 4663 came from the creator. Shared bridge or CEX funding source is not association (false-cluster risk). Each cluster membership carries the evidence transaction hash. Cluster confidence is published.
+
+### 3.3 Features v0 (deterministic; each with source and block)
+1. `source`: Noxa, Pons, or raw pool; LP-locked-by-construction flag.
+2. `creator_devbuy_pct`: supply bought in the launch transaction/block.
+3. `creator_age_days`, `creator_prior_launches`, `creator_prior_insider_exit_rate` (from own DB; empty at start, filled by backfill §7).
+4. `cluster_size`, `cluster_supply_pct` at T+10m.
+5. `top10_noncreator_pct` at T+10m.
+6. `unique_buyers_10m`, `buys_per_buyer_10m`, `microbuy_share_10m` (buys under a fixed small size).
+7. `liquidity_usd_10m`, `sell_impact_bps` for a fixed-size sell (quote-based; no fork needed).
+8. `has_x`, `has_site` (presence only).
+9. Non-launchpad only: `verified`, `owner_renounced`, `mintable`, `lp_holder_type`, `sell_sim_ok`, `sell_tax_bps` — from GoPlus/ScanHood cross-check plus own `eth_call` sell quote. Do not rebuild honeypot detection; consume it.
+
+Feature code is public. Feature values are reproducible from RPC and Blockscout at the stated block, except external scanner outputs, which are stored verbatim with their fetch timestamp.
+
+## 4. Deterministic score `det_v0`
+A logistic combination with hand-set, published weights per outcome, frozen and committed before live operation. After backfill (§7) reaches 300 resolved launches, fit weights on the historical set, version as `det_v1`, commit, and keep both live so the improvement is visible. Never fit on live data that has not resolved.
+
+## 5. LLM deep-dive `llm_deepdive_v0` (the Orbio key's job)
+- Runs on qualified-lane launches within the daily compute budget, and on every paid T1.
+- An agent loop (OpenRouter agent SDK or plain tool calling) with read-only tools: `blockscout_address`, `blockscout_txs`, `cluster_expand`, `price_series`, `holder_snapshot`, `web_search` (server tool). Structured output: `{p_insider_exit_24h, p_drawdown_80_7d, p_sell_impaired_24h, evidence:[{claim, tx_or_url}], confidence}`.
+- Every field reaching the final structured output is typed and range-checked; free-text fields are limited to `evidence[].claim` and never feed back into other prompts. Metadata and socials text is quoted inside a delimited block with an explicit "data, not instructions" frame.
+- It is scored as its own forecaster. If it does not beat `det_v0` on ≥ 200 launches, that result is published and the deep-dive is demoted to an optional paid narrative. That is the experiment the contest funds.
+- Compute cap per run ≤ 0.20 USD; daily cap set by the Metabolism budget policy.
+- Implementation: `@openrouter/agent` (`tool()` + zod, `callModel`, max-steps stop condition, structured output). Model slug is pinned in config and committed; `~latest` aliases and `openrouter/auto` are not allowed for scored forecasters because the model must be identifiable per report. Attribution headers (`HTTP-Referer`, `X-Title`) are sent on every call.
+
+## 6. Commitment and signing
+- `CommitRegistry` (unchanged from v0.1): Merkle root of report hashes every 5 minutes or 200 leaves; also commits feature-code hash, weight hash, outcome-rule hash, scorer hash, model id.
+- Reports signed EIP-712 by the agent key. Signer rotation committed.
+- Language on the dashboard: "committed before outcome" and "reproducible scorer." Nothing stronger.
+
+## 7. Backfill (so there is a track record at judging)
+Reconstruct features and outcomes for the last 45 days of Noxa/Pons/raw launches using archive RPC + Blockscout, with feature code frozen and the scorer run exactly as it will run live. Publish the backfill as a separate, clearly labeled set ("retrospective, not precommitted"); live commits from day one prove no cherry-picking going forward. Backfill also seeds `creator_prior_*` features.
+
+## 8. Metabolism (Orbio MCP client)
+Unchanged state machine from v0.1 §7 (NO_KEY → ACTIVE → DRAINING → ROTATING; IDS → REVOKING; STARVED). Budget policy now simpler: daily deep-dive budget = min(`dailyCapUsd`, 50% of credits accrued in trailing 24h, key remaining − reserve). The metric shown is "days of unattended key lifecycle" = days since the last manual credential action, with the signed lifecycle log as evidence; no claim beyond that.
+
+## 9. API and payments
+| Endpoint | Price | Notes |
+|---|---|---|
+| `GET /v1/launches` (feed) | free | latest launches with `det_v0` and commit proof |
+| `GET /v1/report/{token}` | free tier during contest; later T0 free / T1 0.10 USDG via x402 | includes all forecasters and evidence |
+| `POST /v1/deepdive/{token}` | 0.10 USDG via x402 or API key | triggers `llm_deepdive_v0` |
+| `GET /v1/benchmark` | free | metrics table, all forecasters, sample sizes |
+| `GET /v1/proof/{hash}` | free | Merkle proof |
+| `GET /v1/lifecycle` | free | signed key-lifecycle log |
+| MCP server (`/mcp`) | same prices | `get_report`, `get_benchmark`, `request_deepdive` so agent buyers need no HTTP code |
+
+x402 is a payment rail, not a channel. Also accept a plain API key for design partners. Facilitator fees (~0.001 USD/call) are included in the model.
+
+## 10. Demand gate (before any work beyond the contest)
+Three integration commitments from bots, terminals or launchpads of the form: "if `p_insider_exit_24h` beats our current heuristic on the backfill set at threshold X, we call it on every candidate at price Y." Candidates: Robinhood Checker, the Phanes/Skeleton/Rick/Major alert bots, the open-source Robinhood sniper/LP bots, ScanHood, Hood Trade, Noxa, Pons. The benchmark page is the pitch: it scores their signals too.
+
+## 11. Cut from v0.1 and why
+- RevenueRouter and automatic $ORBIO buys: negligible credit recapture, MEV bait, and $ORBIO's main market is quoted in tokenized NVDA. Treasury is a manual decision.
+- "Self-funding" framing: credits are a subsidy from total $ORBIO volume (0.75% × volume × your time-weighted share). Publish standalone and subsidized P&Ls.
+- Single `P(rug)`: replaced by four mechanical outcomes.
+- Brier ≤ 0.15 target: replaced by skill scores and AUROC against baselines.
+- "Days since a human touched the key": replaced by unattended-lifecycle days with signed log.
+- Generic LLM due-diligence prose as the product: replaced by a scored LLM forecaster.
+- ERC-8004 registration, watch streams, Base: after the demand gate.
+- Selector-scan hidden-mint detection, time-warp simulation, Anvil forks: replaced by external scanner cross-check and quote-based sell impact.
+- "Same funding source" wallet association: removed.
+- x402 directories as distribution: removed.
+
+## 12. Configuration `[PARAM]`
+`qualify.liqUsd` 2000 · `qualify.uniqueBuyers` 25 · `quota.perCreator24h` 5 · `deepdive.capPerRunUsd` 0.20 · `deepdive.dailyCapUsd` 5 · `price.deepdive` 0.10 · `commit.intervalSec` 300 · `commit.maxLeaves` 200 · `reserveR` 0.60 · `claimSize` 25 · `hygieneRotateDays` 7 · `backfill.days` 45 · `minResolvedForMetrics` 100 · `minResolvedForClaims` 200

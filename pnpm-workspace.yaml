@@ -1,0 +1,26 @@
+packages:
+  - apps/*
+  - packages/*
+
+# Dependency install scripts we permit to run (pnpm 11 blocks all by default).
+# All five are first-party build tooling: esbuild (vitest/tsx transpile),
+# the Prisma engine binaries, and msgpackr's optional native accelerator.
+allowBuilds:
+  '@prisma/client': true
+  '@prisma/engines': true
+  esbuild: true
+  msgpackr-extract: true
+  prisma: true
+
+# Single source of truth for dependency versions across the monorepo.
+# Referenced from package.json files as "catalog:".
+catalog:
+  "@types/node": ^22.10.0
+  typescript: ^5.7.0
+  tsx: ^4.19.0
+  vitest: ^3.0.0
+  fastify: ^5.2.0
+  bullmq: ^5.34.0
+  viem: ^2.21.0
+  "@prisma/client": ^6.0.0
+  prisma: ^6.0.0
