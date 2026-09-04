@@ -18,11 +18,11 @@ datasource db {
 
 // ─────────────────────────────── Enums ───────────────────────────────
 
-enum LaunchSource {
-  noxa
-  pons
-  raw
-}
+// `source` is a free-form string, not an enum: the Robinhood Chain launchpad
+// set is open and churns (pons, long, hookr, v4fun, noxa, sentry, virtuals,
+// poolstrade, flap, hoodfun, bags, ...), plus `raw` for a pool created directly
+// on a DEX with no recognised launchpad, and `unknown` before attribution runs.
+// Known values are a TS union in @launch-auditor/chain; the DB column stays open.
 
 /// Index lane = every launch, event-derived features only (spec §3.1).
 /// Qualified lane = >=2000 USD liq-equiv or >=25 unique buyers in 10m, or any paid request.
@@ -86,17 +86,22 @@ enum CommitKind {
 // ───────────────────────────── Launches ─────────────────────────────
 
 model Launch {
-  id                     String       @id @default(cuid())
+  id                     String  @id @default(cuid())
   chainId                Int
-  source                 LaunchSource
-  lpLockedByConstruction Boolean      @default(false) // §3.3.1
+  source                 String  @default("unknown") // pons|long|hookr|v4fun|noxa|sentry|virtuals|poolstrade|...|raw|unknown
+  sourceConfidence       Float?  // 0..1; null until attribution runs
+  lpLockedByConstruction Boolean @default(false) // §3.3.1
 
-  tokenAddress   String
-  poolAddress    String?
+  tokenAddress   String  // the new token
+  quoteAddress   String? // the paired asset (WETH / USDG / tokenized stock); null if undetermined
+  poolKind       String? // "v2" | "v3" | "v4"
+  poolAddress    String? // v2/v3 pool contract; null for v4
+  poolId         String? // v4 bytes32 pool id; null for v2/v3
   creatorAddress String
   launchBlock    BigInt
   launchTxHash   String
   launchAt       DateTime?
+  detectedVia    String? // "v4:Initialize" | "v3:PoolCreated" | "v2:PairCreated" | "<launchpad>:TokenCreated"
 
   lane          Lane    @default(index)
   quotaExceeded Boolean @default(false) // >5 launches by this creator in 24h: indexed, not scored (§3.1)
@@ -113,6 +118,8 @@ model Launch {
   @@index([source, launchBlock])
   @@index([creatorAddress])
   @@index([lane, createdAt])
+  @@index([poolAddress])
+  @@index([poolId])
   @@map("launches")
 }
 
@@ -366,4 +373,19 @@ model Receipt {
   @@index([endpoint, createdAt])
   @@index([txHash])
   @@map("receipts")
+}
+
+// ──────────────────────── Watcher cursor (M1) ───────────────────────
+// Persisted last-processed block per chain per stream, so a restart resumes
+// without gaps or reprocessing. `pnpm watcher:replay --from <block>` rewinds it.
+
+model WatcherCursor {
+  id        String   @id @default(cuid())
+  chainId   Int
+  stream    String   // "pools" (v2/v3/v4 pool creation) | "launchpads" (factory events)
+  lastBlock BigInt
+  updatedAt DateTime @updatedAt
+
+  @@unique([chainId, stream])
+  @@map("watcher_cursors")
 }

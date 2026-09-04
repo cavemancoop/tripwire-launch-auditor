@@ -30,7 +30,7 @@ describe('prisma schema', () => {
     }
   });
 
-  it('maps the seven build-guide tables', () => {
+  it('maps the seven build-guide tables plus the M1 watcher cursor', () => {
     for (const table of [
       'launches',
       'features',
@@ -39,9 +39,19 @@ describe('prisma schema', () => {
       'outcomes',
       'lifecycle_log',
       'receipts',
+      'watcher_cursors',
     ]) {
       expect(schema).toContain(`@@map("${table}")`);
     }
+  });
+
+  it('keeps Launch.source open (string, not an enum) for the churning pad set', () => {
+    expect(schema).not.toMatch(/enum LaunchSource/);
+    const launch = schema.match(/model Launch \{([\s\S]*?)\n\}/)![1]!;
+    expect(launch).toMatch(/source\s+String\s+@default\("unknown"\)/);
+    expect(launch).toMatch(/poolKind\s+String\?/);
+    expect(launch).toMatch(/poolId\s+String\?/); // v4 pools have a bytes32 id, no address
+    expect(launch).toMatch(/detectedVia\s+String\?/);
   });
 
   it('carries the Metabolism state machine (spec §8)', () => {

@@ -17,12 +17,25 @@ Full spec: [`launch-auditor-spec-v0.2.md`](./launch-auditor-spec-v0.2.md).
 ```
 apps/
   api/        Fastify HTTP API (spec §9)
-  worker/     BullMQ jobs: watcher, features, outcomes, commits, deepdive, metabolism
+  worker/     BullMQ jobs. M1: pool-creation watcher (v2/v3/v4) + index-lane features + T+10m job
 packages/
   db/         Prisma schema + client (Postgres)
-  chain/      viem client for chain 4663 + Blockscout API v2 client
+  chain/      viem client for chain 4663, Blockscout v2 client, Uniswap pool-event decoders,
+              chain/launchpad address config (config/chain.4663.json), source attribution
   scoring/    forecaster + metric types, base-rate / Brier helpers (scorer proper: M4)
 ```
+
+## Watcher (M1)
+
+```bash
+pnpm dev:worker                          # live: poll pool creation every 2s, index every launch
+pnpm watcher:replay --from <block>       # re-ingest a past range (--span <blocks> for windows)
+```
+
+Needs `RH_RPC_URL` in `.env` (chain 4663). Writes `launches` + `features` rows; a
+delayed job fills T+10m features. Launchpad attribution (`source`) is `raw` until the
+per-pad factory addresses in `packages/chain/config/chain.4663.json` are confirmed and
+their `verified` flags flipped.
 
 ## Prerequisites
 

@@ -1,3 +1,6 @@
+import { Queue } from 'bullmq';
+import { loadEnv } from './env';
+
 /** Job queues for the pipeline (spec §3). Populated by later milestones. */
 export const QUEUE_NAMES = {
   watcher: 'watcher', // M1: event discovery + index-lane features
@@ -25,4 +28,24 @@ export function parseRedisUrl(url: string): RedisConnectionConfig {
   };
   if (parsed.password) config.password = parsed.password;
   return config;
+}
+
+/** T+10m delay for the second-pass feature job (spec §3.3 items 4-7). */
+export const T10_DELAY_MS = 10 * 60 * 1000;
+
+let queues: { features: Queue } | undefined;
+
+export function getQueues(): { features: Queue } {
+  if (!queues) {
+    const connection = parseRedisUrl(loadEnv().redisUrl);
+    queues = { features: new Queue(QUEUE_NAMES.features, { connection }) };
+  }
+  return queues;
+}
+
+export async function closeQueues(): Promise<void> {
+  if (queues) {
+    await queues.features.close();
+    queues = undefined;
+  }
 }

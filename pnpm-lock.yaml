@@ -78,9 +78,18 @@ importers:
 
   apps/worker:
     dependencies:
+      '@launch-auditor/chain':
+        specifier: workspace:*
+        version: link:../../packages/chain
+      '@launch-auditor/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       bullmq:
         specifier: 'catalog:'
         version: 5.81.4
+      viem:
+        specifier: 'catalog:'
+        version: 2.56.3(typescript@5.9.3)
     devDependencies:
       '@types/node':
         specifier: 'catalog:'

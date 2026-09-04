@@ -77,3 +77,58 @@ had run, so nothing was retrofitted. Repo + planning-dir copies of the spec refr
 ### Verify
 - `docker compose up -d` → `pnpm db:migrate` applies cleanly; all 7 tables present in Postgres.
 - `pnpm verify` green. **M0 check now fully satisfied.**
+
+## M1 — Watcher + index lane (2026-09-03)
+
+RPC wired: `RH_RPC_URL=https://rpc.ordofi.network` (chain 4663, ~10 blocks/s,
+`eth_getLogs` range ~10–20k → chunked at 2000, 600 req/min, no auth for reads).
+
+### Added — `packages/chain`
+- `uniswap.ts` — v2 `PairCreated` / v3 `PoolCreated` / v4 `Initialize` ABIs, topic0s
+  computed via viem (not hardcoded), and `decodePoolCreation(log)` → `{poolKind, token0,
+  token1, poolAddress|poolId, fee, tickSpacing, hooks}`. Decode verified against a real
+  4663 Initialize log.
+- `chain-config.ts` + committed `config/chain.4663.json` — every address carries a
+  `verified` flag + Blockscout evidence link + a note. **Verified:** v4 PoolManager
+  `0x8366a39C…40951` (CREATE2 deployer, ~$29M TVL); v2 factory `0x8bcEaA40…937f`
+  (emits PairCreated live); USDG `0x5fc5360D…1d168`. **Candidate / unverified:** v3
+  factory `0x1f7d7550…` (did emit a real PoolCreated in the smoke test), WETH ×2.
+- `launchpads.ts` — config-driven adapter registry for **pons, long, hookr, v4fun,
+  noxa, sentry, virtuals, poolstrade** (per your list). `attributeSource(chainId,
+  touchedAddresses)` → launchpad key or `"raw"`. **No launchpad factory is confirmed
+  yet** — every entry is `candidateFactories` only, so everything currently attributes
+  to `raw`. The universal pool net catches those tokens regardless; per-pad
+  confirmation needs a real launch tx traced on Blockscout (see each entry's `note`).
+- `logs.ts` — `getLogsChunked` (range-limited `eth_getLogs`).
+
+### Added — `apps/worker`
+- Polling watcher (`watcher/poller.ts`): 2s interval, persisted cursor
+  (`watcher_cursors`), reorg lag, one source-agnostic `eth_getLogs` per window across
+  all Uniswap cores.
+- `watcher/ingest.ts` — new pool → `classifyPair` (USDG/WETH vs new token) →
+  `attributeSource` → `launches` + `features` rows with provenance → per-creator quota
+  flag (spec §3.1) → enqueue the T+10m job.
+- Index-lane features now: `creatorDevbuyPct` (item 2), `source`/`lpLockedByConstruction`
+  (item 1). `hasX`/`hasSite` (item 8) left null — needs a launchpad API, not RPC-only.
+- T+10m job (`watcher/t10.ts`, `features.ts`): `uniqueBuyers10m` + `buysPerBuyer10m`
+  (item 6), `MAX_T10_LOGS` guard against a misclassified quote asset. Items 4–5
+  (cluster) and 7 (liquidity USD / sell impact) are **M2**.
+- `pnpm watcher:replay --from <block> [--span <blocks>]`.
+
+### Schema (migrations `m1_watcher_launch_fields`, `m1_launch_quote_address`)
+- `Launch.source` is now an open `String` (`@default("unknown")`); `enum LaunchSource`
+  removed. Added `sourceConfidence`, `quoteAddress`, `poolKind`, `poolId`, `detectedVia`.
+- New `watcher_cursors` table (last-processed block per chain per stream).
+
+### Live smoke test (bounded replay, then wiped)
+- Detected v4/v3/v2 pool creations on 4663; ingested ~45 `launches` rows; index features
+  on all; quota flag fired on a real repeat creator; T+10m pass produced real buyer
+  counts (5–108 buyers/token). Found + fixed one bug: empty `quoteAssets` made
+  `classifyPair` label USDG as the token.
+
+### Verify
+- `pnpm verify` green (50 tests).
+- **Still needed for the guide's M1 check:** run `pnpm dev:worker` for ~30 min and
+  confirm `SELECT count(*) FROM launches` grows with T+10m features filling in; spot-check
+  one launch on Blockscout. Then trace one real launch per pad to fill in
+  `config/chain.4663.json` `factories` and flip `verified`.
