@@ -36,11 +36,11 @@
       "0xc08751E47611F035B958889557EDBBE33d4a8Bce"
     ]
   },
+  "launchpadVerificationMethod": "On-chain only. Do NOT navigate to launchpad marketing sites — several impostor sites on this ecosystem phish for seed phrases. To confirm a pad's factory: find a token believed to be from it (Blockscout token search on this chain, or a listing on defillama.com / dexscreener.com), open that token's creation transaction on Blockscout, read the factory/deployer + the TokenCreated-style event, then put the address in `factories` and set `verified: true` with the tx hash as `evidence`.",
   "launchpads": [
     {
       "key": "pons",
       "label": "Pons",
-      "site": "https://ponslaunchpad.com",
       "model": "bonding-curve-v4",
       "lpLockedByConstruction": true,
       "factories": [],
@@ -53,12 +53,11 @@
       "verified": false,
       "tokenCreatedSignature": "",
       "evidence": "",
-      "note": "Dominant pad (~64% of tracked launchpad fees). 4 verified 'PonsFactory' contracts on-chain, none with logs in a small window — pick the high-volume one from a recent ponslaunchpad.com launch tx (167k+ tokens => very high tx count)."
+      "note": "Dominant pad by fee share. candidateFactories are the on-chain contracts Blockscout has verified under the name 'PonsFactory' (contract-name tags are submitter-set, so unconfirmed). None emitted logs in a short live window; confirm the live one by tracing a Pons token's creation tx on Blockscout."
     },
     {
       "key": "long",
       "label": "LONG",
-      "site": "https://long.xyz",
       "model": "stock-paired",
       "lpLockedByConstruction": false,
       "factories": [],
@@ -66,12 +65,11 @@
       "verified": false,
       "tokenCreatedSignature": "",
       "evidence": "",
-      "note": "Pairs new tokens against Robinhood tokenized stocks (NVDA, HIMS, ...). Non-launchpad LP shape => LIQ_IMPAIRED / SELL_IMPAIRED may apply. Find factory from a long.xyz launch tx."
+      "note": "Reported to pair new tokens against Robinhood tokenized stocks (e.g. NVDA, HIMS). If so the non-launchpad LP shape means LIQ_IMPAIRED / SELL_IMPAIRED can apply. Confirm the factory from a LONG token's creation tx on Blockscout."
     },
     {
       "key": "hookr",
       "label": "Hookr.fun",
-      "site": "https://hookr.fun",
       "model": "v4-hook",
       "lpLockedByConstruction": true,
       "factories": [],
@@ -79,12 +77,11 @@
       "verified": false,
       "tokenCreatedSignature": "",
       "evidence": "",
-      "note": "Uniswap v4 hook launchpad, pool-first. Its pools appear in v4 Initialize with a non-zero hooks address — group by hooks contract once identified. HOOKR token 0x18E674231A58c239Dc7DaeDcffE15Ec3A24cff5c."
+      "note": "Reported as a Uniswap v4 hook launchpad. Its pools should show a non-zero hooks address in v4 Initialize — grouping by that hooks contract is one way to attribute. HOOKR token seen at 0x18E674231A58c239Dc7DaeDcffE15Ec3A24cff5c (unverified; check on Blockscout)."
     },
     {
       "key": "v4fun",
       "label": "v4.fun (Canopy)",
-      "site": "https://v4.fun",
       "model": "bonding-curve-v4",
       "lpLockedByConstruction": true,
       "factories": [],
@@ -92,12 +89,11 @@
       "verified": false,
       "tokenCreatedSignature": "",
       "evidence": "",
-      "note": "Canopy / $CNPY (0x701257ee548006e7b60f3abd4bd9b74c65f2d87a). Find factory from a v4.fun token 'created' tx."
+      "note": "Canopy / $CNPY. CNPY token seen at 0x701257ee548006e7b60f3abd4bd9b74c65f2d87a (unverified). Confirm the factory from a v4.fun token's creation tx on Blockscout."
     },
     {
       "key": "noxa",
       "label": "Noxa",
-      "site": "https://noxa.fun",
       "model": "bonding-curve",
       "lpLockedByConstruction": true,
       "factories": [],
@@ -105,12 +101,11 @@
       "verified": false,
       "tokenCreatedSignature": "",
       "evidence": "",
-      "note": "Largely deprecated; kept for backfill coverage (spec §7). $NOXA 0xeC111891ba1DaCD3DdCE6bACd4b53312BcAF72af. Noxa restricts launch-block buys to the creator (spec §3.2)."
+      "note": "Largely deprecated; kept for backfill coverage (spec §7). Spec §3.2 notes Noxa restricted launch-block buys to the creator. Multiple 'NOXA' tokens exist on-chain; confirm the real pad's factory before trusting attribution."
     },
     {
       "key": "sentry",
       "label": "Sentry",
-      "site": "",
       "model": "bonding-curve",
       "lpLockedByConstruction": true,
       "factories": [],
@@ -118,12 +113,11 @@
       "verified": false,
       "tokenCreatedSignature": "",
       "evidence": "",
-      "note": "Small (~$180k TVL per DeFiLlama). Inspect the deployer of 'sentrylauncher' token 0x432e63E00DBC8EFd1109C263dBedCb793609F7Af."
+      "note": "Small pad. A token 'sentrylauncher' is on-chain at 0x432e63E00DBC8EFd1109C263dBedCb793609F7Af (unverified) — inspect its deployer on Blockscout as a lead."
     },
     {
       "key": "virtuals",
       "label": "Virtuals Protocol",
-      "site": "https://app.virtuals.io",
       "model": "agent-bonding-curve",
       "lpLockedByConstruction": true,
       "factories": [],
@@ -131,12 +125,11 @@
       "verified": false,
       "tokenCreatedSignature": "",
       "evidence": "",
-      "note": "AI-agent tokens; 5,600+ agents on 4663 in the first month. VIRTUAL 0xc6911796042b15d7Fa4F6CDe69e245DdCd3d9c31. Virtuals uses a bonding-curve genesis/factory contract — find the 4663 deployment; tokens graduate to v4."
+      "note": "AI-agent tokens. VIRTUAL token seen at 0xc6911796042b15d7Fa4F6CDe69e245DdCd3d9c31 (unverified). Virtuals uses a bonding-curve genesis/factory contract that graduates tokens to v4 — find the 4663 deployment by tracing an agent token's creation tx."
     },
     {
       "key": "poolstrade",
       "label": "pools.trade",
-      "site": "https://pools.trade",
       "model": "pool-first-v4",
       "lpLockedByConstruction": true,
       "factories": [],
@@ -144,7 +137,7 @@
       "verified": false,
       "tokenCreatedSignature": "",
       "evidence": "",
-      "note": "Uniswap Labs pool-first launch. Likely emits only v4 Initialize with a known periphery router as tx.to and no separate factory event — attribute by the router address in the launch tx."
+      "note": "Reported as a Uniswap-Labs pool-first launch flow. May emit only v4 Initialize with a periphery router as tx.to and no separate factory event — attribute by that router address once identified from a real launch tx."
     }
   ]
 }

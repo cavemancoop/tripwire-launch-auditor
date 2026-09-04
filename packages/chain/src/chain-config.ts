@@ -11,7 +11,6 @@ export interface ContractRef {
 export interface LaunchpadConfig {
   key: string;
   label: string;
-  site?: string;
   model: string;
   lpLockedByConstruction: boolean;
   /** Confirmed factory / periphery addresses that identify this launchpad. */
@@ -31,6 +30,7 @@ export interface ChainConfig {
   blockscoutApi: string;
   approxBlockSeconds: number;
   getLogsMaxRange: number;
+  launchpadVerificationMethod?: string;
   uniswap: {
     v4PoolManager: ContractRef;
     v3Factory: ContractRef;

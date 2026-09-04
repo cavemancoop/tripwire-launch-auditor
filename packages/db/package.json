@@ -12,8 +12,6 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
     "generate": "prisma generate",
-    "validate": "prisma validate",
-    "migrate": "prisma migrate dev",
     "postinstall": "prisma generate"
   },
   "dependencies": {
