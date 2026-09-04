@@ -8,6 +8,7 @@
     "start": "tsx src/index.ts",
     "watcher:replay": "tsx src/scripts/replay.ts",
     "watcher:recent": "tsx src/scripts/recent.ts",
+    "watcher:prune-stale": "tsx src/scripts/prune-stale.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests"
   },
