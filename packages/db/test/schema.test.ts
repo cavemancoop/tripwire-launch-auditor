@@ -50,6 +50,26 @@ describe('prisma schema', () => {
     );
   });
 
+  it('is not launch-shaped: reports carry reportTime + trigger (spec §1.1)', () => {
+    expect(enumValues('ReportTrigger').sort()).toEqual(
+      ['event', 'launch', 'on_demand', 'qualified', 'scheduled'].sort(),
+    );
+    const report = schema.match(/model Report \{([\s\S]*?)\n\}/)![1]!;
+    expect(report).toMatch(/reportTime\s+DateTime/);
+    expect(report).toMatch(/trigger\s+ReportTrigger/);
+    expect(report).toMatch(/launchId\s+String\?/); // launch link is optional
+    expect(report).toMatch(/ageHours\s+Float\?/);
+  });
+
+  it('anchors outcomes to anchorTime, not launch (spec §1.1)', () => {
+    const outcome = schema.match(/model Outcome \{([\s\S]*?)\n\}/)![1]!;
+    expect(outcome).toMatch(/anchorTime\s+DateTime/);
+    expect(outcome).toMatch(/trigger\s+ReportTrigger/);
+    expect(outcome).toContain(
+      '@@unique([chainId, tokenAddress, anchorTime, label, horizon, ruleVersion])',
+    );
+  });
+
   it('keeps verbatim external-scanner blobs with fetch timestamps (spec §3.3)', () => {
     expect(schema).toMatch(/goplusRaw\s+Json\?/);
     expect(schema).toMatch(/goplusFetchedAt\s+DateTime\?/);

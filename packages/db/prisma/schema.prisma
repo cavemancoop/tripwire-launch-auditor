@@ -1,6 +1,11 @@
 // Launch Auditor — schema for the seven tables named in the build guide:
 // launches, features, reports, commits, outcomes, lifecycle_log, receipts.
-// Modelled from spec §1 (outcomes + horizons), §3.3 (feature vector v0), §6 (commitment).
+// Modelled from spec §1 (outcomes + horizons), §1.1 (report time is arbitrary),
+// §3.3 (feature vector v0), §6 (commitment).
+//
+// Not launch-shaped: a Report is about (chainId, tokenAddress) at an arbitrary
+// `reportTime` with a `trigger`; the Launch link is optional. Outcomes anchor to
+// `anchorTime` (= the reportTime the horizons are measured from), not to launch.
 
 generator client {
   provider = "prisma-client-js"
@@ -24,6 +29,16 @@ enum LaunchSource {
 enum Lane {
   index
   qualified
+}
+
+/// What caused a report to be issued (spec §1.1). Metrics are published per
+/// trigger because on-demand requests skew toward already-suspected tokens.
+enum ReportTrigger {
+  launch     // index-lane report at/near launch
+  qualified  // qualified-lane report at/near launch
+  on_demand  // POST /v1/assess for a token of any age (spec §9)
+  scheduled  // daily re-score of a watched token
+  event      // re-score triggered by a material on-chain change
 }
 
 /// The four mechanical outcomes (spec §1).
@@ -168,15 +183,31 @@ model Feature {
 }
 
 // ───────────────────────────── Reports ──────────────────────────────
-// One row per (launch, forecaster). Holds the four outcome probabilities,
+// One row per (token, reportTime, forecaster). Holds the outcome probabilities,
 // the canonical JSON that was hashed, the EIP-712 signature, and the commit link.
+// Report time is arbitrary (spec §1.1): a report may be issued at launch or for
+// a token of any age. The Launch link is optional.
 
 model Report {
   id                String         @id @default(cuid())
-  launchId          String
-  launch            Launch         @relation(fields: [launchId], references: [id], onDelete: Cascade)
+  chainId           Int
+  tokenAddress      String
+  reportTime        DateTime       // §1.1 — all horizons are measured from here
+  trigger           ReportTrigger
   forecaster        ForecasterKind
   forecasterVersion String
+
+  launchId String?
+  launch   Launch? @relation(fields: [launchId], references: [id], onDelete: SetNull)
+
+  // §1.1 age-aware inputs, computed at reportTime. Null for launch-time reports
+  // (their context lives in the linked Launch's Feature row).
+  ageHours                       Float?
+  holderCountTrend               Float?  // slope of holder count since the prior report
+  clusterBalanceDeltaPct         Float?  // cluster net balance change since the prior report
+  liquidityDeltaPct              Float?  // primary-pool liquidity change since the prior report
+  ownershipChangedSinceLast      Boolean?
+  implementationChangedSinceLast Boolean? // proxy upgrade / contract replacement
 
   // outcome probabilities (spec §1); null where N/A for this token type / horizon
   pInsiderExit6h  Float?
@@ -206,8 +237,9 @@ model Report {
   commit        Commit? @relation(fields: [commitId], references: [id])
   merkleLeafHash String?
 
+  @@index([chainId, tokenAddress, reportTime])
   @@index([launchId, forecaster])
-  @@index([forecaster, createdAt])
+  @@index([forecaster, trigger, createdAt])
   @@index([commitId])
   @@map("reports")
 }
@@ -247,29 +279,38 @@ model Commit {
 }
 
 // ──────────────────────────── Outcomes ──────────────────────────────
-// Resolved per (launch, label, horizon, rule version) — spec §1.
+// Resolved per (token, anchorTime, label, horizon, rule version) — spec §1, §1.1.
+// One measurement window is shared by every forecaster's report at the same
+// anchorTime; the scorer joins reports to outcomes on (token, anchorTime, ...).
 
 model Outcome {
-  id       String       @id @default(cuid())
-  launchId String
-  launch   Launch       @relation(fields: [launchId], references: [id], onDelete: Cascade)
-  label    OutcomeLabel
-  horizon  String        // "1h" | "6h" | "24h" | "72h" | "7d"
+  id           String  @id @default(cuid())
+  chainId      Int
+  tokenAddress String
+  anchorTime   DateTime      // §1.1 — the reportTime the horizons are measured from
+  trigger      ReportTrigger // assessment trigger; metrics are split by this (§1.1, §2)
+
+  launchId String?
+  launch   Launch? @relation(fields: [launchId], references: [id], onDelete: SetNull)
+
+  label   OutcomeLabel
+  horizon String        // "1h" | "6h" | "24h" | "72h" | "7d"
 
   status      OutcomeStatus @default(PENDING)
   value       Boolean?      // resolved outcome; null while PENDING / NA / UNRESOLVABLE
   ruleVersion String        @default("v1")
   evidence    Json?         // tx hashes / measurements backing the resolution
 
-  horizonAt  DateTime?      // wall-clock time the horizon check is due
+  horizonAt  DateTime?      // wall-clock time the horizon check is due (anchorTime + horizon)
   measuredAt DateTime?
   retrospective Boolean     @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([launchId, label, horizon, ruleVersion])
+  @@unique([chainId, tokenAddress, anchorTime, label, horizon, ruleVersion])
   @@index([status, horizonAt])
+  @@index([trigger])
   @@map("outcomes")
 }
 

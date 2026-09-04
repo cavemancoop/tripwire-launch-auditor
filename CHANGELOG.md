@@ -30,3 +30,32 @@ Append-only. Each entry: what changed, deliberate scope calls, and what the huma
 
 ### Not done in M0 (later milestones)
 - Watcher, feature computation, deterministic score, outcome resolution, commits, Metabolism, LLM deep-dive, payments, dashboard, deploy.
+
+## M0.1 — schema made trigger-aware (2026-09-03)
+
+Spec updated to add §1.1 (report time is arbitrary), the `POST /v1/assess/{token}`
+row in §9, and the §10.1 Watch/Trace/Triage roadmap. Applied before any migration
+had run, so nothing was retrofitted. Repo + planning-dir copies of the spec refreshed.
+
+### Changed
+- New enum `ReportTrigger` (`launch` | `qualified` | `on_demand` | `scheduled` | `event`).
+- `Report` is no longer launch-shaped: it carries `chainId`, `tokenAddress`, `reportTime`,
+  `trigger`; `launchId` is now **optional** (`onDelete: SetNull`). Added the §1.1 age-aware
+  inputs as typed nullable columns: `ageHours`, `holderCountTrend`, `clusterBalanceDeltaPct`,
+  `liquidityDeltaPct`, `ownershipChangedSinceLast`, `implementationChangedSinceLast`.
+- `Outcome` anchors to `anchorTime` (= the `reportTime` horizons are measured from) + `trigger`,
+  with `chainId` / `tokenAddress` and an optional `launchId`. Unique key is now
+  `(chainId, tokenAddress, anchorTime, label, horizon, ruleVersion)` — one measurement window
+  shared by every forecaster's report at that anchorTime; the scorer joins on it.
+- Still exactly the seven build-guide tables. `POST /v1/assess` itself is an API concern (M7);
+  the daily-re-score / watch-subscription table is v0.3 (§10.1), not built now.
+
+### Deliberate scope call
+- Age-aware inputs live on `Report` (mild denormalization across forecasters sharing a
+  `reportTime`) rather than a new `assessments` table. If v0.3 makes assessments first-class,
+  promoting those columns + the shared outcome window into `assessments` is the refactor.
+- `Feature` stays 1:1 with `Launch` — it is the launch-time §3.3 vector. Age-aware feature
+  snapshots at arbitrary report times are v0.3.
+
+### Verify
+- `pnpm verify` green (23 tests). `prisma migrate diff` still yields valid SQL for the 7 tables.

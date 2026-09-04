@@ -19,6 +19,9 @@ What it claims: the forecast existed before the outcome; the scorer is reproduci
 
 `DRAWDOWN_80` is a drawdown, not an accusation. The word "rug" does not appear in report fields. A buyer chooses the outcome that matters to their strategy.
 
+### 1.1 Report time is arbitrary
+Every report carries `reportTime` and `trigger` (`launch` | `qualified` | `on_demand` | `scheduled` | `event`). All horizons are measured from `reportTime`, not from launch. Features that depend on age (`age_hours`, holder-count trend, cluster balance delta since last report, liquidity delta, ownership or implementation changes since last report) are computed at `reportTime`. Metrics are published per trigger type because on-demand requests skew toward already-suspected tokens and have a different base rate. `DRAWDOWN_80` for non-launch reports uses the maximum price in the 24h before `reportTime` as its reference.
+
 Outcome rule v1 hash is committed before the first live report. Changes apply only to reports issued after the change's effective block.
 
 ## 2. Metrics (per outcome, per horizon, per forecaster)
@@ -83,6 +86,7 @@ Unchanged state machine from v0.1 §7 (NO_KEY → ACTIVE → DRAINING → ROTATI
 |---|---|---|
 | `GET /v1/launches` (feed) | free | latest launches with `det_v0` and commit proof |
 | `GET /v1/report/{token}` | free tier during contest; later T0 free / T1 0.10 USDG via x402 | includes all forecasters and evidence |
+| `POST /v1/assess/{token}` | free during contest | on-demand report for a token of any age; trigger=`on_demand`; also enqueues the token for daily scheduled re-scores for 7 days |
 | `POST /v1/deepdive/{token}` | 0.10 USDG via x402 or API key | triggers `llm_deepdive_v0` |
 | `GET /v1/benchmark` | free | metrics table, all forecasters, sample sizes |
 | `GET /v1/proof/{hash}` | free | Merkle proof |
@@ -93,6 +97,12 @@ x402 is a payment rail, not a channel. Also accept a plain API key for design pa
 
 ## 10. Demand gate (before any work beyond the contest)
 Three integration commitments from bots, terminals or launchpads of the form: "if `p_insider_exit_24h` beats our current heuristic on the backfill set at threshold X, we call it on every candidate at price Y." Candidates: Robinhood Checker, the Phanes/Skeleton/Rick/Major alert bots, the open-source Robinhood sniper/LP bots, ScanHood, Hood Trade, Noxa, Pons. The benchmark page is the pitch: it scores their signals too.
+
+## 10.1 Roadmap beyond the contest (same commit-and-score spine, one agent identity)
+- v0.3 Watch: subscriptions per token (holders, communities, protocols); event-driven re-scores on cluster wallet movements, LP changes, ownership transfers, contract upgrades, approaching unlocks; alerts with the diff since the last report. This is the recurring-revenue layer.
+- v0.4 Trace: post-incident fund tracing across bridges and chains to exchange deposit addresses; timestamped evidence packages of addresses, transactions and flows delivered to exchanges, protocols and victims; cross-chain, evidence-weighted entity graph with confidence scores.
+- v0.5 Triage: scanning of deployed contracts and upgrades for known vulnerability classes, reproduced on forks only; private disclosure to the owner or their bounty program first, publication only after a fix; bounty programs as the revenue source.
+- Standing rule across all layers: the agent reports on addresses, contracts and flows. Identity attribution and any public accusation naming a person go to a human review queue with the agent's evidence attached; the agent never publishes them itself and never tests exploits against live funds.
 
 ## 11. Cut from v0.1 and why
 - RevenueRouter and automatic $ORBIO buys: negligible credit recapture, MEV bait, and $ORBIO's main market is quoted in tokenized NVDA. Treasury is a manual decision.
