@@ -23,6 +23,12 @@ describe('classifyPair (chain 4663)', () => {
     expect(classifyPair(4663, USDG.toLowerCase(), TOKEN).confident).toBe(true);
   });
 
+  it('treats the zero address (native ETH in v4) as the quote, confidently', () => {
+    const a = classifyPair(4663, '0x0000000000000000000000000000000000000000', TOKEN);
+    expect(a.token).toBe(TOKEN);
+    expect(a.confident).toBe(true);
+  });
+
   it('falls back to token1 with low confidence when neither side is a known quote', () => {
     const a = classifyPair(4663, OTHER, TOKEN);
     expect(a.token).toBe(TOKEN);

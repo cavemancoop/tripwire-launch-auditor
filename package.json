@@ -17,7 +17,8 @@
     "db:studio": "prisma studio --schema packages/db/prisma/schema.prisma",
     "dev:api": "pnpm --filter @launch-auditor/api dev",
     "dev:worker": "pnpm --filter @launch-auditor/worker dev",
-    "watcher:replay": "pnpm --filter @launch-auditor/worker watcher:replay"
+    "watcher:replay": "pnpm --filter @launch-auditor/worker watcher:replay",
+    "watcher:recent": "pnpm --filter @launch-auditor/worker watcher:recent"
   },
   "devDependencies": {
     "@prisma/client": "catalog:",

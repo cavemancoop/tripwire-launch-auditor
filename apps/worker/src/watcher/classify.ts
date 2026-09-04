@@ -1,5 +1,8 @@
 import { getChainConfig } from '@launch-auditor/chain';
 
+/** Uniswap v4 uses the zero address for native ETH — always a quote, never the new token. */
+const NATIVE_ETH = '0x0000000000000000000000000000000000000000';
+
 export interface PairClassification {
   /** the new token */
   token: string;
@@ -21,9 +24,10 @@ export function classifyPair(
   token0: string,
   token1: string,
 ): PairClassification {
-  const quotes = new Set(
-    getChainConfig(chainId).quoteAssets.list.map((a) => a.toLowerCase()),
-  );
+  const quotes = new Set([
+    NATIVE_ETH,
+    ...getChainConfig(chainId).quoteAssets.list.map((a) => a.toLowerCase()),
+  ]);
   const a0 = token0.toLowerCase();
   const a1 = token1.toLowerCase();
 
