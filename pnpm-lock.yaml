@@ -38,9 +38,15 @@ importers:
 
   .:
     devDependencies:
+      '@prisma/client':
+        specifier: 'catalog:'
+        version: 6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)
       '@types/node':
         specifier: 'catalog:'
         version: 22.20.1
+      prisma:
+        specifier: 'catalog:'
+        version: 6.19.3(typescript@5.9.3)
       tsx:
         specifier: 'catalog:'
         version: 4.23.13

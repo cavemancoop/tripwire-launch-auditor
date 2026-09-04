@@ -7,9 +7,10 @@ import { execSync } from 'node:child_process';
 process.env.DATABASE_URL ??=
   'postgresql://placeholder:placeholder@localhost:5432/placeholder?schema=public';
 
+const SCHEMA = 'packages/db/prisma/schema.prisma';
 const steps = [
-  ['Prisma client generate', 'pnpm --filter @launch-auditor/db exec prisma generate'],
-  ['Prisma schema validate', 'pnpm --filter @launch-auditor/db exec prisma validate'],
+  ['Prisma client generate', `pnpm exec prisma generate --schema ${SCHEMA}`],
+  ['Prisma schema validate', `pnpm exec prisma validate --schema ${SCHEMA}`],
   ['Typecheck (all packages)', 'pnpm -r --workspace-concurrency=1 typecheck'],
   ['Tests (vitest)', 'pnpm -r --workspace-concurrency=1 test'],
 ];

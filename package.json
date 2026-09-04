@@ -11,15 +11,17 @@
     "verify": "node scripts/verify.mjs",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
-    "db:generate": "pnpm --filter @launch-auditor/db exec prisma generate",
-    "db:validate": "pnpm --filter @launch-auditor/db exec prisma validate",
-    "db:migrate": "pnpm --filter @launch-auditor/db exec prisma migrate dev",
-    "db:studio": "pnpm --filter @launch-auditor/db exec prisma studio",
+    "db:generate": "prisma generate --schema packages/db/prisma/schema.prisma",
+    "db:validate": "prisma validate --schema packages/db/prisma/schema.prisma",
+    "db:migrate": "prisma migrate dev --schema packages/db/prisma/schema.prisma",
+    "db:studio": "prisma studio --schema packages/db/prisma/schema.prisma",
     "dev:api": "pnpm --filter @launch-auditor/api dev",
     "dev:worker": "pnpm --filter @launch-auditor/worker dev"
   },
   "devDependencies": {
+    "@prisma/client": "catalog:",
     "@types/node": "catalog:",
+    "prisma": "catalog:",
     "tsx": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

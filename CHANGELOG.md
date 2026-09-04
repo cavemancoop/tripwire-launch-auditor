@@ -59,3 +59,21 @@ had run, so nothing was retrofitted. Repo + planning-dir copies of the spec refr
 
 ### Verify
 - `pnpm verify` green (23 tests). `prisma migrate diff` still yields valid SQL for the 7 tables.
+
+## M0.2 — first migration applied; env wiring (2026-09-03)
+
+### Changed
+- `db:generate` / `db:validate` / `db:migrate` / `db:studio` now run from the repo root
+  (`prisma ... --schema packages/db/prisma/schema.prisma`) so Prisma loads the repo-root
+  `.env`. Previously they ran inside `packages/db`, which has no `.env`, so `prisma migrate`
+  failed with "Environment variable not found: DATABASE_URL". `prisma` + `@prisma/client`
+  added as root devDependencies; `packages/db` keeps its own copy for the `postinstall` generate.
+- `scripts/verify.mjs` uses the same root-level `prisma --schema ...` invocation.
+- Single env file: repo-root `.env` (gitignored), created from `.env.example`.
+
+### Added
+- `packages/db/prisma/migrations/20260904044402_init/` — the first migration (7 tables + 8 enums).
+
+### Verify
+- `docker compose up -d` → `pnpm db:migrate` applies cleanly; all 7 tables present in Postgres.
+- `pnpm verify` green. **M0 check now fully satisfied.**
