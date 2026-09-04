@@ -1,25 +1,60 @@
 import { getChainConfig } from '@launch-auditor/chain';
-import { prisma } from '@launch-auditor/db';
+import { Prisma, prisma } from '@launch-auditor/db';
 import { loadEnv } from '../env';
 
-// pnpm watcher:recent [n]
-//   Print the most recent launches the watcher indexed, with Blockscout links
-//   so a row can be checked against on-chain reality by hand.
+// pnpm watcher:recent [n]                      last n launches (default 10)
+// pnpm watcher:recent <fromBlock>-<toBlock>     launches in that block range —
+//                                               paste straight from a [watcher] log line
+// pnpm watcher:recent --from <b> --to <b>       same, as explicit flags
+//
+// Prints Blockscout links for each launch, so a row can be checked against
+// on-chain reality by hand.
+
+interface ParsedArgs {
+  where: Prisma.LaunchWhereInput;
+  take?: number;
+}
+
+function parseArgs(argv: string[]): ParsedArgs {
+  const fromIdx = argv.indexOf('--from');
+  const toIdx = argv.indexOf('--to');
+  if (fromIdx !== -1 || toIdx !== -1) {
+    const gte = fromIdx !== -1 ? BigInt(argv[fromIdx + 1]!) : undefined;
+    const lte = toIdx !== -1 ? BigInt(argv[toIdx + 1]!) : undefined;
+    return { where: { launchBlock: { gte, lte } } };
+  }
+
+  const positional = argv.find((a) => !a.startsWith('--'));
+  if (positional) {
+    const range = positional.match(/^(\d+)\s*-\s*(\d+)$/);
+    if (range) {
+      return {
+        where: { launchBlock: { gte: BigInt(range[1]!), lte: BigInt(range[2]!) } },
+      };
+    }
+    if (/^\d+$/.test(positional)) return { where: {}, take: Number(positional) };
+    throw new Error(
+      `unrecognised argument "${positional}" — pass a count (10) or a block range (54300459-54300499)`,
+    );
+  }
+
+  return { where: {}, take: 10 };
+}
 
 async function main(): Promise<void> {
-  const n = Number(process.argv[2] ?? 10);
+  const { where, take } = parseArgs(process.argv.slice(2));
   const { chainId } = loadEnv();
   const explorer = getChainConfig(chainId).explorer;
 
   const rows = await prisma.launch.findMany({
-    where: { chainId },
+    where: { chainId, ...where },
     orderBy: { launchBlock: 'desc' },
-    take: n,
+    ...(take ? { take } : {}),
     include: { feature: true },
   });
 
   if (rows.length === 0) {
-    console.log('no launches indexed yet — let `pnpm dev:worker` run a little longer');
+    console.log('no launches match — let `pnpm dev:worker` run a little longer, or widen the range');
     return;
   }
 
@@ -49,7 +84,7 @@ async function main(): Promise<void> {
 
 main()
   .catch((err) => {
-    console.error(err);
+    console.error(err instanceof Error ? err.message : err);
     process.exitCode = 1;
   })
   .finally(() => prisma.$disconnect());
