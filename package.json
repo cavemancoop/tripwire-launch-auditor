@@ -19,7 +19,10 @@
     "dev:worker": "pnpm --filter @launch-auditor/worker dev",
     "watcher:replay": "pnpm --filter @launch-auditor/worker watcher:replay",
     "watcher:recent": "pnpm --filter @launch-auditor/worker watcher:recent",
-    "watcher:prune-stale": "pnpm --filter @launch-auditor/worker watcher:prune-stale"
+    "watcher:prune-stale": "pnpm --filter @launch-auditor/worker watcher:prune-stale",
+    "contracts:build": "forge build --root packages/contracts",
+    "contracts:test": "forge test --root packages/contracts",
+    "contracts:deploy": "forge script packages/contracts/script/Deploy.s.sol --root packages/contracts --rpc-url robinhood --broadcast"
   },
   "devDependencies": {
     "@prisma/client": "catalog:",

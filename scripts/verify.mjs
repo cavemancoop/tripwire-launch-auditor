@@ -32,11 +32,22 @@ function generate() {
   }
 }
 
+function forgeTests() {
+  try {
+    execSync('forge --version', { stdio: 'ignore' });
+  } catch {
+    process.stdout.write('⚠ forge not on PATH — skipping contract tests (install Foundry to run them)\n');
+    return;
+  }
+  run('forge test --root packages/contracts');
+}
+
 const steps = [
   ['Prisma client generate', generate],
   ['Prisma schema validate', () => run(`pnpm exec prisma validate --schema ${SCHEMA}`)],
   ['Typecheck (all packages)', () => run('pnpm -r --workspace-concurrency=1 typecheck')],
   ['Tests (vitest)', () => run('pnpm -r --workspace-concurrency=1 test')],
+  ['Contract tests (forge)', forgeTests],
 ];
 
 let failed = null;
