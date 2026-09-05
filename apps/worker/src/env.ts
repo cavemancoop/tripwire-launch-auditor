@@ -12,6 +12,10 @@ export interface WorkerEnv {
   headLagBlocks: bigint;
   /** max blocks advanced per poll, so a big catch-up is chunked with cursor saves */
   maxSpanBlocks: bigint;
+  /** qualified lane (spec §3.1 / §12): min unique buyers in 10m to run scanners */
+  qualifyUniqueBuyers: number;
+  goplusApiKey?: string;
+  scanhoodApiBase: string;
 }
 
 let dotenvLoaded = false;
@@ -61,5 +65,8 @@ export function loadEnv(): WorkerEnv {
     quotaPerCreator24h: Number(process.env.QUOTA_PER_CREATOR_24H ?? 5),
     headLagBlocks: BigInt(process.env.WATCHER_HEAD_LAG_BLOCKS ?? 60),
     maxSpanBlocks: BigInt(process.env.WATCHER_MAX_SPAN_BLOCKS ?? 4000),
+    qualifyUniqueBuyers: Number(process.env.QUALIFY_UNIQUE_BUYERS ?? 25),
+    goplusApiKey: process.env.GOPLUS_API_KEY || undefined,
+    scanhoodApiBase: process.env.SCANHOOD_API_BASE || 'https://scanhood.xyz',
   };
 }

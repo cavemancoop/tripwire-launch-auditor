@@ -35,6 +35,7 @@ export interface ChainConfig {
     v4PoolManager: ContractRef;
     v3Factory: ContractRef;
     v2Factory: ContractRef;
+    v4Quoter: ContractRef;
   };
   quoteAssets: { note?: string; usdg: string; weth: string; list: string[] };
   launchpads: LaunchpadConfig[];

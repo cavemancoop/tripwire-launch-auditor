@@ -1,11 +1,12 @@
 import { getChainConfig } from '@launch-auditor/chain';
-import { prisma } from '@launch-auditor/db';
+import { Prisma, prisma } from '@launch-auditor/db';
 import { Worker } from 'bullmq';
 import type { Hex, PublicClient } from 'viem';
 import { loadEnv } from '../env';
 import { QUEUE_NAMES, parseRedisUrl } from '../queues';
 import { buildCreatorCluster, clusterAddresses } from './cluster';
 import { computeCreatorContext } from './creator';
+import { computeFeature9 } from './feature9';
 import { computeT10Features } from './features';
 import { computeHolderStats } from './holders';
 
@@ -53,7 +54,12 @@ export async function runT10ForLaunch(
     maxRange: cfg.getLogsMaxRange,
   });
 
-  // item 3 — creator context (also refreshed here so a re-run / backfill fills it)
+  // item 3 — creator context. Prior-launch counts refresh every run (cheap DB);
+  // the age nonce-search runs only when not already known (1-6s/RPC-call).
+  const existing = await prisma.feature.findUnique({
+    where: { launchId },
+    select: { creatorAgeDays: true },
+  });
   const creatorCtx = await computeCreatorContext({
     client,
     chainId: launch.chainId,
@@ -61,6 +67,7 @@ export async function runT10ForLaunch(
     launchBlock: launch.launchBlock,
     launchId,
     approxBlockSeconds: cfg.approxBlockSeconds,
+    existingAgeDays: existing?.creatorAgeDays ?? null,
   });
 
   // items 4, 5 — cluster / top-10 supply concentration at T+10m
@@ -76,6 +83,27 @@ export async function runT10ForLaunch(
     liquiditySource,
   });
 
+  // feature 9 (§3.3.9) + feature 7 sell impact — qualified lane, non-launchpad only
+  const env = loadEnv();
+  const qualified =
+    !launch.lpLockedByConstruction &&
+    (feats.uniqueBuyers10m ?? 0) >= env.qualifyUniqueBuyers;
+  const f9 = qualified
+    ? await computeFeature9({
+        client,
+        token,
+        quote: (launch.quoteAddress as Hex | null) ?? null,
+        quoter: cfg.uniswap.v4Quoter.address as Hex,
+        poolFee: launch.poolFee,
+        poolTickSpacing: launch.poolTickSpacing,
+        poolHooks: launch.poolHooks,
+        totalSupply: holders.totalSupply,
+        blockNumber: toBlock,
+        goplus: { apiKey: env.goplusApiKey },
+        scanhood: { baseUrl: env.scanhoodApiBase },
+      })
+    : null;
+
   await prisma.$transaction([
     prisma.clusterMember.deleteMany({ where: { launchId } }),
     prisma.clusterMember.createMany({
@@ -86,6 +114,10 @@ export async function runT10ForLaunch(
         evidenceTx: m.evidenceTx,
         confidence: m.confidence,
       })),
+    }),
+    prisma.launch.update({
+      where: { id: launchId },
+      data: { lane: qualified ? 'qualified' : undefined },
     }),
     prisma.feature.update({
       where: { launchId },
@@ -99,7 +131,25 @@ export async function runT10ForLaunch(
         clusterConfidence: cluster.confidence,
         clusterSupplyPct: holders.clusterSupplyPct,
         top10NoncreatorPct: holders.top10NoncreatorPct,
-        t10ComputedAt: new Date(),
+        ...(f9
+          ? {
+              verified: f9.verified,
+              ownerRenounced: f9.ownerRenounced,
+              mintable: f9.mintable,
+              lpHolderType: f9.lpHolderType,
+              sellSimOk: f9.sellSimOk,
+              sellTaxBps: f9.sellTaxBps,
+              sellImpactBps: f9.sellImpactBps,
+              liquidityUsd10m: f9.liquidityUsd10m,
+              goplusRaw: f9.goplusRaw as Prisma.InputJsonValue,
+              goplusFetchedAt: f9.goplusFetchedAt,
+              scanhoodRaw: f9.scanhoodRaw as Prisma.InputJsonValue,
+              scanhoodFetchedAt: f9.scanhoodFetchedAt,
+            }
+          : {}),
+        // leave t10ComputedAt null when the cluster lookups were incomplete, so a
+        // re-run finishes it (rather than freezing a partial feature vector)
+        t10ComputedAt: cluster.partial.length === 0 ? new Date() : null,
       },
     }),
   ]);

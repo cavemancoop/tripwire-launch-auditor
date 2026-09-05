@@ -24,6 +24,12 @@
       "verified": true,
       "evidence": "https://robinhoodchain.blockscout.com/address/0x8bcEaA40B9AcdfAedF85AdF4FF01F5Ad6517937f",
       "note": "Blockscout metadata_tag UniswapV2Factory; emits PairCreated live (~2 per 2000 blocks, 2026-09-04). LONG's stock-paired pools may land here."
+    },
+    "v4Quoter": {
+      "address": "0x8Dc178eFB8111BB0973Dd9d722ebeFF267c98F94",
+      "verified": true,
+      "evidence": "quoteExactInputSingle returned a live quote for the CAPY/ETH pool via eth_call (2026-09-05); address also in Uniswap's own v4 deployments doc.",
+      "note": "V4Quoter. Used for our own quote-based sell impact (spec §3.3.7 / §3.3.9). v3/v2 sell-impact quotes are not wired (v3 barely used on 4663)."
     }
   },
   "quoteAssets": {

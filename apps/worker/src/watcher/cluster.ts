@@ -32,6 +32,8 @@ export interface ClusterResult {
   size: number;
   /** §3.2 "cluster confidence is published" — mean of member-row confidences (v1) */
   confidence: number;
+  /** rules whose RPC lookup failed transiently — cluster may be incomplete */
+  partial: ClusterRule[];
 }
 
 /**
@@ -82,34 +84,44 @@ export async function buildCreatorCluster(p: BuildClusterParams): Promise<Cluste
   // rule 1 — the creator
   addMember(rows, creator, 'CREATOR', null);
 
-  // rule 2 — bought in the launch block (token Transfer from the pool, that block only)
-  const launchBlockBuys = await getLogsChunked(p.client, {
-    address: p.token,
-    topics: [TRANSFER_TOPIC0 as Hex, addressToTopic(liq)],
-    fromBlock: p.launchBlock,
-    toBlock: p.launchBlock,
-    maxRange: p.maxRange,
-  });
-  for (const log of launchBlockBuys) {
-    const to = log.topics[2] ? topicToAddress(log.topics[2]) : null;
-    if (!to || to === liq || to === creator) continue; // creator already in via rule 1
-    addMember(rows, to, 'LAUNCH_BLOCK_BUY', log.transactionHash);
+  // rule 2 — bought in the launch block (token Transfer from the pool, that block only).
+  // A transient RPC failure on one rule must not lose the others.
+  const partial: ClusterRule[] = [];
+  try {
+    const launchBlockBuys = await getLogsChunked(p.client, {
+      address: p.token,
+      topics: [TRANSFER_TOPIC0 as Hex, addressToTopic(liq)],
+      fromBlock: p.launchBlock,
+      toBlock: p.launchBlock,
+      maxRange: p.maxRange,
+    });
+    for (const log of launchBlockBuys) {
+      const to = log.topics[2] ? topicToAddress(log.topics[2]) : null;
+      if (!to || to === liq || to === creator) continue; // creator already in via rule 1
+      addMember(rows, to, 'LAUNCH_BLOCK_BUY', log.transactionHash);
+    }
+  } catch {
+    partial.push('LAUNCH_BLOCK_BUY');
   }
 
   // rule 3 — received tokens directly from the creator, within the window
-  const fromCreator = await getLogsChunked(p.client, {
-    address: p.token,
-    topics: [TRANSFER_TOPIC0 as Hex, addressToTopic(creator)],
-    fromBlock: p.launchBlock,
-    toBlock: p.launchBlock + p.windowBlocks,
-    maxRange: p.maxRange,
-  });
   const recipients = new Set<string>();
-  for (const log of fromCreator) {
-    const to = log.topics[2] ? topicToAddress(log.topics[2]) : null;
-    if (!to || to === creator || to === liq) continue; // creator -> pool is adding LP, not clustering
-    recipients.add(to);
-    addMember(rows, to, 'DIRECT_TRANSFER', log.transactionHash);
+  try {
+    const fromCreator = await getLogsChunked(p.client, {
+      address: p.token,
+      topics: [TRANSFER_TOPIC0 as Hex, addressToTopic(creator)],
+      fromBlock: p.launchBlock,
+      toBlock: p.launchBlock + p.windowBlocks,
+      maxRange: p.maxRange,
+    });
+    for (const log of fromCreator) {
+      const to = log.topics[2] ? topicToAddress(log.topics[2]) : null;
+      if (!to || to === creator || to === liq) continue; // creator -> pool is adding LP, not clustering
+      recipients.add(to);
+      addMember(rows, to, 'DIRECT_TRANSFER', log.transactionHash);
+    }
+  } catch {
+    partial.push('DIRECT_TRANSFER');
   }
 
   // rule 4 — first-ever inbound on chain came from the creator.
@@ -128,7 +140,7 @@ export async function buildCreatorCluster(p: BuildClusterParams): Promise<Cluste
   const confidence = rows.length
     ? rows.reduce((s, r) => s + r.confidence, 0) / rows.length
     : 0;
-  return { members: rows, size, confidence };
+  return { members: rows, size, confidence, partial };
 }
 
 /** Distinct addresses in a cluster result, lowercased. */

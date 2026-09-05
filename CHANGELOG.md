@@ -206,3 +206,49 @@ is 403 from the server, so everything here is reconstructed from RPC.
   was ingest-only in M1); refreshed on any T+10m re-run. Perf: the holder-balance
   reconstruction fetches every `Transfer` in the window — 500+ buyer launches take a few
   seconds; watch at scale.
+
+## M2 Part B — feature 9 + quote-based sell impact (2026-09-05)
+
+### Added — `apps/worker`
+- `scanners/goplus.ts` — GoPlus `token_security/4663` client (confirmed in their
+  supported_chains; no key needed, key raises limits). `mapGoPlus` → verified /
+  mintable / honeypot / owner-renounced / sell-tax-bps / lp-locked. Data is often
+  thin for very fresh tokens — every field optional.
+- `scanners/scanhood.ts` — ScanHood `/api/scan` + `/api/quote` (purpose-built for
+  4663, reachable from a plain server fetch, ~5 req/s). `mapScanHood` → verified /
+  sellable / lp type / `market.liq` (feeds `liquidity_usd_10m`) / deployer launch
+  count / RWA-impostor flag.
+- `watcher/sellimpact.ts` — our **own** `eth_call` to the v4 Quoter
+  (`0x8Dc178eF…98F94`, verified live) with a fixed-size sell (0.1% of total supply)
+  vs a near-spot quote → `sell_impact_bps`. v4 only (v3 barely used on 4663). A
+  quoter revert ⇒ `sell_sim_ok = false`.
+- `watcher/feature9.ts` — runs both scanners + our quote in parallel, cross-checks
+  overlapping fields, stores raw payloads + fetch timestamps in `goplusRaw` /
+  `scanhoodRaw`. Fires on the T+10m job for **non-launchpad** launches that
+  qualify (`unique_buyers_10m ≥ 25`, spec §3.1/§12); sets `lane = qualified`.
+
+### Config / env
+- `v4Quoter` added to `config/chain.4663.json`.
+- `getPublicClient` now takes `timeout` (30s default) + `retryCount` (5) — ordofi's
+  historical reads run 1–6s under load.
+- `QUALIFY_UNIQUE_BUYERS` (25), `SCANHOOD_API_BASE`, optional `GOPLUS_API_KEY`.
+
+### Resilience / perf fixes found while wiring
+- `creator_age_days` nonce binary search is 1–6s **per RPC call** on ordofi's
+  archive path. Moved it off the synchronous ingest path entirely (it was stalling
+  the poller ~80s/launch); it now runs only on the T+10m job, capped at 8
+  iterations (sub-day precision), skipped when already known, and returns a
+  conservative under-estimate.
+- `buildCreatorCluster` catches a transient RPC failure per rule and reports
+  `partial` — a failed rule no longer loses the others. `t10ComputedAt` stays null
+  on a partial run so a re-run finishes it.
+
+### Verify
+- `pnpm verify` green (50 worker tests). Live: `computeFeature9` against a real
+  token + pool key returned verified/mintable/owner-renounced from GoPlus,
+  `liquidity_usd_10m` from ScanHood, and a real `sell_impact_bps` from our own
+  quoter `eth_call`.
+- Known: pre-Part-A `launches` rows lack `poolFee`/`poolTickSpacing`/`poolHooks`, so
+  their own-quote sell impact is skipped (new launches have it). The 0.1%-of-supply
+  sell size produces large `sell_impact_bps` on thin pools — deterministic and
+  documented; tune the fraction against resolved data later.

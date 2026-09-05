@@ -18,12 +18,27 @@ export const robinhoodChain = defineChain({
   rpcUrls: { default: { http: [] } },
 });
 
-export function getPublicClient(rpcUrl: string): PublicClient {
+export interface PublicClientOptions {
+  /** per-request timeout in ms (default 30_000 — ordofi can be slow under load) */
+  timeout?: number;
+  /** transport-level retries on transient failures (default 5) */
+  retryCount?: number;
+  retryDelay?: number;
+}
+
+export function getPublicClient(
+  rpcUrl: string,
+  opts: PublicClientOptions = {},
+): PublicClient {
   if (!rpcUrl) {
     throw new Error('getPublicClient: rpcUrl is empty (set RH_RPC_URL)');
   }
   return createPublicClient({
     chain: robinhoodChain,
-    transport: http(rpcUrl),
+    transport: http(rpcUrl, {
+      timeout: opts.timeout ?? 30_000,
+      retryCount: opts.retryCount ?? 5,
+      retryDelay: opts.retryDelay ?? 400,
+    }),
   });
 }

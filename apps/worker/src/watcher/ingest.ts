@@ -3,7 +3,6 @@ import { prisma } from '@launch-auditor/db';
 import type { Hex, PublicClient } from 'viem';
 import { getQueues, T10_DELAY_MS } from '../queues';
 import { classifyPair } from './classify';
-import { computeCreatorContext } from './creator';
 import type { DetectedPool } from './detect';
 import { computeIndexFeatures } from './features';
 import { checkTokenFreshness } from './freshness';
@@ -85,14 +84,6 @@ export async function ingestPool(
   );
 
   const idx = await computeIndexFeatures(client, token as Hex, creator as Hex, txHash as Hex);
-  const cfg = getChainConfig(chainId);
-  const creatorCtx = await computeCreatorContext({
-    client,
-    chainId,
-    creator: creator as Hex,
-    launchBlock: blockNumber,
-    approxBlockSeconds: cfg.approxBlockSeconds,
-  });
 
   const lc = (s: string | null | undefined): string | undefined =>
     s ? s.toLowerCase() : undefined;
@@ -122,9 +113,8 @@ export async function ingestPool(
         create: {
           schemaVersion: 'v0',
           creatorDevbuyPct: idx.creatorDevbuyPct,
-          creatorAgeDays: creatorCtx.creatorAgeDays,
-          creatorPriorLaunches: creatorCtx.creatorPriorLaunches,
-          creatorPriorInsiderExitRate: creatorCtx.creatorPriorInsiderExitRate,
+          // feature 3 (creator_age_days / prior_*) is computed on the T+10m job —
+          // the age nonce-search is 1-6s/RPC-call and must stay off the poller.
           hasX: idx.hasX,
           hasSite: idx.hasSite,
           indexLaneComputedAt: new Date(),
