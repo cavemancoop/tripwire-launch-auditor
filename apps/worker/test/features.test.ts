@@ -8,14 +8,16 @@ const POOL = '0x3333333333333333333333333333333333333333';
 const pad = (a: string): string => `0x${'0'.repeat(24)}${a.slice(2)}`;
 const word = (n: bigint): string => `0x${n.toString(16).padStart(64, '0')}`;
 
-describe('computeIndexFeatures — creator_devbuy_pct (spec §3.3 item 2)', () => {
-  it('is the creator share of total supply received in the launch tx', async () => {
+const RECIPIENT = '0x9999999999999999999999999999999999999999';
+
+describe('computeIndexFeatures — creator_devbuy_pct (spec §3.3 item 2, §8.2)', () => {
+  it('measures the largest non-pool recipient of the token in the launch tx', async () => {
     const client = {
       getTransactionReceipt: vi.fn(async () => ({
         logs: [
-          // 1e18 tokens to the creator
-          { address: TOKEN, topics: [TRANSFER, pad(POOL), pad(CREATOR)], data: word(10n ** 18n) },
-          // noise: a transfer to someone else, and a non-Transfer log
+          // curve/pool -> a buy recipient that is NOT tx.from (Pons-style router send)
+          { address: TOKEN, topics: [TRANSFER, pad(POOL), pad(RECIPIENT)], data: word(10n ** 18n) },
+          // pool -> pool and a non-Transfer log: both ignored
           { address: TOKEN, topics: [TRANSFER, pad(POOL), pad(POOL)], data: word(5n * 10n ** 17n) },
           { address: POOL, topics: ['0xdeadbeef'], data: '0x' },
         ],
@@ -23,8 +25,9 @@ describe('computeIndexFeatures — creator_devbuy_pct (spec §3.3 item 2)', () =
       readContract: vi.fn(async () => 4n * 10n ** 18n), // 25% of supply
     };
 
-    const f = await computeIndexFeatures(client as never, TOKEN, CREATOR, '0xabc');
+    const f = await computeIndexFeatures(client as never, TOKEN, '0xabc', POOL);
     expect(f.creatorDevbuyPct).toBeCloseTo(25);
+    expect(f.devbuyRecipient).toBe(RECIPIENT.toLowerCase());
     expect(f.hasX).toBeNull();
   });
 
@@ -35,8 +38,9 @@ describe('computeIndexFeatures — creator_devbuy_pct (spec §3.3 item 2)', () =
       }),
       readContract: vi.fn(),
     };
-    const f = await computeIndexFeatures(client as never, TOKEN, CREATOR, '0xabc');
+    const f = await computeIndexFeatures(client as never, TOKEN, '0xabc', POOL);
     expect(f.creatorDevbuyPct).toBeNull();
+    expect(f.devbuyRecipient).toBeNull();
   });
 });
 

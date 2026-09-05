@@ -83,7 +83,8 @@ export async function ingestPool(
     quotaPerCreator24h,
   );
 
-  const idx = await computeIndexFeatures(client, token as Hex, creator as Hex, txHash as Hex);
+  const liqSource = liquiditySource(chainId, dp);
+  const idx = await computeIndexFeatures(client, token as Hex, txHash as Hex, liqSource);
 
   const lc = (s: string | null | undefined): string | undefined =>
     s ? s.toLowerCase() : undefined;
@@ -132,7 +133,12 @@ export async function ingestPool(
               reason: freshness.reason,
               checkedAtBlock: Number(freshness.checkedAtBlock),
             },
-            creatorDevbuyPct: { launchTx: txHash },
+            creatorDevbuyPct: {
+              launchTx: txHash,
+              // spec §8.2: recipient-based, not tx.from
+              recipient: idx.devbuyRecipient,
+              recipientIsCreator: idx.devbuyRecipient === creator,
+            },
           },
         },
       },

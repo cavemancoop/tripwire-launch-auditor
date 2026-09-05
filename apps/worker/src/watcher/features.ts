@@ -1,12 +1,14 @@
 import { getLogsChunked } from '@launch-auditor/chain';
 import { erc20Abi, type Hex, type PublicClient } from 'viem';
 import type { LogClient } from './detect';
-import { TRANSFER_TOPIC0, addressToTopic, topicToAddress } from './erc20';
+import { TRANSFER_TOPIC0, ZERO_ADDRESS, addressToTopic, topicToAddress, transferValue } from './erc20';
 
 // ── Index lane (spec §3.3 items 1, 2, 8) — computed immediately ─────────
 
 export interface IndexFeatures {
-  creatorDevbuyPct: number | null; // item 2: creator's share bought in the launch tx
+  creatorDevbuyPct: number | null; // item 2: the insider's share bought in the launch tx
+  /** address the dev buy landed on (may differ from tx.from — see Pons note) */
+  devbuyRecipient: string | null;
   hasX: boolean | null; // item 8: presence only — needs launchpad metadata, deferred
   hasSite: boolean | null;
 }
@@ -16,34 +18,59 @@ export type ReceiptClient = Pick<
   'getTransactionReceipt' | 'readContract'
 >;
 
+/**
+ * `creator_devbuy_pct` (spec §3.3.2). Measures the largest single non-pool
+ * recipient of the new token inside the launch transaction, over total supply —
+ * NOT tokens received specifically by `tx.from`. Spec §8.2 (Pons note): on a
+ * bonding-curve launch the tx is sent by a router/curve contract and the buy
+ * lands on a *recipient* address, so a sender-based count reads 0. Recipient-
+ * based is also correct for raw launches, where the creator is that recipient.
+ *
+ * `liquiditySource` (v4 PoolManager or the v2/v3 pool) is excluded; the zero
+ * address (mint) is too. The caller compares `devbuyRecipient` to the creator.
+ */
 export async function computeIndexFeatures(
   client: ReceiptClient,
   token: Hex,
-  creator: Hex,
   launchTxHash: Hex,
+  liquiditySource: string,
 ): Promise<IndexFeatures> {
   let creatorDevbuyPct: number | null = null;
+  let devbuyRecipient: string | null = null;
   try {
     const receipt = await client.getTransactionReceipt({ hash: launchTxHash });
-    let received = 0n;
+    const tokenLc = token.toLowerCase();
+    const excluded = new Set([liquiditySource.toLowerCase(), ZERO_ADDRESS, tokenLc]);
+
+    const receivedBy = new Map<string, bigint>();
     for (const log of receipt.logs) {
-      if (log.address.toLowerCase() !== token.toLowerCase()) continue;
+      if (log.address.toLowerCase() !== tokenLc) continue;
       if (log.topics[0]?.toLowerCase() !== TRANSFER_TOPIC0 || log.topics.length < 3) continue;
-      if (topicToAddress(log.topics[2] as string) !== creator.toLowerCase()) continue;
-      if (log.data && log.data !== '0x') received += BigInt(log.data);
+      const to = topicToAddress(log.topics[2] as string);
+      if (excluded.has(to)) continue;
+      receivedBy.set(to, (receivedBy.get(to) ?? 0n) + transferValue(log.data));
     }
+
+    let topAmount = 0n;
+    for (const [addr, amt] of receivedBy) {
+      if (amt > topAmount) {
+        topAmount = amt;
+        devbuyRecipient = addr;
+      }
+    }
+
     const totalSupply = (await client.readContract({
       address: token,
       abi: erc20Abi,
       functionName: 'totalSupply',
     })) as bigint;
     if (totalSupply > 0n) {
-      creatorDevbuyPct = Number((received * 1_000_000n) / totalSupply) / 10_000;
+      creatorDevbuyPct = Number((topAmount * 100n * 10n ** 12n) / totalSupply) / 1e12;
     }
   } catch {
     // leave null; refined on the qualified lane / M2
   }
-  return { creatorDevbuyPct, hasX: null, hasSite: null };
+  return { creatorDevbuyPct, devbuyRecipient, hasX: null, hasSite: null };
 }
 
 // ── T+10m lane (spec §3.3 item 6) — via a delayed job ──────────────────

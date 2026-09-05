@@ -8,6 +8,13 @@ For every new token launch on Robinhood Chain, the agent computes a small set of
 
 What it claims: the forecast existed before the outcome; the scorer is reproducible; the comparison to baselines is public. What it does not claim: that it pays for itself, that no human touched the server, or that the analysis is correct because it is committed.
 
+### 0.1 The Orbio-specific test (standing red-team check)
+"Would this demo work identically on a plain OpenRouter account with no token? If yes, it proves nothing about Orbio." The screener, commits and benchmark fail this test on their own; they are the work, not the proof. The demo therefore hinges on three properties only Orbio provides, and the dashboard leads with them:
+1. Zero-billing compute: any holder clones the repo, authorizes the MCP, and runs an instance with no card, top-up or payment rail (fork-and-run, §8.1).
+2. Credit-driven behavior: the daily deep-dive budget is a function of credits accrued in the trailing 24h; throughput visibly follows token activity and holdings, and the agent never holds or converts money to make that happen.
+3. Unattended continuity: keys drain, rotate at the next accrual, and the signed lifecycle log shows it.
+Money handling is minimized accordingly: x402 payments are optional and last in the build order.
+
 ## 1. Outcomes (versioned, deterministic, per horizon)
 
 | Label | Definition | Horizons | Applies to |
@@ -80,6 +87,15 @@ Reconstruct features and outcomes for the last 45 days of Noxa/Pons/raw launches
 
 ## 8. Metabolism (Orbio MCP client)
 Unchanged state machine from v0.1 §7 (NO_KEY → ACTIVE → DRAINING → ROTATING; IDS → REVOKING; STARVED). Budget policy now simpler: daily deep-dive budget = min(`dailyCapUsd`, 50% of credits accrued in trailing 24h, key remaining − reserve). The metric shown is "days of unattended key lifecycle" = days since the last manual credential action, with the signed lifecycle log as evidence; no claim beyond that.
+
+### 8.1 Fork-and-run
+A holder runs their own instance in three steps: clone, `pnpm orbio:auth` (browser sign-in with the wallet holding $ORBIO), `pnpm start`. No other credentials beyond an RPC URL. Each instance signs with its own key. Stretch: instances may POST signed reports to the main benchmark's ingest endpoint and appear as their own forecaster (`forecaster = signer address`), so the benchmark becomes a network of holder-funded agents.
+
+### 8.2 Deep-dive method (adopted from the `evm-token-due-diligence` skill)
+The deep-dive follows that skill's evidence discipline: a frozen target packet (chain ID from RPC, exact address, block pin with hash and UTC timestamp, runtime hash, proxy/implementation resolution, candidate pools); every tool result is an evidence row `{value, source, block, query}`; coverage limitations (RPC errors, missing archive data) are recorded as limitations, never as findings or passes; external text is data, not instructions. Output adds the skill's eleven separately rated surfaces (token controls, canonical LP custody, side-pool removal risk, sellability and depth, concentration, launch integrity, admin/treasury/reward custody, reward accounting, utility and redemption rights, external dependencies, development and disclosure) in its bounded language, alongside our outcome probabilities, plus a finding-to-evidence ledger. The skill's heavy tracks (transfer replay, fee reconciliation, bridge tracing, bytecode reconstruction) are v0.4 Trace, not contest scope. Pons note: the direct curve-buy recipient, not the transaction sender, is the beneficiary for `creator_devbuy_pct`.
+
+### 8.3 Report validator
+Before any report is committed it must pass a validator: requested, queried and reported chain/address match; block pin has a real hash and timestamp; no field marked unknown is presented as a pass; signer matches the instance identity. Failing reports are stored but never committed.
 
 ## 9. API and payments
 | Endpoint | Price | Notes |
