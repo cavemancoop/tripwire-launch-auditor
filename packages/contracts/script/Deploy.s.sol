@@ -10,7 +10,10 @@ import {CommitRegistry} from "../src/CommitRegistry.sol";
 /// contract owner (it is what will post commit transactions).
 contract Deploy is Script {
     function run() external returns (CommitRegistry reg) {
-        uint256 pk = vm.envUint("GAS_WALLET_PRIVATE_KEY");
+        // tolerate a private key stored with or without the 0x prefix
+        string memory raw = vm.envString("GAS_WALLET_PRIVATE_KEY");
+        if (bytes(raw).length == 64) raw = string.concat("0x", raw);
+        uint256 pk = vm.parseUint(raw);
         address deployer = vm.addr(pk);
         console.log("chain id     ", block.chainid);
         console.log("deployer/owner", deployer);
