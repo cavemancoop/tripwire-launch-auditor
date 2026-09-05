@@ -1,4 +1,5 @@
 export * from './chain';
+export * from './wallet';
 export * from './blockscout';
 export * from './uniswap';
 export * from './chain-config';

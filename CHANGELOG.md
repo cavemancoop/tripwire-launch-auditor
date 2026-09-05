@@ -287,3 +287,35 @@ Schema (`m3_report_validator`): `Report` gains `coverage`, `blockPin`,
 `validatorPassed`, `validatorFailures`. 12 report tests + a live end-to-end run:
 two reports built, block-pinned, signed by `0x6a5A2d5A…95B4BE`, validator-passed,
 persisted. `pnpm verify` green (62 worker tests).
+
+## M3c — CommitRegistry deployed + M3d — Merkle commit job (2026-09-05)
+
+### CommitRegistry (deployed)
+`0xF36F84a7B7DfFB952341d021db51bD76E54fDBEe` on chain 4663, owner = gas wallet,
+deploy tx `0x0c86fa95…964d9199` (block 55362197, ~0.0001 ETH). `deployments/4663.json`
++ the forge broadcast record committed; `COMMIT_REGISTRY_ADDRESS` in `.env`.
+
+### M3d — commit job (`apps/worker/src/commit/`)
+- `merkle.ts` — binary Merkle tree over report hashes, sorted-pair keccak256
+  (OZ `MerkleProof` convention), odd node promoted; `verifyProof`. Dedupes + sorts
+  leaves so the root is order-independent.
+- `artifacts.ts` — `computeArtifactHashes()`: keccak256 of `weights/det_v0.json`,
+  a sorted manifest of the 14 feature-code files, and `OUTCOME_RULES_v1.md`
+  (new — spec §1 verbatim). Kinds = keccak256("weights"|"feature_code"|"outcome_rule").
+- `job.ts` — `ensureArtifactsCommitted()` (one-time, 3 `commitArtifact` txs) then
+  `runCommitJob()`: batch validated + uncommitted reports (>= `commitMaxLeaves` or
+  oldest >= `commitIntervalSec`, `--force` overrides), post the root via
+  `commitBatch`, persist a `Commit` row with per-leaf proofs in `leaves`, link each
+  `Report.commitId` + `merkleLeafHash`. `runCommitLoop` runs it every ≤60s;
+  wired into `apps/worker` (enabled only when the registry + gas key are set).
+- `packages/chain/src/wallet.ts` — `getWalletClient` + `COMMIT_REGISTRY_ABI`.
+- `pnpm commit:run [--force]`, `pnpm commit:verify <reportHash>` (verifies the
+  stored proof against the batch root *and* confirms the root is in an on-chain
+  `BatchCommitted` event — what M7's `GET /v1/proof/<hash>` will do).
+
+### Verify
+- `pnpm verify` green (69 worker + 18 scoring + 9 forge tests).
+- Live: first commit posted — 3 artifact txs + batch 0 (root
+  `0x56773f24…c68c5add`, 2 leaves, tx `0xa7d95190…8ea4c8ff`, block 55365811).
+  `batchCount()` == 1 on-chain. `commit:verify` on a batched report:
+  `proofVerifiesLocally: true`, `rootCommittedOnChain: true`. **M3 check satisfied.**

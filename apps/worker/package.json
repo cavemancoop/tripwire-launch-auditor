@@ -9,6 +9,8 @@
     "watcher:replay": "tsx src/scripts/replay.ts",
     "watcher:recent": "tsx src/scripts/recent.ts",
     "watcher:prune-stale": "tsx src/scripts/prune-stale.ts",
+    "commit:run": "tsx src/scripts/commit-run.ts",
+    "commit:verify": "tsx src/scripts/commit-verify.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests"
   },
