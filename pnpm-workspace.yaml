@@ -24,3 +24,4 @@ catalog:
   viem: ^2.21.0
   "@prisma/client": ^6.0.0
   prisma: ^6.0.0
+  canonicalize: ^2.0.0

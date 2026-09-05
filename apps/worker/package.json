@@ -15,7 +15,9 @@
   "dependencies": {
     "@launch-auditor/chain": "workspace:*",
     "@launch-auditor/db": "workspace:*",
+    "@launch-auditor/scoring": "workspace:*",
     "bullmq": "catalog:",
+    "canonicalize": "catalog:",
     "viem": "catalog:"
   },
   "devDependencies": {

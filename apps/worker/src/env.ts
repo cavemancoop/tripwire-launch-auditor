@@ -16,6 +16,12 @@ export interface WorkerEnv {
   qualifyUniqueBuyers: number;
   goplusApiKey?: string;
   scanhoodApiBase: string;
+  /** signs EIP-712 report commitments (spec §6); the agent's public identity */
+  agentPrivateKey?: `0x${string}`;
+  gasWalletPrivateKey?: `0x${string}`;
+  commitRegistryAddress?: `0x${string}`;
+  commitIntervalSec: number;
+  commitMaxLeaves: number;
 }
 
 let dotenvLoaded = false;
@@ -68,5 +74,18 @@ export function loadEnv(): WorkerEnv {
     qualifyUniqueBuyers: Number(process.env.QUALIFY_UNIQUE_BUYERS ?? 25),
     goplusApiKey: process.env.GOPLUS_API_KEY || undefined,
     scanhoodApiBase: process.env.SCANHOOD_API_BASE || 'https://scanhood.xyz',
+    agentPrivateKey: normKey(process.env.AGENT_EIP712_PRIVATE_KEY),
+    gasWalletPrivateKey: normKey(process.env.GAS_WALLET_PRIVATE_KEY),
+    commitRegistryAddress: (process.env.COMMIT_REGISTRY_ADDRESS || undefined) as
+      | `0x${string}`
+      | undefined,
+    commitIntervalSec: Number(process.env.COMMIT_INTERVAL_SEC ?? 300),
+    commitMaxLeaves: Number(process.env.COMMIT_MAX_LEAVES ?? 200),
   };
+}
+
+function normKey(v: string | undefined): `0x${string}` | undefined {
+  if (!v) return undefined;
+  const k = v.startsWith('0x') ? v : `0x${v}`;
+  return /^0x[0-9a-fA-F]{64}$/.test(k) ? (k as `0x${string}`) : undefined;
 }

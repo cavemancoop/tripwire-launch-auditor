@@ -4,6 +4,7 @@ import { Worker } from 'bullmq';
 import type { Hex, PublicClient } from 'viem';
 import { loadEnv } from '../env';
 import { QUEUE_NAMES, parseRedisUrl } from '../queues';
+import { buildLaunchReports, persistLaunchReports } from '../report';
 import { buildCreatorCluster, clusterAddresses } from './cluster';
 import { computeCreatorContext } from './creator';
 import { computeFeature9 } from './feature9';
@@ -153,6 +154,22 @@ export async function runT10ForLaunch(
       },
     }),
   ]);
+
+  // §6/§8.3 — assemble, sign and validate det_v0 + heuristic_v1 reports once the
+  // feature vector is complete. The commit job (M3d) posts the passing ones.
+  if (cluster.partial.length === 0) {
+    try {
+      const drafts = await buildLaunchReports(client, launchId, 'launch');
+      const r = await persistLaunchReports(drafts);
+      if (r.failed > 0) {
+        // eslint-disable-next-line no-console
+        console.warn(`[t10] ${launchId}: ${r.failed}/${r.stored} reports failed the validator`);
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(`[t10] ${launchId}: report assembly failed`, err instanceof Error ? err.message : err);
+    }
+  }
 }
 
 export function startFeaturesWorker(client: PublicClient): Worker {

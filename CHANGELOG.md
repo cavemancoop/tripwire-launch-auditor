@@ -252,3 +252,38 @@ is 403 from the server, so everything here is reconstructed from RPC.
   their own-quote sell impact is skipped (new launches have it). The 0.1%-of-supply
   sell size produces large `sell_impact_bps` on thin pools — deterministic and
   documented; tune the fraction against resolved data later.
+
+## M3a — det_v0 + heuristic_v1 forecasters (2026-09-05)
+
+`packages/scoring`: `inputs.ts` (shared nullable `FeatureInputs` + hand-set
+z-normalization; missing -> 0), `heuristic.ts` (spec §2 fixed rule -> one
+manipulation flag per applicable outcome cell), `det.ts` + `weights/det_v0.json`
+(one logistic per outcome/horizon, `p = sigmoid(bias + Σ w·z)`; weights are
+frozen directional priors, NOT fitted — `det_v1` re-derives them from the
+backfill and both run live). `types.ts`: `ALL_OUTCOME_KEYS` (the 9 §1 cells) +
+`outcomeApplies` (SELL/LIQ impaired are N/A for launchpad-locked tokens).
+18 scoring tests. `det_v0`'s hand-set priors look miscalibrated (e.g. LIQ_IMPAIRED
+sits ~0.5 on a null vector) until the backfill fit — expected per §4.
+
+## M3b — report assembly, EIP-712 signing, §8.3 validator (2026-09-05)
+
+`apps/worker/src/report/`:
+- `crypto.ts` — RFC 8785 canonical JSON (`canonicalize`) + keccak256; EIP-712
+  `ReportCommitment` struct (domain `LaunchAuditor` v1, chain 4663) signed with
+  `AGENT_EIP712_PRIVATE_KEY`; `recoverReportSigner`; OutcomeKey↔Prisma column map.
+- `assemble.ts` — builds `FeatureInputs` + a `coverage[]` (null features) from a
+  launch's Feature + cluster rows, pins the T+10m block (`number`/`hash`/UTC
+  `timestamp`), runs `heuristic_v1` + `det_v0`, produces signed `ReportDraft`s.
+- `validate.ts` — the **§8.3 validator**: chain/address match, real 32-byte block
+  pin hash + timestamp, probabilities in range, `reportHash == keccak(canonicalJson)`,
+  signer == agent identity, and a "no unknown-as-pass" check (near-floor risk
+  probability while >70% of features are unknown).
+- `persist.ts` — upserts `reports` rows keyed by `reportHash`; `validatorPassed` +
+  `validatorFailures` stored. Only passing rows are commit-eligible (M3d).
+- Wired into the T+10m job: once the feature vector is complete, both forecasters'
+  reports are assembled, signed, validated and stored.
+
+Schema (`m3_report_validator`): `Report` gains `coverage`, `blockPin`,
+`validatorPassed`, `validatorFailures`. 12 report tests + a live end-to-end run:
+two reports built, block-pinned, signed by `0x6a5A2d5A…95B4BE`, validator-passed,
+persisted. `pnpm verify` green (62 worker tests).

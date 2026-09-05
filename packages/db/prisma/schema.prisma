@@ -262,11 +262,20 @@ model Report {
 
   confidence Float?
   evidence   Json?  // [{ claim, tx_or_url }]
+  coverage   Json?  // features that were null at report time (transparency, §8.2)
+
+  // §8.2 target packet block pin: { number, hash, timestamp } — part of the
+  // signed canonicalJson; kept here for querying too.
+  blockPin Json?
 
   canonicalJson String  // RFC 8785 canonical form that was hashed
   reportHash    String  @unique // keccak256(canonicalJson)
   eip712Signature String?
   signerAddress   String?
+
+  // §8.3 — every report runs the validator; only passing reports may be committed.
+  validatorPassed   Boolean @default(false)
+  validatorFailures Json?   // string[] of reasons when it fails
 
   createdAtBlock BigInt?
   retrospective  Boolean  @default(false)
