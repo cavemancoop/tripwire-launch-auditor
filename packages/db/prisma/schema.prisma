@@ -97,6 +97,9 @@ model Launch {
   poolKind       String? // "v2" | "v3" | "v4"
   poolAddress    String? // v2/v3 pool contract; null for v4
   poolId         String? // v4 bytes32 pool id; null for v2/v3
+  poolFee        Int?    // v3/v4 fee (hundredths of a bip); null for v2
+  poolTickSpacing Int?   // v3/v4 tick spacing; null for v2
+  poolHooks      String? // v4 hooks contract (zero address = none); null for v2/v3
   creatorAddress String
   launchBlock    BigInt
   launchTxHash   String
@@ -110,9 +113,10 @@ model Launch {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  feature  Feature?
-  reports  Report[]
-  outcomes Outcome[]
+  feature        Feature?
+  reports        Report[]
+  outcomes       Outcome[]
+  clusterMembers ClusterMember[]
 
   @@unique([chainId, tokenAddress])
   @@index([source, launchBlock])
@@ -121,6 +125,34 @@ model Launch {
   @@index([poolAddress])
   @@index([poolId])
   @@map("launches")
+}
+
+// ──────────────────────── Creator cluster (§3.2) ───────────────────────
+// A wallet is in a launch's creator cluster if any rule matches. Each row is
+// one (wallet, rule) with its evidence tx. Deliberately narrow: shared bridge
+// or CEX funding is NOT association. M4's INSIDER_EXIT resolution reads this.
+
+enum ClusterRule {
+  CREATOR          // rule 1: it is the creator
+  LAUNCH_BLOCK_BUY // rule 2: it bought in the launch block
+  DIRECT_TRANSFER  // rule 3: it received tokens directly from the creator
+  FIRST_INBOUND    // rule 4: its first-ever inbound tx on 4663 came from the creator
+}
+
+model ClusterMember {
+  id         String      @id @default(cuid())
+  launchId   String
+  launch     Launch      @relation(fields: [launchId], references: [id], onDelete: Cascade)
+  address    String
+  rule       ClusterRule
+  evidenceTx String? // tx hash backing this membership (null only for rule CREATOR)
+  confidence Float       @default(1.0)
+  createdAt  DateTime    @default(now())
+
+  @@unique([launchId, address, rule])
+  @@index([launchId])
+  @@index([address])
+  @@map("creator_cluster")
 }
 
 // ───────────────────────────── Features ─────────────────────────────
@@ -144,8 +176,9 @@ model Feature {
   creatorPriorInsiderExitRate Float?
 
   // §3.3.4  (at T+10m)
-  clusterSize      Int?
-  clusterSupplyPct Float?
+  clusterSize       Int?
+  clusterSupplyPct  Float?
+  clusterConfidence Float? // §3.2 "cluster confidence is published"
 
   // §3.3.5  (at T+10m)
   top10NoncreatorPct Float?

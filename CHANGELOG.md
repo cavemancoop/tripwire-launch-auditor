@@ -165,3 +165,44 @@ confirmation is on-chain only (Blockscout token → creation tx → factory) fro
 - `pnpm verify` green (63 tests).
 - Ran `pnpm watcher:prune-stale` (dry run) against the live data accumulated before
   this fix — see the session for the count of pre-existing-token false positives found.
+
+## M2 Part A — creator cluster + features 3, 4, 5 (2026-09-05)
+
+RPC-only. Blockscout (the spec-intended source for address history / holder lists)
+is 403 from the server, so everything here is reconstructed from RPC.
+
+### Added — `apps/worker`
+- `cluster.ts` — creator cluster v1 (spec §3.2). Rules **1** (creator), **2** (bought
+  in the launch block — token `Transfer` from the pool that block), **3** (received
+  tokens directly from the creator, within the T+10m window). Each membership row
+  carries its rule + evidence tx + a per-rule confidence; cluster confidence =
+  mean of rows. **Rule 4** (first-ever inbound from creator) is a pluggable
+  `FirstInboundLookup` with a no-op default — it needs an address-history index we
+  don't have server-side; slots in later. Not in the guide's M2 check.
+- `creator.ts` — feature 3: `creator_age_days` via `eth_getTransactionCount` binary
+  search (~27 calls, RPC-only); `creator_prior_launches` / `creator_prior_insider_exit_rate`
+  from our own DB (empty until backfill / resolved outcomes).
+- `holders.ts` — features 4, 5: balances reconstructed from the token's `Transfer`
+  logs up to the T+10m block → `cluster_supply_pct`, `top10_noncreator_pct` (excludes
+  creator + pool). `MAX_HOLDER_LOGS` guard; percentages computed in bigint to 12dp
+  (token supplies exceed 2^53).
+- `erc20.ts` — shared `Transfer` topic0 + address/topic/value helpers (dedup'd out of
+  `features.ts`).
+- Wired into the T+10m job (`t10.ts`): buyers → cluster → holder stats → feature 3
+  refresh, written with the `creator_cluster` rows in one transaction.
+
+### Schema (`m2_cluster_and_pool_key`)
+- New `creator_cluster` table + `ClusterRule` enum; `clusterConfidence` on `Feature`.
+- `poolFee` / `poolTickSpacing` / `poolHooks` on `Launch` (the full v4 PoolKey — Part B's
+  own sell-quote `eth_call` needs it).
+- All address columns normalised to lowercase on write; 358 existing rows migrated.
+  (`tx.from` was stored checksummed, which broke case-sensitive `creatorAddress` joins.)
+
+### Verify
+- `pnpm verify` green (38 worker tests + others). Live-tested `runT10ForLaunch` against
+  real launches: clusters built with evidence txs, `top10_noncreator_pct` in the 5–13%
+  range on active launches, `cluster_supply_pct` non-zero where the creator holds.
+- Known: `creator_age_days` is null on launches ingested before this milestone (feature 3
+  was ingest-only in M1); refreshed on any T+10m re-run. Perf: the holder-balance
+  reconstruction fetches every `Transfer` in the window — 500+ buyer launches take a few
+  seconds; watch at scale.

@@ -3,6 +3,7 @@ import { prisma } from '@launch-auditor/db';
 import type { Hex, PublicClient } from 'viem';
 import { getQueues, T10_DELAY_MS } from '../queues';
 import { classifyPair } from './classify';
+import { computeCreatorContext } from './creator';
 import type { DetectedPool } from './detect';
 import { computeIndexFeatures } from './features';
 import { checkTokenFreshness } from './freshness';
@@ -41,7 +42,7 @@ export async function ingestPool(
   const { token, quote, confident } = classifyPair(chainId, pc.token0, pc.token1);
 
   const existing = await prisma.launch.findUnique({
-    where: { chainId_tokenAddress: { chainId, tokenAddress: token } },
+    where: { chainId_tokenAddress: { chainId, tokenAddress: token.toLowerCase() } },
   });
   if (existing) return null;
 
@@ -68,7 +69,7 @@ export async function ingestPool(
     ]),
   );
 
-  const creator = tx.from;
+  const creator = tx.from.toLowerCase();
   const touched = new Set<string>([
     tx.to ?? '',
     ...receipt.logs.map((l) => l.address),
@@ -84,6 +85,17 @@ export async function ingestPool(
   );
 
   const idx = await computeIndexFeatures(client, token as Hex, creator as Hex, txHash as Hex);
+  const cfg = getChainConfig(chainId);
+  const creatorCtx = await computeCreatorContext({
+    client,
+    chainId,
+    creator: creator as Hex,
+    launchBlock: blockNumber,
+    approxBlockSeconds: cfg.approxBlockSeconds,
+  });
+
+  const lc = (s: string | null | undefined): string | undefined =>
+    s ? s.toLowerCase() : undefined;
 
   const launch = await prisma.launch.create({
     data: {
@@ -91,14 +103,17 @@ export async function ingestPool(
       source: attribution.source,
       sourceConfidence: attribution.sourceConfidence,
       lpLockedByConstruction: attribution.lpLockedByConstruction,
-      tokenAddress: token,
-      quoteAddress: quote ?? undefined,
+      tokenAddress: token.toLowerCase(),
+      quoteAddress: lc(quote),
       poolKind: pc.poolKind,
-      poolAddress: pc.poolAddress ?? undefined,
-      poolId: pc.poolId ?? undefined,
+      poolAddress: lc(pc.poolAddress),
+      poolId: lc(pc.poolId),
+      poolFee: pc.fee ?? undefined,
+      poolTickSpacing: pc.tickSpacing ?? undefined,
+      poolHooks: lc(pc.hooks),
       creatorAddress: creator,
       launchBlock: blockNumber,
-      launchTxHash: txHash,
+      launchTxHash: txHash.toLowerCase(),
       launchAt,
       detectedVia: pc.detectedVia,
       lane: 'index',
@@ -107,6 +122,9 @@ export async function ingestPool(
         create: {
           schemaVersion: 'v0',
           creatorDevbuyPct: idx.creatorDevbuyPct,
+          creatorAgeDays: creatorCtx.creatorAgeDays,
+          creatorPriorLaunches: creatorCtx.creatorPriorLaunches,
+          creatorPriorInsiderExitRate: creatorCtx.creatorPriorInsiderExitRate,
           hasX: idx.hasX,
           hasSite: idx.hasSite,
           indexLaneComputedAt: new Date(),

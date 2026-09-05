@@ -1,19 +1,7 @@
 import { getLogsChunked } from '@launch-auditor/chain';
 import { erc20Abi, type Hex, type PublicClient } from 'viem';
 import type { LogClient } from './detect';
-
-/** Transfer(address,address,uint256) topic0. */
-const TRANSFER_TOPIC0 =
-  '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
-
-function topicToAddress(topic: string): string {
-  return `0x${topic.slice(-40)}`.toLowerCase();
-}
-
-/** left-pad a 20-byte address to a 32-byte log topic */
-function addressToTopic(addr: string): Hex {
-  return `0x${'0'.repeat(24)}${addr.slice(2).toLowerCase()}` as Hex;
-}
+import { TRANSFER_TOPIC0, addressToTopic, topicToAddress } from './erc20';
 
 // ── Index lane (spec §3.3 items 1, 2, 8) — computed immediately ─────────
 
