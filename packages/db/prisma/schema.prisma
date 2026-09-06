@@ -394,12 +394,30 @@ model LifecycleLog {
   providerSpendUsd Float?
   idsMismatch      Boolean @default(false)
 
-  signature String?  // signed lifecycle row
+  // M5: tamper-evident chain — bodyHash folds prevHash; signature signs bodyHash
+  prevHash  String?
+  bodyHash  String?
+  signature String?  // agent-signed bodyHash
   createdAt DateTime @default(now())
 
   @@index([createdAt])
   @@index([newState, createdAt])
   @@map("lifecycle_log")
+}
+
+/// M5: per-generation LLM spend, the local half of the IDS check against
+/// orbio_get_key_status. One row per llm_deepdive_v0 run.
+model MetabolismSpend {
+  id           String   @id @default(cuid())
+  at           DateTime @default(now())
+  costUsd      Float
+  model        String
+  keyHashPrefix String?
+  reportId     String?
+  generationId String?  // OpenRouter generation id
+
+  @@index([at])
+  @@map("metabolism_spend")
 }
 
 // ──────────────────────────── Receipts ──────────────────────────────
