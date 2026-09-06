@@ -22,7 +22,24 @@ describe('attributeSource', () => {
     expect(a.source).toBe('pons');
     expect(a.viaCandidate).toBe(true);
     expect(a.sourceConfidence).toBeLessThan(0.8);
-    expect(a.lpLockedByConstruction).toBe(true);
+    // checkpoint 8.2: lpLockedByConstruction is only true after an on-chain
+    // position-custody check — never from pad docs. None done yet.
+    expect(a.lpLockedByConstruction).toBe(false);
+  });
+
+  it('matches the confirmed Pons factory with high confidence', () => {
+    const a = attributeSource(4663, ['0x3711cea4feade896c913c68f01eda97cb06d1a42']);
+    expect(a.source).toBe('pons');
+    expect(a.viaCandidate).toBe(false);
+    expect(a.sourceConfidence).toBeGreaterThan(0.9);
+    expect(a.lpLockedByConstruction).toBe(false);
+  });
+
+  it('matches the confirmed LONG factory', () => {
+    const a = attributeSource(4663, ['0x1b37d3a72082029c44b35b604ea473617580b69a']);
+    expect(a.source).toBe('long');
+    expect(a.viaCandidate).toBe(false);
+    expect(a.sourceConfidence).toBeGreaterThan(0.9);
   });
 
   it('is case-insensitive on the touched address', () => {
