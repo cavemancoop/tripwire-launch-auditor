@@ -426,3 +426,41 @@ green (rpc-budget 26 / chain 27 / scoring 18 / worker 93).
 Known: 24h–7d windows over a congested free RPC are slow even chunked at the
 probed span; the `outcomes` loop runs at low priority in the background and the
 M4d backfill enforces `--max-calls`.
+
+## M4c — scorer package + benchmark CLI (2026-09-06)
+
+checkpoint-decisions-m4.md §C step 3. The spec §2 benchmark: every forecaster
+scored side by side per (outcome, horizon), split by trigger and by source.
+
+packages/scoring:
+- `metrics.ts` — AUROC (rank-sum + tie correction), AUPRC (average precision),
+  log loss, Brier, Brier skill, ECE (deciles), precision/recall at a threshold.
+- `delong.ts` — fast DeLong test (Sun & Xu 2014) for the difference between two
+  correlated AUROCs + `normalCdf`. Gates spec §2's "beats a baseline only with a
+  significant AUROC gap on >= 200 resolved".
+- `mappings.ts` + `weights/forecaster_mappings_v0.json` — the fixed, published
+  maps from ScanHood verdict/flags and GoPlus flags/tax to a probability per
+  outcome cell (spec §2 item 5). SELL_IMPAIRED is pinned by sellability.
+- `scorer.ts` — `scoreBenchmark(rows)`: per-cell metrics, `insufficientSample`
+  (< 100), DeLong comparisons vs `base_rate` / `heuristic_v1` with
+  `claimAllowed` (>= 200 and p < 0.05 and gain > 0); "all" section + one per
+  trigger + one per source.
+- `det.ts` — `det_v0.1` scaffold: `detV0_1()` / `mergeDetV01()` / `logit()` +
+  `weights/det_v0_1.json` (empty `biasOverride` — set from the M4 3-day pass,
+  checkpoint §8.3). Identical to det_v0 until then, scored as its own forecaster.
+
+apps/worker/src/scorer/:
+- `collect.ts` — joins RESOLVED outcomes with each forecaster's prediction for
+  the same (token, anchor time): report-backed forecasters (det_v0,
+  heuristic_v1, …) + computed `base_rate` (trailing-30-day prevalence) +
+  `scanhood` / `goplus` from the fixed maps.
+- `benchmark.ts` — `runScorer()` / `summariseBenchmark()`.
+- `pnpm scorer:run [--out f.json] [--thresholds …] [--scope live|retrospective|both]`.
+
+`commit/artifacts.ts` — two more hashes computed for commitment (spec §6):
+`forecaster_mappings` (the maps JSON) and `scorer_code` (a 6-file manifest).
+On-chain emission of these two is wired in M4d alongside the det_v0.1 re-commit.
+
+25 new tests (scoring 45 total). `pnpm verify` green (rpc-budget 26 / chain 27 /
+scoring 45 / worker 93). `scorer:run` verified against the live DB (0 resolved
+outcomes yet — emits a valid empty benchmark).

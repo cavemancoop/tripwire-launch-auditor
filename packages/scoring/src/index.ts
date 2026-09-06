@@ -3,3 +3,7 @@ export * from './base-rate';
 export * from './inputs';
 export * from './heuristic';
 export * from './det';
+export * from './metrics';
+export * from './delong';
+export * from './mappings';
+export * from './scorer';

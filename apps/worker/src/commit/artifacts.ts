@@ -14,7 +14,19 @@ export const ARTIFACT_KIND = {
   weights: keccak256(stringToHex('weights')),
   featureCode: keccak256(stringToHex('feature_code')),
   outcomeRule: keccak256(stringToHex('outcome_rule')),
+  forecasterMappings: keccak256(stringToHex('forecaster_mappings')),
+  scorerCode: keccak256(stringToHex('scorer_code')),
 } as const;
+
+/** files whose bytes define the scorer (spec §6: commit the scorer hash) */
+const SCORER_CODE_FILES = [
+  'packages/scoring/src/metrics.ts',
+  'packages/scoring/src/delong.ts',
+  'packages/scoring/src/scorer.ts',
+  'packages/scoring/src/base-rate.ts',
+  'packages/scoring/src/mappings.ts',
+  'packages/scoring/src/types.ts',
+];
 
 /** files whose bytes define the deterministic feature vector (spec "feature code is public") */
 const FEATURE_CODE_FILES = [
@@ -51,6 +63,8 @@ export interface ArtifactHashes {
   weights: Hex;
   featureCode: Hex;
   outcomeRule: Hex;
+  forecasterMappings: Hex;
+  scorerCode: Hex;
 }
 
 export function computeArtifactHashes(): ArtifactHashes {
@@ -58,5 +72,7 @@ export function computeArtifactHashes(): ArtifactHashes {
     weights: hashFile('packages/scoring/weights/det_v0.json'),
     featureCode: hashFileSet(FEATURE_CODE_FILES),
     outcomeRule: hashFile('packages/scoring/OUTCOME_RULES_v1.md'),
+    forecasterMappings: hashFile('packages/scoring/weights/forecaster_mappings_v0.json'),
+    scorerCode: hashFileSet(SCORER_CODE_FILES),
   };
 }

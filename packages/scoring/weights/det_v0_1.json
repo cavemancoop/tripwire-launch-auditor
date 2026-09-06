@@ -1,0 +1,6 @@
+{
+  "version": "det_v0.1",
+  "basedOn": "det_v0",
+  "note": "det_v0 with per-outcome intercepts re-set to logit(observed base rate) from the M4 3-day backfill pass (checkpoint 8.3). Weight directions are unchanged. `biasOverride` is empty until that pass runs; while empty, det_v0.1 is numerically identical to det_v0 but is scored as its own forecaster. When feature coverage is poor (>70% of features null), the caller emits the base rate at confidence:low rather than this logistic.",
+  "biasOverride": {}
+}

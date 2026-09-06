@@ -12,6 +12,7 @@
     "commit:run": "tsx src/scripts/commit-run.ts",
     "commit:verify": "tsx src/scripts/commit-verify.ts",
     "outcomes:run": "tsx src/scripts/outcomes-run.ts",
+    "scorer:run": "tsx src/scripts/scorer-run.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests"
   },
