@@ -319,3 +319,33 @@ deploy tx `0x0c86fa95…964d9199` (block 55362197, ~0.0001 ETH). `deployments/46
   `0x56773f24…c68c5add`, 2 leaves, tx `0xa7d95190…8ea4c8ff`, block 55365811).
   `batchCount()` == 1 on-chain. `commit:verify` on a batched report:
   `proofVerifiesLocally: true`, `rootCommittedOnChain: true`. **M3 check satisfied.**
+
+## Checkpoint after M3 — mid-build review + Fable's decisions (2026-09-05)
+
+Not a milestone; no code changed. `midbuild-review-m0-m3.md` (what was built /
+learned / fixed across M0–M3) went to Fable; `checkpoint-decisions-m4.md` is the
+response. Both added at repo root next to the spec. Calls recorded in
+`DECISIONS.md`. They reshape M4:
+
+- Data layer is **RPC + ScanHood + our own logs — no Blockscout at runtime**
+  (Cloudflare 403; its URLs are human-readable evidence only). M4 gains
+  `packages/rpc-budget` (global token bucket + priority queue + response cache +
+  `eth_getLogs`-range probe) and an `AddressHistoryProvider` interface
+  (RPC-logs impl now, indexer later).
+- Launchpad attribution by runtime **code hash** (Pons + LONG), a ~30-min browser
+  step — blocks the 14-day backfill only, not the M4 code.
+- Freshness gate 1h → **24h** token age at pool creation; add `token_age_at_pool_sec`;
+  tokenized stocks (code older than 24h) treated as the quote side.
+- `det_v0` → **`det_v0.1`** after a 3-day base-rate pass (intercepts =
+  `logit(base rate)`, hand-set weight directions kept); poor-coverage reports
+  emit the base rate at `confidence: low`. Committed `det_v0` reports stay as-is.
+- `sell_impact_bps` → `sell_impact_bps_100` / `sell_impact_bps_1000` (USDG
+  notionals via a Quoter spot quote, RPC-only).
+- Cluster rule 4 stays **disabled** (interface kept).
+- Backfill **45d → 14d**, `--max-calls` enforced, call estimate printed first.
+- RevenueSplitter contract **dropped** — 2% → ZachXBT becomes a periodic manual
+  logged transfer from `REVENUE_ADDRESS` (spec §0.1 — minimise money-handling
+  surface).
+
+`.env.example` updated (new M4 section; `REVENUE_SPLITTER_ADDRESS` removed).
+Rewritten M4 build prompt = `checkpoint-decisions-m4.md` §C; M6 tool list = §D.
