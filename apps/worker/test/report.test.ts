@@ -30,10 +30,15 @@ describe('canonical JSON + hash', () => {
     expect(reportHash(canonicalJson({ x: 1 }))).toBe(h);
   });
 
-  it('probabilitiesToColumns maps the nine cells', () => {
-    const c = probabilitiesToColumns({ 'INSIDER_EXIT@24h': 0.3, 'DRAWDOWN_80@7d': 0.6 });
+  it('probabilitiesToColumns maps the outcome cells', () => {
+    const c = probabilitiesToColumns({
+      'INSIDER_EXIT@24h': 0.3,
+      'DRAWDOWN_80@7d': 0.6,
+      'TRADING_ALIVE@24h': 0.8,
+    });
     expect(c.pInsiderExit24h).toBe(0.3);
     expect(c.pDrawdown80_7d).toBe(0.6);
+    expect(c.pTradingAlive24h).toBe(0.8);
     expect(c.pSellImpaired1h).toBeNull();
   });
 });

@@ -41,12 +41,14 @@ enum ReportTrigger {
   event      // re-score triggered by a material on-chain change
 }
 
-/// The four mechanical outcomes (spec §1).
+/// The mechanical outcomes (spec §1). TRADING_ALIVE (M4e) is the one positive
+/// outcome — value=true means the token still traded near the horizon.
 enum OutcomeLabel {
   INSIDER_EXIT
   SELL_IMPAIRED
   LIQ_IMPAIRED
   DRAWDOWN_80
+  TRADING_ALIVE
 }
 
 enum OutcomeStatus {
@@ -203,6 +205,14 @@ model Feature {
   hasX    Boolean?
   hasSite Boolean?
 
+  // M4e — v4 hook / side-pool / approval surface (the pre-staged-exit surface)
+  hookPermissions                Int?     // low-14-bit v4 hook flags from the hook address
+  hookCanBlockSwap               Boolean? // beforeSwap present -> can revert a sell
+  hookCanTaxSwap                 Boolean? // beforeSwap/afterSwap returns-delta -> dynamic tax
+  hookGatesLpRemoval             Boolean? // beforeRemoveLiquidity present
+  sidePoolCount                  Int?     // other v4 pools this token has a currency slot in
+  creatorApprovalsOutsideRouters Int?     // creator/cluster ERC-20 approvals to non-router spenders
+
   // §3.3.9  (non-launchpad only; from GoPlus/ScanHood cross-check + own eth_call sell quote)
   verified       Boolean?
   ownerRenounced Boolean?
@@ -266,6 +276,9 @@ model Report {
   pLiqImpaired7d  Float?
   pDrawdown80_24h Float?
   pDrawdown80_7d  Float?
+  // M4e — trading survival (the one positive outcome; p = P(still trading))
+  pTradingAlive24h Float?
+  pTradingAlive7d  Float?
 
   confidence Float?
   evidence   Json?  // [{ claim, tx_or_url }]

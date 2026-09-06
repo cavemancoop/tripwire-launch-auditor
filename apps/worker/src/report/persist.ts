@@ -39,6 +39,8 @@ export async function persistLaunchReports(
         pLiqImpaired7d: cols.pLiqImpaired7d,
         pDrawdown80_24h: cols.pDrawdown80_24h,
         pDrawdown80_7d: cols.pDrawdown80_7d,
+        pTradingAlive24h: cols.pTradingAlive24h,
+        pTradingAlive7d: cols.pTradingAlive7d,
         coverage: d.content.coverage as Prisma.InputJsonValue,
         blockPin: d.content.blockPin as unknown as Prisma.InputJsonValue,
         canonicalJson: d.canonicalJson,

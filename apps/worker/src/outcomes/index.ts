@@ -9,5 +9,6 @@ export * from './resolve-drawdown';
 export * from './resolve-sell-impaired';
 export * from './resolve-liq';
 export * from './resolve-insider';
+export * from './resolve-survival';
 export * from './enumerate';
 export * from './loop';

@@ -1,5 +1,5 @@
 import mapJson from '../weights/forecaster_mappings_v0.json';
-import { ALL_OUTCOME_KEYS, type OutcomeKey } from './types';
+import { ALL_OUTCOME_KEYS, outcomeIsPositive, type OutcomeKey } from './types';
 
 /**
  * Fixed maps from ScanHood / GoPlus scan output to a probability per outcome
@@ -59,7 +59,8 @@ export function scanhoodToProbabilities(
     if (key.startsWith('SELL_IMPAIRED') && !asBool(sellable) && sellable !== undefined) {
       p = Math.max(p, 0.85); // sellability is the direct SELL_IMPAIRED signal
     }
-    out[key] = round4(Math.min(m.cap, clamp01(p)));
+    p = Math.min(m.cap, clamp01(p));
+    out[key] = round4(outcomeIsPositive(key) ? 1 - p : p); // TRADING_ALIVE is inverted
   }
   return out;
 }
@@ -85,7 +86,8 @@ export function goplusToProbabilities(
   for (const key of ALL_OUTCOME_KEYS) {
     const factor = (m.outcomeFactor as Record<string, number>)[key];
     if (factor === undefined) continue;
-    out[key] = round4(Math.min(m.cap, clamp01(raw * factor)));
+    const p = Math.min(m.cap, clamp01(raw * factor));
+    out[key] = round4(outcomeIsPositive(key) ? 1 - p : p);
   }
   return out;
 }

@@ -17,9 +17,9 @@ function enumValues(name: string): string[] {
 }
 
 describe('prisma schema', () => {
-  it('defines the four mechanical outcomes from spec §1', () => {
+  it('defines the mechanical outcomes from spec §1 (+ TRADING_ALIVE, M4e)', () => {
     expect(enumValues('OutcomeLabel').sort()).toEqual(
-      ['DRAWDOWN_80', 'INSIDER_EXIT', 'LIQ_IMPAIRED', 'SELL_IMPAIRED'].sort(),
+      ['DRAWDOWN_80', 'INSIDER_EXIT', 'LIQ_IMPAIRED', 'SELL_IMPAIRED', 'TRADING_ALIVE'].sort(),
     );
   });
 

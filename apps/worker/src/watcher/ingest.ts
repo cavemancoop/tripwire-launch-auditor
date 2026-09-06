@@ -6,6 +6,7 @@ import { classifyPair } from './classify';
 import type { DetectedPool } from './detect';
 import { computeIndexFeatures } from './features';
 import { checkTokenFreshness } from './freshness';
+import { computeHookFeatures } from './hooks';
 import { creatorQuotaExceeded } from './quota';
 import { withRetry } from './retry';
 
@@ -154,6 +155,8 @@ export async function ingestPool(
           // the age nonce-search is 1-6s/RPC-call and must stay off the poller.
           hasX: idx.hasX,
           hasSite: idx.hasSite,
+          // M4e — hook permissions are in the hook address bits (zero RPC)
+          ...computeHookFeatures(pc.hooks),
           indexLaneComputedAt: new Date(),
           provenance: {
             source: {

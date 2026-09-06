@@ -4,6 +4,10 @@ import type { Hex } from 'viem';
 export const TRANSFER_TOPIC0 =
   '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef' as const;
 
+/** Approval(address indexed owner, address indexed spender, uint256 value) */
+export const APPROVAL_TOPIC0 =
+  '0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925' as const;
+
 /** left-pad a 20-byte address to a 32-byte log topic */
 export function addressToTopic(addr: string): Hex {
   return `0x${'0'.repeat(24)}${addr.slice(2).toLowerCase()}` as Hex;

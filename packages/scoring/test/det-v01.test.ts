@@ -25,6 +25,11 @@ const base = (o: Partial<FeatureInputs> = {}): FeatureInputs => ({
   mintable: null,
   sellSimOk: null,
   sellTaxBps: null,
+  hookCanBlockSwap: null,
+  hookCanTaxSwap: null,
+  hookGatesLpRemoval: null,
+  sidePoolCount: null,
+  creatorApprovalsOutsideRouters: null,
   ...o,
 });
 

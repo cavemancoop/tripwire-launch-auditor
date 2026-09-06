@@ -35,7 +35,9 @@
       "LIQ_IMPAIRED@24h": 0.8,
       "LIQ_IMPAIRED@7d": 0.85,
       "DRAWDOWN_80@24h": 1.0,
-      "DRAWDOWN_80@7d": 1.0
+      "DRAWDOWN_80@7d": 1.0,
+      "TRADING_ALIVE@24h": 0.9,
+      "TRADING_ALIVE@7d": 1.0
     },
     "cap": 0.97
   },
@@ -67,7 +69,9 @@
       "LIQ_IMPAIRED@24h": 0.6,
       "LIQ_IMPAIRED@7d": 0.65,
       "DRAWDOWN_80@24h": 0.85,
-      "DRAWDOWN_80@7d": 0.85
+      "DRAWDOWN_80@7d": 0.85,
+      "TRADING_ALIVE@24h": 0.8,
+      "TRADING_ALIVE@7d": 0.9
     },
     "cap": 0.97
   }

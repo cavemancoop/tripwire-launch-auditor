@@ -5,7 +5,8 @@ export type OutcomeLabel =
   | 'INSIDER_EXIT'
   | 'SELL_IMPAIRED'
   | 'LIQ_IMPAIRED'
-  | 'DRAWDOWN_80';
+  | 'DRAWDOWN_80'
+  | 'TRADING_ALIVE'; // M4e — the one positive outcome (value=true means still trading)
 
 /** Canonical key for a scored cell, e.g. "INSIDER_EXIT@24h". */
 export type OutcomeKey = `${OutcomeLabel}@${Horizon}`;
@@ -25,11 +26,14 @@ export const ALL_OUTCOME_KEYS: readonly OutcomeKey[] = [
   'LIQ_IMPAIRED@7d',
   'DRAWDOWN_80@24h',
   'DRAWDOWN_80@7d',
+  'TRADING_ALIVE@24h',
+  'TRADING_ALIVE@7d',
 ] as const;
 
 /**
  * SELL_IMPAIRED and LIQ_IMPAIRED are N/A for launchpad tokens (LP locked by
- * construction, spec §1). Everything else applies to all launches.
+ * construction, spec §1). Everything else — including TRADING_ALIVE — applies to
+ * all launches.
  */
 export function outcomeApplies(
   key: OutcomeKey,
@@ -37,6 +41,12 @@ export function outcomeApplies(
 ): boolean {
   if (!opts.lpLockedByConstruction) return true;
   return !key.startsWith('SELL_IMPAIRED') && !key.startsWith('LIQ_IMPAIRED');
+}
+
+/** TRADING_ALIVE is inverted: value=true is the *good* outcome. Callers that
+ *  reason about "higher probability = worse" should special-case it. */
+export function outcomeIsPositive(key: OutcomeKey): boolean {
+  return key.startsWith('TRADING_ALIVE');
 }
 
 export interface ForecastRow {

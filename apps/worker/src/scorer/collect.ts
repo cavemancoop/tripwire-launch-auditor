@@ -18,6 +18,8 @@ const P_COL: Partial<Record<OutcomeKey, string>> = {
   'LIQ_IMPAIRED@7d': 'pLiqImpaired7d',
   'DRAWDOWN_80@24h': 'pDrawdown80_24h',
   'DRAWDOWN_80@7d': 'pDrawdown80_7d',
+  'TRADING_ALIVE@24h': 'pTradingAlive24h',
+  'TRADING_ALIVE@7d': 'pTradingAlive7d',
 };
 
 const THIRTY_DAYS_MS = 30 * 24 * 3600 * 1000;

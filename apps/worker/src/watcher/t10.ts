@@ -33,6 +33,7 @@ import { buildLaunchReports, persistLaunchReports } from '../report';
 import { buildCreatorCluster, clusterAddresses } from './cluster';
 import { computeCreatorContext } from './creator';
 import { computeFeature9 } from './feature9';
+import { computeCreatorDrainerApprovals, computeSidePoolCount } from './hooks';
 import { computeT10Features } from './features';
 import { computeHolderStats } from './holders';
 
@@ -126,6 +127,16 @@ export async function runT10ForLaunch(
     liquiditySource,
   });
 
+  // M4e — side pools + creator/cluster drainer approvals in the T+10m window
+  const range = getGetLogsMaxRange(launch.chainId);
+  const clusterAddrs = [creator, ...clusterAddresses(cluster)];
+  const [sidePoolCount, creatorApprovalsOutsideRouters] = await Promise.all([
+    launch.poolKind === 'v4'
+      ? computeSidePoolCount(client, launch.chainId, token, launch.poolId, fromBlock, toBlock, range)
+      : Promise.resolve(null),
+    computeCreatorDrainerApprovals(client, launch.chainId, token, clusterAddrs, fromBlock, toBlock, range),
+  ]);
+
   // feature 9 (§3.3.9) + feature 7 sell impact — qualified lane, non-launchpad only
   const env = loadEnv();
   const qualified =
@@ -174,6 +185,8 @@ export async function runT10ForLaunch(
         clusterConfidence: cluster.confidence,
         clusterSupplyPct: holders.clusterSupplyPct,
         top10NoncreatorPct: holders.top10NoncreatorPct,
+        sidePoolCount,
+        creatorApprovalsOutsideRouters,
         ...(f9
           ? {
               verified: f9.verified,

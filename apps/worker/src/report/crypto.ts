@@ -89,7 +89,7 @@ export function recoverReportSigner(
   });
 }
 
-/** OutcomeKey -> the Prisma Report column that holds its probability (the 9 §1 cells). */
+/** OutcomeKey -> the Prisma Report column that holds its probability (the §1 cells). */
 export const OUTCOME_COLUMN: Partial<Record<OutcomeKey, string>> = {
   'INSIDER_EXIT@6h': 'pInsiderExit6h',
   'INSIDER_EXIT@24h': 'pInsiderExit24h',
@@ -100,6 +100,8 @@ export const OUTCOME_COLUMN: Partial<Record<OutcomeKey, string>> = {
   'LIQ_IMPAIRED@7d': 'pLiqImpaired7d',
   'DRAWDOWN_80@24h': 'pDrawdown80_24h',
   'DRAWDOWN_80@7d': 'pDrawdown80_7d',
+  'TRADING_ALIVE@24h': 'pTradingAlive24h',
+  'TRADING_ALIVE@7d': 'pTradingAlive7d',
 };
 
 export function probabilitiesToColumns(

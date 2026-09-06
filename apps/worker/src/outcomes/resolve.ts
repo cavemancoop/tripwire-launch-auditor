@@ -9,6 +9,7 @@ import { resolveDrawdown } from './resolve-drawdown';
 import { resolveInsiderExit } from './resolve-insider';
 import { resolveLiqImpaired } from './resolve-liq';
 import { resolveSellImpaired } from './resolve-sell-impaired';
+import { resolveSurvival } from './resolve-survival';
 import type { PoolRef } from './series';
 import { unresolvable, type Resolution } from './types';
 
@@ -165,6 +166,8 @@ export async function resolveOneOutcome(
       return resolveLiqImpaired(ctx);
     case 'INSIDER_EXIT':
       return resolveInsiderExit(ctx);
+    case 'TRADING_ALIVE':
+      return resolveSurvival(ctx);
     default:
       return unresolvable(`unknown outcome label ${row.label}`);
   }

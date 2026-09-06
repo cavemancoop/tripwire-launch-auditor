@@ -23,8 +23,11 @@ Money handling is minimized accordingly: x402 payments are optional and last in 
 | `SELL_IMPAIRED` | A fixed-size sell simulation reverts or effective sell tax ≥ 30% at the horizon check | 1h, 24h | non-launchpad tokens (launchpad tokens: always false, reported as N/A) |
 | `LIQ_IMPAIRED` | Primary pool liquidity ≤ 20% of its post-launch peak via removal transactions | 24h, 7d | non-launchpad tokens (launchpad LP is locked by construction) |
 | `DRAWDOWN_80` | Price ≤ 20% of the maximum observed in the first 24h, measured at the horizon | 24h, 7d | all |
+| `TRADING_ALIVE` | At least one trade for the primary pool in the 6h ending at the horizon (M4e) | 24h, 7d | all |
 
 `DRAWDOWN_80` is a drawdown, not an accusation. The word "rug" does not appear in report fields. A buyer chooses the outcome that matters to their strategy.
+
+`TRADING_ALIVE` is the one **positive** outcome — `value = true` means the token was still trading near the horizon; the published probability is `P(still trading)`. It answers the research finding that most launches stop trading the day they launch, and is the outcome launchpads and aggregators rank on.
 
 ### 1.1 Report time is arbitrary
 Every report carries `reportTime` and `trigger` (`launch` | `qualified` | `on_demand` | `scheduled` | `event`). All horizons are measured from `reportTime`, not from launch. Features that depend on age (`age_hours`, holder-count trend, cluster balance delta since last report, liquidity delta, ownership or implementation changes since last report) are computed at `reportTime`. Metrics are published per trigger type because on-demand requests skew toward already-suspected tokens and have a different base rate. `DRAWDOWN_80` for non-launch reports uses the maximum price in the 24h before `reportTime` as its reference.
@@ -63,6 +66,8 @@ A wallet is in the creator cluster if any of: it is the creator; it bought in th
 7. `liquidity_usd_10m`, `sell_impact_bps` for a fixed-size sell (quote-based; no fork needed).
 8. `has_x`, `has_site` (presence only).
 9. Non-launchpad only: `verified`, `owner_renounced`, `mintable`, `lp_holder_type`, `sell_sim_ok`, `sell_tax_bps` — from GoPlus/ScanHood cross-check plus own `eth_call` sell quote. Do not rebuild honeypot detection; consume it.
+10. **Pre-staged-exit surface (M4e).** Almost every launch on 4663 is a Uniswap v4 pool, where a hook can block sells, skim a dynamic tax, or gate LP removal without touching the token contract old scanners check. `hook_permissions` (the 14-bit flag value from the hook address — zero RPC), `hook_can_block_swap` (`beforeSwap` present → can revert a sell), `hook_can_tax_swap` (a returns-delta swap flag), `hook_gates_lp_removal` (`beforeRemoveLiquidity` present); `side_pool_count` (other v4 pools this token has a currency slot in, in the T+10m window); `creator_approvals_outside_routers` (distinct non-infra spenders the creator/cluster approved on the token — a drainer-approval signal).
+   `sell_impact_bps` (item 7) is quoted at fixed **100 and 1,000 USDG-equivalent** notionals (checkpoint §8.4), stored as `sell_impact_bps_100` / `sell_impact_bps_1000`.
 
 Feature code is public. Feature values are reproducible from RPC and Blockscout at the stated block, except external scanner outputs, which are stored verbatim with their fetch timestamp.
 

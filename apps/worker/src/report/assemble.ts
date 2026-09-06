@@ -72,6 +72,11 @@ export function toFeatureInputs(
     mintable: f?.mintable ?? null,
     sellSimOk: f?.sellSimOk ?? null,
     sellTaxBps: f?.sellTaxBps ?? null,
+    hookCanBlockSwap: f?.hookCanBlockSwap ?? null,
+    hookCanTaxSwap: f?.hookCanTaxSwap ?? null,
+    hookGatesLpRemoval: f?.hookGatesLpRemoval ?? null,
+    sidePoolCount: f?.sidePoolCount ?? null,
+    creatorApprovalsOutsideRouters: f?.creatorApprovalsOutsideRouters ?? null,
   };
   const coverage = COVERAGE_KEYS.filter((k) => inputs[k] === null).map(String);
   return { inputs, coverage };

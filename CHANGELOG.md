@@ -544,3 +544,48 @@ fast. publicnode rejects every `eth_getLogs` as an archive request without a pai
 token. So `pnpm backfill --days 3` can't run until ordofi's log endpoint
 recovers. Re-run `pnpm backfill --days 3 --max-calls 80000` then; it prints the
 observed base rates + suggested det_v0.1 `biasOverride` (= logit(rate)).
+
+## M4e — TRADING_ALIVE outcome + v4 hook / side-pool / approval feature family (2026-09-06)
+
+From Fable's post-research-report input: the market collapsed discovery, social
+proof and execution into one minute, so the product is the *precommitted,
+scored pre-trade packet* — and two gaps the incumbents leave get folded into M4
+before the feature freeze.
+
+### 5th outcome — `TRADING_ALIVE` (positive polarity)
+The research finding is that ~69% of launches stop trading the day they launch.
+`TRADING_ALIVE@24h` / `@7d`: true when the primary pool had a trade in the 6h
+ending at the horizon. It's the one outcome where `value = true` is *good* and
+the published probability is `P(still trading)` — `outcomeIsPositive()` marks it;
+`heuristic_v1` and the scanner maps invert for it.
+- schema: `OutcomeLabel.TRADING_ALIVE`, `Report.pTradingAlive24h/_7d`
+  (migration `m4e_hook_survival`); `ALL_OUTCOME_KEYS` 9 → 11 cells.
+- `outcomes/resolve-survival.ts` — bounded Swap-log scan of the 6h window; an RPC
+  failure is UNRESOLVABLE, never "dead".
+- `det_v0.json` gains two TRADING_ALIVE blocks (survival features positive).
+- `OUTCOME_RULES_v1.md` updated — its committed hash changes (re-commit with M4c's
+  pending artifact re-commit).
+
+### v4 hook / side-pool / approval surface (spec §3.3 item 10)
+- `packages/chain/src/v4-hooks.ts` — `decodeHookPermissions(address)`: v4 encodes
+  hook permissions in the low 14 bits of the hook address, so `hook_can_block_swap`
+  / `hook_can_tax_swap` / `hook_gates_lp_removal` are computable with **zero RPC**.
+- `apps/worker/src/watcher/hooks.ts` — `computeHookFeatures` (pure, index lane);
+  `computeSidePoolCount` (other v4 pools the token has a currency slot in) and
+  `computeCreatorDrainerApprovals` (non-infra spenders the creator/cluster
+  approved) on the T+10m job. `infraAddresses(chainId)` from config.
+- `Feature` gains `hookPermissions`, `hookCanBlockSwap`, `hookCanTaxSwap`,
+  `hookGatesLpRemoval`, `sidePoolCount`, `creatorApprovalsOutsideRouters`.
+- `inputs.ts` / `det_v0.json` weighted onto SELL_IMPAIRED, LIQ_IMPAIRED,
+  DRAWDOWN_80, INSIDER_EXIT, TRADING_ALIVE. `commit/artifacts.ts` manifest
+  extended (feature-code hash changes).
+
+Roadmap from the same input (NOT built): score the callers (caller scorecard),
+follower replicability for leader wallets, pre-positioning detection,
+organic-volume confidence, creator credentials, an outcome oracle. Caller
+scorecard + follower replicability move up if a social-trading platform / terminal
+integrates — they need the wallet-behavior index, which the ~14k-launches/day
+scale makes its own design problem (index qualified-launch wallets, not a census).
+
+Spec §1 + §3.3 updated (repo + planning copies). ~24 new tests. `pnpm verify`
+green (worker 23 files).

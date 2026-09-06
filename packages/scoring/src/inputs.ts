@@ -34,6 +34,13 @@ export interface FeatureInputs {
   mintable: boolean | null;
   sellSimOk: boolean | null;
   sellTaxBps: number | null;
+
+  // M4e — v4 hook / side-pool / approval surface (the pre-staged-exit surface)
+  hookCanBlockSwap: boolean | null;
+  hookCanTaxSwap: boolean | null;
+  hookGatesLpRemoval: boolean | null;
+  sidePoolCount: number | null;
+  creatorApprovalsOutsideRouters: number | null;
 }
 
 /** every standardized feature name the weights file may reference */
@@ -58,7 +65,12 @@ export type FeatureName =
   | 'mintable'
   | 'sellSimOk'
   | 'sellTaxBps'
-  | 'lpLockedByConstruction';
+  | 'lpLockedByConstruction'
+  | 'hookCanBlockSwap'
+  | 'hookCanTaxSwap'
+  | 'hookGatesLpRemoval'
+  | 'sidePoolCount'
+  | 'creatorApprovalsOutsideRouters';
 
 const log1p = (x: number): number => Math.log(1 + Math.max(0, x));
 
@@ -97,6 +109,11 @@ export function standardize(inputs: FeatureInputs): Record<FeatureName, number> 
     sellSimOk: tri(inputs.sellSimOk),
     sellTaxBps: z(inputs.sellTaxBps, 0, 300),
     lpLockedByConstruction: inputs.lpLockedByConstruction ? 1 : -1,
+    hookCanBlockSwap: tri(inputs.hookCanBlockSwap),
+    hookCanTaxSwap: tri(inputs.hookCanTaxSwap),
+    hookGatesLpRemoval: tri(inputs.hookGatesLpRemoval),
+    sidePoolCount: z(inputs.sidePoolCount, 1, 3),
+    creatorApprovalsOutsideRouters: z(inputs.creatorApprovalsOutsideRouters, 0, 2),
   };
 }
 

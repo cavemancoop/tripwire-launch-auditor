@@ -1,6 +1,6 @@
 import type { FeatureInputs } from './inputs';
 import type { OutcomeKey } from './types';
-import { ALL_OUTCOME_KEYS, outcomeApplies } from './types';
+import { ALL_OUTCOME_KEYS, outcomeApplies, outcomeIsPositive } from './types';
 
 // `heuristic_v1` (spec §2): a fixed rule, scored as its own forecaster.
 //   creator dev-buy ≥ 5% of supply
@@ -40,7 +40,9 @@ export function heuristicV1(inputs: FeatureInputs): HeuristicV1Result {
   const p = fired ? HEURISTIC_V1_SCORE.fired : HEURISTIC_V1_SCORE.clear;
   const probabilities: Partial<Record<OutcomeKey, number>> = {};
   for (const k of ALL_OUTCOME_KEYS) {
-    if (outcomeApplies(k, inputs)) probabilities[k] = p;
+    if (!outcomeApplies(k, inputs)) continue;
+    // TRADING_ALIVE is inverted — a fired flag lowers P(still trading)
+    probabilities[k] = outcomeIsPositive(k) ? 1 - p : p;
   }
 
   return { fired, reasons, probabilities };

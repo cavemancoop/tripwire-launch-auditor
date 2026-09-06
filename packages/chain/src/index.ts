@@ -3,6 +3,7 @@ export * from './wallet';
 export * from './blockscout';
 export * from './uniswap';
 export * from './uniswap-events';
+export * from './v4-hooks';
 export * from './chain-config';
 export * from './launchpads';
 export * from './logs';
