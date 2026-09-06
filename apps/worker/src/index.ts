@@ -1,4 +1,5 @@
 import {
+  POOL_EVENT_TOPIC0,
   getGetLogsMaxRange,
   poolCreationSources,
   setGetLogsMaxRange,
@@ -31,7 +32,12 @@ async function bootRpcBudget(client: PublicClient, env: WorkerEnv): Promise<void
     const { v4PoolManager } = poolCreationSources(env.chainId);
     const probe = probeGetLogsRange(
       (args) => client.request(args as never) as Promise<unknown>,
-      { address: v4PoolManager, anchorBlock: head > 5n ? head - 5n : head, candidates: [10_000, 5_000, 2_000] },
+      {
+        address: v4PoolManager,
+        anchorBlock: head > 5n ? head - 5n : head,
+        candidates: [10_000, 5_000, 2_000],
+        topics: [POOL_EVENT_TOPIC0.v4Initialize], // sparse — keep the probe response small
+      },
     );
     const timeout = new Promise<number>((_, rej) => setTimeout(() => rej(new Error('probe timeout')), 25_000));
     const span = await Promise.race([probe, timeout]);

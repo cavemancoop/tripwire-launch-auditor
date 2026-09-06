@@ -23,6 +23,21 @@ describe('probeGetLogsRange', () => {
     expect(await probeGetLogsRange(request, { address: '0xpm', anchorBlock: anchor })).toBe(20_000);
   });
 
+  it('forwards a topic filter into the eth_getLogs params', async () => {
+    let seenTopics: unknown;
+    const request = async ({ params }: { method: string; params: unknown[] }) => {
+      seenTopics = (params[0] as { topics?: unknown }).topics;
+      return [];
+    };
+    await probeGetLogsRange(request, {
+      address: '0xpm',
+      anchorBlock: anchor,
+      topics: ['0xdead'],
+      candidates: [1_000],
+    });
+    expect(seenTopics).toEqual(['0xdead']);
+  });
+
   it('falls back to the smallest candidate when every span errors', async () => {
     const request = async () => {
       throw new Error('some non-range failure');

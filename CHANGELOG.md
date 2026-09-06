@@ -509,3 +509,38 @@ adjusted. `pnpm verify` green.
 Still M4d: run the 3-day pass, pick det_v0.1 intercepts (or accept observed), then
 commit det_v0.1 + the M4c `forecaster_mappings` / `scorer_code` artifact hashes
 on-chain (extend `ensureArtifactsCommitted`).
+
+## M4d probe fix + M5a groundwork (2026-09-06)
+
+### probe fix
+`probeGetLogsRange` now takes an optional `topics` filter; the worker boot and
+the backfill pass it the v4 `Initialize` topic0 so the probe response stays
+small (an unfiltered `eth_getLogs` on the busy PoolManager over 10k blocks
+hangs ordofi). The backfill probe is also `Promise.race`-guarded (25s) and
+falls back to the config default.
+
+### M5a — Metabolism core (state machine + budget + crypto), no MCP
+Buildable / testable without the Orbio MCP or a live key; the MCP transport
+(claim / status / rotate / revoke) is M5b, gated on `claude mcp add orbio`.
+
+- `metabolism/state.ts` — `nextState(state, event)` pure reducer for the spec §8
+  machine (NO_KEY → ACTIVE → DRAINING → ROTATING; any keyed → REVOKING → NO_KEY;
+  → STARVED on no credits). `manualReason()` / `isManualReason()`.
+- `metabolism/budget.ts` — `dailyDeepdiveBudget()` = min(daily cap, ½ trailing
+  24h credits, key remaining − reserve) with the binding constraint;
+  `runsAffordable()`, `daysUnattended()`.
+- `metabolism/token-store.ts` — AES-256-GCM for the Orbio OAuth token at rest
+  (`TOKEN_ENCRYPTION_KEY`, 32-byte base64); `keyHashPrefix()`,
+  `generateEncryptionKey()`.
+- `metabolism/lifecycle.ts` — `buildLifecycleEntry()` hash-chained (each
+  `bodyHash` folds the previous), `signLifecycleEntry()` (agent key),
+  `verifyLifecycleChain()`, `daysSinceLastManualAction()`.
+- 17 tests.
+
+### Blocked: the 3-day backfill pass
+ordofi's `eth_getLogs` is returning `-32005 "network is busy"` (or timing out at
+25s) for even a small topic-filtered 1–2k-block query, while `eth_getBlock*` is
+fast. publicnode rejects every `eth_getLogs` as an archive request without a paid
+token. So `pnpm backfill --days 3` can't run until ordofi's log endpoint
+recovers. Re-run `pnpm backfill --days 3 --max-calls 80000` then; it prints the
+observed base rates + suggested det_v0.1 `biasOverride` (= logit(rate)).

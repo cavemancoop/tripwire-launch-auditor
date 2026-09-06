@@ -1,4 +1,5 @@
 import {
+  POOL_EVENT_TOPIC0,
   getGetLogsMaxRange,
   poolCreationSources,
   setGetLogsMaxRange,
@@ -63,14 +64,18 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
   } else {
     try {
       const { v4PoolManager } = poolCreationSources(chainId);
-      const span = await probeGetLogsRange((a) => client.request(a as never) as Promise<unknown>, {
+      const probe = probeGetLogsRange((a) => client.request(a as never) as Promise<unknown>, {
         address: v4PoolManager,
         anchorBlock: head - 5n,
         candidates: [10_000, 5_000, 2_000],
+        topics: [POOL_EVENT_TOPIC0.v4Initialize], // sparse — an unfiltered scan can hang the RPC
       });
-      setGetLogsMaxRange(span);
-    } catch {
-      /* keep config default */
+      const timeout = new Promise<number>((_, rej) =>
+        setTimeout(() => rej(new Error('probe timeout')), 25_000),
+      );
+      setGetLogsMaxRange(await Promise.race([probe, timeout]));
+    } catch (err) {
+      log(`[backfill] getLogs-range probe skipped (${(err as Error).message}); using ${getGetLogsMaxRange(chainId)}`);
     }
   }
   const maxRange = getGetLogsMaxRange(chainId);

@@ -7,6 +7,9 @@ export interface ProbeOptions {
   anchorBlock: bigint;
   /** spans to try, largest first; first that the RPC accepts wins */
   candidates?: number[];
+  /** topic filter — keep this to a sparse event (e.g. Initialize) so the probe
+   *  response is small; an unfiltered scan of a busy contract can hang the RPC */
+  topics?: (string | string[] | null)[];
 }
 
 const TRANSIENT = /busy|try again|timeout|ETIMEDOUT|ECONNRESET|ECONNREFUSED|429|socket hang up/i;
@@ -30,6 +33,7 @@ export async function probeGetLogsRange(request: RequestFn, opts: ProbeOptions):
     const params = [
       {
         address: opts.address,
+        ...(opts.topics ? { topics: opts.topics } : {}),
         fromBlock: numberToHex(from < 0n ? 0n : from),
         toBlock: numberToHex(opts.anchorBlock),
       },
