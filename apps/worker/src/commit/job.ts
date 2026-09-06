@@ -3,7 +3,12 @@ import { Prisma, prisma } from '@launch-auditor/db';
 import { getBudgetedClient, PRIORITY } from '@launch-auditor/rpc-budget';
 import { decodeEventLog, type Hex } from 'viem';
 import { loadEnv, type WorkerEnv } from '../env';
-import { ARTIFACT_KIND, computeArtifactHashes } from './artifacts';
+import {
+  ARTIFACT_KIND,
+  ARTIFACT_KIND_BY_LABEL,
+  computeArtifactHashes,
+  type ArtifactHashes,
+} from './artifacts';
 import { buildMerkleTree } from './merkle';
 
 export interface CommitResult {
@@ -84,6 +89,92 @@ export async function runCommitJob(opts: { force?: boolean } = {}): Promise<Comm
   if (!cfg.ok) return { committed: false, reason: cfg.reason };
 
   await ensureArtifactsCommitted();
+  return runCommitBatch(opts);
+}
+
+const ARTIFACT_COLUMN: Partial<Record<keyof ArtifactHashes, 'weightHash' | 'featureCodeHash' | 'outcomeRuleHash' | 'scorerHash'>> = {
+  weights: 'weightHash',
+  featureCode: 'featureCodeHash',
+  outcomeRule: 'outcomeRuleHash',
+  scorerCode: 'scorerHash',
+};
+
+/**
+ * Re-post every artifact hash whose file has changed since its last on-chain
+ * `ArtifactCommitted` (spec §1.1 — a change is effective from its commit block).
+ * Covers the M4c–M4e artifacts the one-time `ensureArtifactsCommitted` never
+ * re-emits: the updated det_v0 weights + outcome rules + feature-code manifest,
+ * the new forecaster maps, the scorer code, and det_v0.1's weights.
+ */
+export async function recommitArtifacts(
+  opts: { force?: boolean } = {},
+): Promise<{ committed: string[]; skipped: string[]; reason?: string }> {
+  const env = loadEnv();
+  const cfg = requireCommitEnv(env);
+  if (!cfg.ok) return { committed: [], skipped: [], reason: cfg.reason };
+
+  const hashes = computeArtifactHashes();
+  const prior = await prisma.commit.findMany({
+    where: { kind: 'ARTIFACT' },
+    orderBy: { createdAt: 'asc' },
+  });
+  const last = new Map<string, string>();
+  for (const r of prior) {
+    const lv = r.leaves as { artifactLabel?: string; hash?: string } | null;
+    if (lv && typeof lv === 'object' && lv.artifactLabel) {
+      last.set(lv.artifactLabel, String(lv.hash ?? r.merkleRoot).toLowerCase());
+    } else {
+      if (r.weightHash) last.set('weights', r.weightHash.toLowerCase());
+      if (r.featureCodeHash) last.set('featureCode', r.featureCodeHash.toLowerCase());
+      if (r.outcomeRuleHash) last.set('outcomeRule', r.outcomeRuleHash.toLowerCase());
+      if (r.scorerHash) last.set('scorerCode', r.scorerHash.toLowerCase());
+    }
+  }
+
+  const wallet = getWalletClient(env.rpcUrl, cfg.pk);
+  const pub = getBudgetedClient(env.rpcUrl, { priority: PRIORITY.commit });
+  const committed: string[] = [];
+  const skipped: string[] = [];
+
+  for (const [label, hash] of Object.entries(hashes) as [keyof ArtifactHashes, Hex][]) {
+    if (!opts.force && last.get(label) === hash.toLowerCase()) {
+      skipped.push(label);
+      continue;
+    }
+    const txHash = await wallet.writeContract({
+      address: cfg.registry,
+      abi: COMMIT_REGISTRY_ABI,
+      functionName: 'commitArtifact',
+      args: [ARTIFACT_KIND_BY_LABEL[label], hash],
+      account: wallet.account!,
+      chain: wallet.chain,
+    });
+    const receipt = await pub.waitForTransactionReceipt({ hash: txHash });
+    const col = ARTIFACT_COLUMN[label];
+    await prisma.commit.create({
+      data: {
+        kind: 'ARTIFACT',
+        chainId: env.chainId,
+        merkleRoot: hash,
+        leafCount: 0,
+        txHash,
+        blockNumber: receipt.blockNumber,
+        committedAt: new Date(),
+        leaves: { artifactLabel: label, hash } as Prisma.InputJsonValue,
+        ...(col ? { [col]: hash } : {}),
+      },
+    });
+    committed.push(`${label} ${hash} -> ${txHash}`);
+    // eslint-disable-next-line no-console
+    console.log(`[commit] artifact ${label} ${hash} -> ${txHash}`);
+  }
+  return { committed, skipped };
+}
+
+async function runCommitBatch(opts: { force?: boolean }): Promise<CommitResult> {
+  const env = loadEnv();
+  const cfg = requireCommitEnv(env);
+  if (!cfg.ok) return { committed: false, reason: cfg.reason };
 
   const pending = await prisma.report.findMany({
     where: { validatorPassed: true, commitId: null },

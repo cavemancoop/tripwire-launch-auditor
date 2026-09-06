@@ -9,14 +9,15 @@ describe('artifact hashes', () => {
     expect(ARTIFACT_KIND.outcomeRule).toBe(keccak256(stringToHex('outcome_rule')));
     expect(ARTIFACT_KIND.forecasterMappings).toBe(keccak256(stringToHex('forecaster_mappings')));
     expect(ARTIFACT_KIND.scorerCode).toBe(keccak256(stringToHex('scorer_code')));
+    expect(ARTIFACT_KIND.weightsV01).toBe(keccak256(stringToHex('weights_v0_1')));
   });
 
-  it('computes five distinct 32-byte hashes, deterministically', () => {
+  it('computes six distinct 32-byte hashes, deterministically', () => {
     const a = computeArtifactHashes();
     const b = computeArtifactHashes();
-    const all = [a.weights, a.featureCode, a.outcomeRule, a.forecasterMappings, a.scorerCode];
+    const all = [a.weights, a.weightsV01, a.featureCode, a.outcomeRule, a.forecasterMappings, a.scorerCode];
     for (const h of all) expect(size(h)).toBe(32);
-    expect(new Set(all).size).toBe(5);
+    expect(new Set(all).size).toBe(6);
     expect(a).toEqual(b);
   });
 });
