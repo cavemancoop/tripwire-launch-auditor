@@ -16,7 +16,10 @@ export interface Feature9Fields {
   lpHolderType: string | null;
   sellSimOk: boolean | null;
   sellTaxBps: number | null;
+  /** = sellImpactBps1000 ("holder-sized"); kept for the det_v0 weights */
   sellImpactBps: number | null;
+  sellImpactBps100: number | null;
+  sellImpactBps1000: number | null;
   liquidityUsd10m: number | null;
 }
 
@@ -37,7 +40,8 @@ export interface Feature9Params {
   poolFee: number | null;
   poolTickSpacing: number | null;
   poolHooks: string | null;
-  totalSupply: bigint | null;
+  /** decimals of the quote asset, for the 100 / 1,000 quote-unit sell notionals */
+  quoteDecimals: number;
   blockNumber?: bigint;
   goplus?: GoPlusOptions;
   scanhood?: ScanHoodOptions;
@@ -63,15 +67,16 @@ export async function computeFeature9(p: Feature9Params): Promise<Feature9Result
   const gp = mapGoPlus(goplus.security);
   const sh = mapScanHood(scanhood.data);
 
-  let sellImpactBps: number | null = null;
+  let sellImpactBps100: number | null = null;
+  let sellImpactBps1000: number | null = null;
   let ownQuoteSellOk: boolean | null = null;
   if (
     p.quote &&
+    p.quote !== '0x0000000000000000000000000000000000000000' &&
     p.poolFee !== null &&
-    p.poolTickSpacing !== null &&
-    p.totalSupply !== null &&
-    p.totalSupply > 0n
+    p.poolTickSpacing !== null
   ) {
+    const dec = BigInt(p.quoteDecimals);
     const q = await quoteSellImpact({
       client: p.client,
       quoter: p.quoter,
@@ -80,12 +85,14 @@ export async function computeFeature9(p: Feature9Params): Promise<Feature9Result
       fee: p.poolFee,
       tickSpacing: p.poolTickSpacing,
       hooks: (p.poolHooks ?? '0x0000000000000000000000000000000000000000') as Hex,
-      totalSupply: p.totalSupply,
+      notionalsQuote: [100n * 10n ** dec, 1000n * 10n ** dec],
       blockNumber: p.blockNumber,
     });
-    sellImpactBps = q.sellImpactBps;
-    ownQuoteSellOk = q.sellSimOk;
+    sellImpactBps100 = q.results[0]?.impactBps ?? null;
+    sellImpactBps1000 = q.results[1]?.impactBps ?? null;
+    ownQuoteSellOk = q.spotOk === false ? false : q.results.some((r) => r.simOk) ? true : q.spotOk;
   }
+  const sellImpactBps = sellImpactBps1000; // "holder-sized" — kept for det_v0
 
   // sell_sim_ok: any of our quote / GoPlus (not honeypot) / ScanHood (sellable)
   const sellSimOk = coalesce<boolean>(
@@ -105,6 +112,8 @@ export async function computeFeature9(p: Feature9Params): Promise<Feature9Result
     sellSimOk,
     sellTaxBps: gp.sellTaxBps,
     sellImpactBps,
+    sellImpactBps100,
+    sellImpactBps1000,
     liquidityUsd10m: sh.liquidityUsd,
   };
 

@@ -105,6 +105,10 @@ model Launch {
   launchTxHash   String
   launchAt       DateTime?
   detectedVia    String? // "v4:Initialize" | "v3:PoolCreated" | "v2:PairCreated" | "<launchpad>:TokenCreated"
+  // M4d (checkpoint §8.6): token code age at pool creation, in seconds. Null when
+  // older than the 24h freshness window (a genuine launch is < 24h). Filled at
+  // T+10m — the deployment-block search is archive-RPC bound (1-6s/call).
+  tokenAgeAtPoolSec Int?
 
   lane          Lane    @default(index)
   quotaExceeded Boolean @default(false) // >5 launches by this creator in 24h: indexed, not scored (§3.1)
@@ -190,7 +194,10 @@ model Feature {
 
   // §3.3.7
   liquidityUsd10m Float?
-  sellImpactBps   Int?
+  sellImpactBps   Int? // = sellImpactBps1000 ("holder-sized"); kept for det_v0 weights
+  // M4d (checkpoint §8.4): fixed USD-notional sell sizes via a Quoter spot quote
+  sellImpactBps100  Int? // 100 quote-unit sell
+  sellImpactBps1000 Int? // 1,000 quote-unit sell
 
   // §3.3.8  (presence only)
   hasX    Boolean?

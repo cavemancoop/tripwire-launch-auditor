@@ -1,7 +1,32 @@
 import { getChainConfig, getGetLogsMaxRange } from '@launch-auditor/chain';
 import { Prisma, prisma } from '@launch-auditor/db';
 import { Worker } from 'bullmq';
-import type { Hex, PublicClient } from 'viem';
+import { erc20Abi, type Hex, type PublicClient } from 'viem';
+import { computeTokenAgeAtPool } from './freshness';
+
+const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
+const decimalsCache = new Map<string, number>();
+
+/** decimals of the quote asset, for the §8.4 sell notionals. Cached; 18 on failure. */
+async function readQuoteDecimals(
+  client: Pick<PublicClient, 'readContract'>,
+  quote: string | null,
+): Promise<number> {
+  if (!quote || quote.toLowerCase() === ZERO_ADDR) return 18;
+  const key = quote.toLowerCase();
+  const hit = decimalsCache.get(key);
+  if (hit !== undefined) return hit;
+  try {
+    const d = Number(
+      await client.readContract({ address: quote as Hex, abi: erc20Abi, functionName: 'decimals' }),
+    );
+    decimalsCache.set(key, d);
+    return d;
+  } catch {
+    decimalsCache.set(key, 18);
+    return 18;
+  }
+}
 import { loadEnv } from '../env';
 import { QUEUE_NAMES, parseRedisUrl } from '../queues';
 import { buildLaunchReports, persistLaunchReports } from '../report';
@@ -61,6 +86,23 @@ export async function runT10ForLaunch(
     where: { launchId },
     select: { creatorAgeDays: true },
   });
+
+  // checkpoint §8.6 — token code age at pool creation (archive getCode search,
+  // off the poller). Skip when already known.
+  if (launch.tokenAgeAtPoolSec === null) {
+    const age = await computeTokenAgeAtPool(
+      client,
+      token,
+      launch.launchBlock,
+      cfg.approxBlockSeconds,
+    );
+    if (age.ageSec !== null) {
+      await prisma.launch.update({
+        where: { id: launchId },
+        data: { tokenAgeAtPoolSec: age.ageSec },
+      });
+    }
+  }
   const creatorCtx = await computeCreatorContext({
     client,
     chainId: launch.chainId,
@@ -98,7 +140,7 @@ export async function runT10ForLaunch(
         poolFee: launch.poolFee,
         poolTickSpacing: launch.poolTickSpacing,
         poolHooks: launch.poolHooks,
-        totalSupply: holders.totalSupply,
+        quoteDecimals: await readQuoteDecimals(client, launch.quoteAddress),
         blockNumber: toBlock,
         goplus: { apiKey: env.goplusApiKey },
         scanhood: { baseUrl: env.scanhoodApiBase },
@@ -141,6 +183,8 @@ export async function runT10ForLaunch(
               sellSimOk: f9.sellSimOk,
               sellTaxBps: f9.sellTaxBps,
               sellImpactBps: f9.sellImpactBps,
+              sellImpactBps100: f9.sellImpactBps100,
+              sellImpactBps1000: f9.sellImpactBps1000,
               liquidityUsd10m: f9.liquidityUsd10m,
               goplusRaw: f9.goplusRaw as Prisma.InputJsonValue,
               goplusFetchedAt: f9.goplusFetchedAt,

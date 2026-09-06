@@ -13,10 +13,26 @@ export interface SweepResult {
 /** treat as transient and leave PENDING for the next sweep */
 const RETRYABLE = /network|timeout|ETIMEDOUT|ECONNRESET|fetch failed|429|sweep error/i;
 
+export interface SweepFilter {
+  /** only resolve DRAWDOWN_80 + outcomes whose launch reached the qualified lane
+   *  (checkpoint §C step 4: the heavy scans run on qualified launches only) */
+  qualifiedOnly?: boolean;
+}
+
 /** Resolve every PENDING outcome whose horizon has passed, up to `limit`. */
-export async function sweepDueOutcomes(client: ResolveClient, limit = 25): Promise<SweepResult> {
+export async function sweepDueOutcomes(
+  client: ResolveClient,
+  limit = 25,
+  filter: SweepFilter = {},
+): Promise<SweepResult> {
   const due = await prisma.outcome.findMany({
-    where: { status: 'PENDING', horizonAt: { lte: new Date() } },
+    where: {
+      status: 'PENDING',
+      horizonAt: { lte: new Date() },
+      ...(filter.qualifiedOnly
+        ? { OR: [{ label: 'DRAWDOWN_80' as const }, { launch: { lane: 'qualified' as const } }] }
+        : {}),
+    },
     orderBy: { horizonAt: 'asc' },
     take: limit,
   });

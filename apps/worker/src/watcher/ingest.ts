@@ -13,8 +13,10 @@ export interface IngestDeps {
   client: PublicClient;
   chainId: number;
   quotaPerCreator24h: number;
-  /** override the T+10m enqueue (tests) */
+  /** override the T+10m enqueue (tests / backfill) */
   enqueueT10?: (launchId: string) => Promise<void>;
+  /** mark the row retrospective (spec §7 backfill) */
+  retrospective?: boolean;
 }
 
 /** Address that tokens leave on a buy: v4 PoolManager, else the pool contract. */
@@ -38,7 +40,29 @@ export async function ingestPool(
   const { client, chainId, quotaPerCreator24h } = deps;
   const { poolCreation: pc, txHash, blockNumber } = dp;
 
-  const { token, quote, confident } = classifyPair(chainId, pc.token0, pc.token1);
+  let { token, quote, confident } = classifyPair(chainId, pc.token0, pc.token1);
+
+  // When neither side matched a configured quote asset, freshness disambiguates:
+  // a side whose code predates the pool by >24h is the quote side (checkpoint
+  // §8.6 — LONG pairs new tokens against months-old tokenized stocks, so picking
+  // the stock as "the token" would wrongly reject the whole pool).
+  let f0: Awaited<ReturnType<typeof checkTokenFreshness>> | undefined;
+  let f1: Awaited<ReturnType<typeof checkTokenFreshness>> | undefined;
+  if (!confident) {
+    [f0, f1] = await Promise.all([
+      checkTokenFreshness(client, pc.token0 as Hex, blockNumber),
+      checkTokenFreshness(client, pc.token1 as Hex, blockNumber),
+    ]);
+    if (f0.isFreshLaunch && !f1.isFreshLaunch) {
+      token = pc.token0;
+      quote = pc.token1;
+      confident = true;
+    } else if (f1.isFreshLaunch && !f0.isFreshLaunch) {
+      token = pc.token1;
+      quote = pc.token0;
+      confident = true;
+    }
+  }
 
   const existing = await prisma.launch.findUnique({
     where: { chainId_tokenAddress: { chainId, tokenAddress: token.toLowerCase() } },
@@ -48,7 +72,12 @@ export async function ingestPool(
   // A new pool isn't the same thing as a new token launch: two long-established
   // assets (e.g. a tokenized stock / USDG pair) can get a fresh pool. Only index
   // this as a launch if the token side was actually just deployed.
-  const freshness = await checkTokenFreshness(client, token as Hex, blockNumber);
+  const freshness =
+    token === pc.token0 && f0
+      ? f0
+      : token === pc.token1 && f1
+        ? f1
+        : await checkTokenFreshness(client, token as Hex, blockNumber);
   if (!freshness.isFreshLaunch) {
     // eslint-disable-next-line no-console
     console.log(
@@ -110,6 +139,7 @@ export async function ingestPool(
       detectedVia: pc.detectedVia,
       lane: 'index',
       quotaExceeded,
+      retrospective: deps.retrospective ?? false,
       feature: {
         create: {
           schemaVersion: 'v0',

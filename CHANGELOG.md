@@ -464,3 +464,48 @@ On-chain emission of these two is wired in M4d alongside the det_v0.1 re-commit.
 25 new tests (scoring 45 total). `pnpm verify` green (rpc-budget 26 / chain 27 /
 scoring 45 / worker 93). `scorer:run` verified against the live DB (0 resolved
 outcomes yet — emits a valid empty benchmark).
+
+## M4d — sell-size, 24h freshness, backfill orchestrator (2026-09-06)
+
+checkpoint-decisions-m4.md §C steps 4–5.
+
+### sell_impact_bps -> fixed quote-unit notionals (checkpoint §8.4)
+- `sellimpact.ts` `quoteSellImpact` now sizes the sell to **100 and 1,000
+  quote-asset units** (100 / 1,000 USDG for USDG pools), sized off a tiny spot
+  quote — comparable across tokens, RPC-only. Returns per-notional impact bps.
+- `Feature` gains `sellImpactBps100` / `sellImpactBps1000`; `sellImpactBps` stays
+  as an alias for the 1,000 ("holder-sized") value so the frozen det_v0 weights
+  keep working.
+- `feature9.ts` / `t10.ts` wired; `t10` resolves the quote asset's decimals
+  (cached) for the notional.
+
+### 24h freshness gate + token_age_at_pool_sec (checkpoint §8.6)
+- `freshness.ts` window 1h -> **24h** (`FRESH_LAUNCH_WINDOW_BLOCKS` 864,000).
+- New `computeTokenAgeAtPool()` — bounded (12-iter) binary search for the
+  deployment block; runs on the T+10m job / backfill, never the poller (archive
+  `getCode` is 1–6s/call). `Launch.tokenAgeAtPoolSec` (migration
+  `m4d_backfill_fields`).
+- `ingest.ts` now uses freshness to **disambiguate** the token vs quote side when
+  no configured quote asset matched — stops a months-old tokenized stock (LONG's
+  pair asset) being picked as "the token" and the whole pool wrongly rejected.
+
+### backfill orchestrator
+- `apps/worker/src/backfill/run.ts` `runBackfill({ days, maxCalls, ... })`:
+  probe the getLogs span, print an RPC-call estimate, then (1) discover +
+  `ingestPool` every v2/v3/v4 pool in the window with `retrospective: true`,
+  (2) `runT10ForLaunch` for frozen-code features, (3) `sweepDueOutcomes` with
+  `qualifiedOnly` (DRAWDOWN_80 for all; cluster / INSIDER / SELL / LIQ for the
+  qualified lane only). Every stage checks `budgetStats().started` against
+  `--max-calls` and stops cleanly. `--dry-run` / `--resolve-only` /
+  `--features-only` / `--from-block` / `--to-block` / `--all-heavy`.
+- `observedBaseRates()` + `pnpm backfill` prints base rate per (label, horizon)
+  and the suggested `det_v0.1` `biasOverride` = `logit(rate)` (checkpoint §8.3).
+- `sweepDueOutcomes` gains the `qualifiedOnly` filter; `ingestPool` gains
+  `retrospective`.
+
+Tests: sellimpact rewritten (4), freshness +3 (`computeTokenAgeAtPool`), feature9
+adjusted. `pnpm verify` green.
+
+Still M4d: run the 3-day pass, pick det_v0.1 intercepts (or accept observed), then
+commit det_v0.1 + the M4c `forecaster_mappings` / `scorer_code` artifact hashes
+on-chain (extend `ensureArtifactsCommitted`).

@@ -36,7 +36,7 @@ describe('computeFeature9', () => {
       poolFee: 3000,
       poolTickSpacing: 60,
       poolHooks: null,
-      totalSupply: 10n ** 24n,
+      quoteDecimals: 6,
       goplus: { fetchImpl: jsonFetch(goplusCapy) },
       scanhood: { fetchImpl: jsonFetch(scanhoodCapy) },
     });
@@ -45,7 +45,8 @@ describe('computeFeature9', () => {
     expect(r.mintable).toBe(false);
     expect(r.liquidityUsd10m).toBeCloseTo(5140.66, 1); // ScanHood market.liq
     expect(r.lpHolderType).toBe('v3/other');
-    expect(r.sellImpactBps).toBeGreaterThan(0);
+    expect(r.sellImpactBps100).not.toBeUndefined();
+    expect(r.sellImpactBps).toBe(r.sellImpactBps1000); // "holder-sized" alias
     expect(r.sellSimOk).toBe(true); // GoPlus not-honeypot / own quote ok
     expect(r.goplusFetchedAt).toBeInstanceOf(Date);
     expect(r.scanhoodFetchedAt).toBeInstanceOf(Date);
@@ -66,13 +67,15 @@ describe('computeFeature9', () => {
       poolFee: null,
       poolTickSpacing: null,
       poolHooks: null,
-      totalSupply: null,
+      quoteDecimals: 18,
       goplus: { fetchImpl: boom },
       scanhood: { fetchImpl: boom },
     });
 
     expect(r.verified).toBeNull();
     expect(r.sellImpactBps).toBeNull();
+    expect(r.sellImpactBps100).toBeNull();
+    expect(r.sellImpactBps1000).toBeNull();
     expect(r.liquidityUsd10m).toBeNull();
   });
 });
