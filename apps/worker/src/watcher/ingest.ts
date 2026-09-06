@@ -17,6 +17,10 @@ export interface IngestDeps {
   enqueueT10?: (launchId: string) => Promise<void>;
   /** mark the row retrospective (spec §7 backfill) */
   retrospective?: boolean;
+  /** skip pools where the token/quote split couldn't be confidently determined
+   *  (token-vs-token pools, of which chain 4663 has many) — used for a clean
+   *  base-rate backfill; the live poller indexes everything */
+  confidentOnly?: boolean;
 }
 
 /** Address that tokens leave on a buy: v4 PoolManager, else the pool contract. */
@@ -63,6 +67,8 @@ export async function ingestPool(
       confident = true;
     }
   }
+
+  if (deps.confidentOnly && !confident) return null; // skip token-vs-token pools
 
   const existing = await prisma.launch.findUnique({
     where: { chainId_tokenAddress: { chainId, tokenAddress: token.toLowerCase() } },

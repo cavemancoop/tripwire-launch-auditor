@@ -22,6 +22,15 @@ export interface BackfillOptions {
   dryRun?: boolean;
   fromBlock?: bigint;
   toBlock?: bigint;
+  /** end the window this many hours before now (so discovered launches' horizons
+   *  have already passed and can resolve — chain 4663 launches ~14k/day, so a
+   *  full backfill is infeasible; sample instead) */
+  endHoursAgo?: number;
+  /** stop discovery once this many launches are carried to features/outcomes */
+  maxLaunches?: number;
+  /** index only pools with a confidently-identified quote asset (skip the many
+   *  token-vs-token pools) — cleaner base rates */
+  confidentOnly?: boolean;
   /** heavy scans (cluster / INSIDER / SELL / LIQ) on qualified launches only */
   qualifiedOnly?: boolean;
   /** skip pool discovery + ingest; just run T+10m + outcomes on existing retrospective rows */
@@ -80,18 +89,34 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
   }
   const maxRange = getGetLogsMaxRange(chainId);
 
-  const toBlock = opts.toBlock ?? (head > headLagBlocks ? head - headLagBlocks : head);
+  const toBlock =
+    opts.toBlock ??
+    (opts.endHoursAgo
+      ? await blockAtTime(client, new Date(Date.now() - opts.endHoursAgo * 3_600_000), { chainId })
+      : head > headLagBlocks
+        ? head - headLagBlocks
+        : head);
   const fromBlock =
     opts.fromBlock ??
     (await blockAtTime(client, new Date(Date.now() - opts.days * 86_400_000), { chainId }));
+  const maxLaunches = opts.maxLaunches ?? Number.POSITIVE_INFINITY;
 
   const spanBlocks = toBlock > fromBlock ? Number(toBlock - fromBlock) : 0;
-  const expectedLaunches = Math.max(1, Math.round(opts.days * 180));
+  // chain 4663 runs ~14k launches/day — a full backfill is infeasible, so a
+  // 3-day base-rate pass caps `maxLaunches` and samples from the front.
+  const perDay = 14_000;
+  const discoverChunks = Number.isFinite(maxLaunches)
+    ? Math.ceil((maxLaunches / perDay) * (86_400 / (maxRange * 0.1))) // chunks until maxLaunches hit
+    : Math.ceil(spanBlocks / maxRange);
+  const expectedLaunches = Number.isFinite(maxLaunches)
+    ? maxLaunches
+    : Math.max(1, Math.round((spanBlocks * 0.1 * perDay) / 86_400));
   const estimatedCalls =
-    Math.ceil(spanBlocks / maxRange) * 3 + // v2 + v3 + v4 discovery scans
-    expectedLaunches * 40 + // freshness + index + T+10m features
+    discoverChunks + // one filtered getLogs per chunk
+    expectedLaunches * 6 + // freshness + index features per ingested launch
+    expectedLaunches * 40 + // T+10m features
     expectedLaunches * 80 + // DRAWDOWN price series
-    Math.round(expectedLaunches * 0.3) * 250; // cluster / INSIDER / SELL for the qualified ~30%
+    Math.round(expectedLaunches * 0.3) * 250; // heavy scans on the qualified ~30%
 
   log(
     `[backfill] window blocks ${fromBlock}..${toBlock} (${opts.days}d, ~${spanBlocks} blocks), ` +
@@ -121,7 +146,11 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
   // ── 1. discovery + ingest ────────────────────────────────────────────
   const launchIds: string[] = [];
   if (!opts.resolveOnly) {
-    for (let from = fromBlock; from <= toBlock && !overBudget(); from += BigInt(maxRange)) {
+    for (
+      let from = fromBlock;
+      from <= toBlock && !overBudget() && launchIds.length < maxLaunches;
+      from += BigInt(maxRange)
+    ) {
       const to = from + BigInt(maxRange) - 1n < toBlock ? from + BigInt(maxRange) - 1n : toBlock;
       let detected;
       try {
@@ -131,13 +160,14 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
         continue;
       }
       for (const dp of detected) {
-        if (overBudget()) break;
+        if (overBudget() || launchIds.length >= maxLaunches) break;
         try {
           const id = await ingestPool(dp, {
             client,
             chainId,
             quotaPerCreator24h: loadEnv().quotaPerCreator24h,
             retrospective: true,
+            confidentOnly: opts.confidentOnly ?? false,
             enqueueT10: async () => {},
           });
           if (id) {
