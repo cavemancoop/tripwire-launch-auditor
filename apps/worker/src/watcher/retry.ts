@@ -6,7 +6,7 @@
  */
 
 const TRANSIENT_MESSAGE =
-  /could not be found|not be processed on a block yet|not found|rate.?limit|too many requests|429|timeout|ETIMEDOUT|ECONNRESET|ECONNREFUSED|socket hang up|-32005|-32000/i;
+  /could not be found|not be processed on a block yet|not found|rate.?limit|too many requests|429|timeout|ETIMEDOUT|ECONNRESET|ECONNREFUSED|socket hang up|network is busy|exceeds defined limit|try again in a moment|-32005|-32000/i;
 
 const TRANSIENT_NAME =
   /NotFoundError|TimeoutError|HttpRequestError|RpcRequestError|LimitExceededError/i;

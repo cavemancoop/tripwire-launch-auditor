@@ -7,6 +7,7 @@ import { probeGetLogsRange } from '@launch-auditor/rpc-budget';
 import type { PublicClient } from 'viem';
 import { runCommitLoop } from './commit';
 import { loadEnv, type WorkerEnv } from './env';
+import { runOutcomesLoop } from './outcomes';
 import { runPoller, type StopSignal } from './watcher/poller';
 import { rpc } from './watcher/rpc';
 import { startFeaturesWorker } from './watcher/t10';
@@ -28,10 +29,12 @@ async function bootRpcBudget(client: PublicClient, env: WorkerEnv): Promise<void
   try {
     const head = await client.getBlockNumber();
     const { v4PoolManager } = poolCreationSources(env.chainId);
-    const span = await probeGetLogsRange(
+    const probe = probeGetLogsRange(
       (args) => client.request(args as never) as Promise<unknown>,
-      { address: v4PoolManager, anchorBlock: head > 5n ? head - 5n : head },
+      { address: v4PoolManager, anchorBlock: head > 5n ? head - 5n : head, candidates: [10_000, 5_000, 2_000] },
     );
+    const timeout = new Promise<number>((_, rej) => setTimeout(() => rej(new Error('probe timeout')), 25_000));
+    const span = await Promise.race([probe, timeout]);
     setGetLogsMaxRange(span);
     console.log(`[rpc-budget] probed eth_getLogs span = ${span} blocks`);
   } catch (err) {
@@ -67,6 +70,8 @@ async function main(): Promise<void> {
   } else {
     console.log('[commit] loop disabled (COMMIT_REGISTRY_ADDRESS / GAS_WALLET_PRIVATE_KEY not set)');
   }
+
+  void runOutcomesLoop(client, signal);
 
   console.log('[watcher] starting pool-creation poller for chain', client.chain?.id ?? '(env)');
   await runPoller(client, signal);

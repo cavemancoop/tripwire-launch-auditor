@@ -349,6 +349,7 @@ model Outcome {
   value       Boolean?      // resolved outcome; null while PENDING / NA / UNRESOLVABLE
   ruleVersion String        @default("v1")
   evidence    Json?         // tx hashes / measurements backing the resolution
+  coverage    Json?         // M4: { blocksScanned, chunkSize, callCount, gaps[], notes } for the scan behind this resolution
 
   horizonAt  DateTime?      // wall-clock time the horizon check is due (anchorTime + horizon)
   measuredAt DateTime?

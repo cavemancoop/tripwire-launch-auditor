@@ -349,3 +349,80 @@ response. Both added at repo root next to the spec. Calls recorded in
 
 `.env.example` updated (new M4 section; `REVENUE_SPLITTER_ADDRESS` removed).
 Rewritten M4 build prompt = `checkpoint-decisions-m4.md` §C; M6 tool list = §D.
+
+## M4a — packages/rpc-budget: shared RPC budget (2026-09-06)
+
+Everything on chain 4663 goes through one ~600 req/min RPC (ordofi), so all
+callers now share one budget (checkpoint §C step 1).
+
+- **TokenBucket** (injectable clock), **PriorityQueue** (stable, lowest-number
+  first), **ResponseCache** (bounded FIFO; caches only block-pinned /
+  hash-addressed reads — never a moving tag or open-ended `eth_getLogs`).
+- **RequestScheduler** — one per RPC URL, process-wide. Admits in priority order
+  `watcher > commit > outcomes > deepdive > backfill`, throttles on the bucket,
+  caps `maxInFlight` (12), exposes `stats`.
+- **budgetedHttp** — a viem transport wrapping `http()`; every
+  `request({method,params})` (what every viem action calls) hits the cache then
+  the scheduler. Transport retries stay inside one budget slot.
+- **getBudgetedClient(url, {priority})** — drop-in for `getPublicClient`.
+- **probeGetLogsRange** — largest `eth_getLogs` span the RPC accepts
+  (10k→5k→2k), one transient retry per span, conservative fallback.
+- `RPC_BUDGET_RPM` (500), `RPC_MAX_GETLOGS_RANGE` (0 = probe).
+
+Wiring: `watcher/rpc.ts`, `commit/job.ts`, `commit-verify.ts` → budgeted clients
+at their tier. `chain-config`: `getGetLogsMaxRange()` / `setGetLogsMaxRange()`
+runtime override; `poller` + `t10` read it. Worker boot: `bootRpcBudget()` logs
+the rate and probes (or pins) the span, with a 25s guard.
+
+26 rpc-budget tests. Live smoke: budgeted client hits ordofi; a repeated
+block-pinned `getCode` is served from cache.
+
+## M4b — outcome resolution (2026-09-06)
+
+The four mechanical outcomes (spec §1), resolved from RPC + our own logs only —
+no Blockscout (checkpoint §8.1). Anchored to `reportTime` (§1.1).
+
+**Chain primitives** (`packages/chain/uniswap-events.ts`): decoders for v4
+`Swap` / `ModifyLiquidity`, v3 `Swap`, v2 `Sync` / `Swap`; `sqrtPriceX96` →
+price helpers (`tokenPriceInQuote`, decimals-cancelling).
+
+**`apps/worker/src/outcomes/`**
+- `block-time.ts` — `blockAtTime()`: bounded (18-iter) binary search on block
+  timestamps, memoised per rounded second.
+- `series.ts` — `buildPriceSeries` (v4/v3 Swap `sqrtPriceX96`, v2 `Sync`
+  reserves) and `buildLiquiditySeries` (v4 cumulative `ModifyLiquidity`, v2
+  quote-side reserve). Both return a `coverage` record (blocks, chunk size, call
+  count, gaps) and back off on ordofi's transient "network is busy".
+- `quote.ts` — v4 Quoter `quoteExactInputSingle` with a failure taxonomy:
+  `revert` (real signal) vs `archive` / `network` (→ unresolvable).
+- `resolve-drawdown.ts` — DRAWDOWN_80: max price in the reference window (first
+  24h after the anchor, or the 24h before it for non-launch triggers) vs the
+  horizon price (last swap in a bounded tail, else a Quoter spot call).
+- `resolve-sell-impaired.ts` — SELL_IMPAIRED: 100-quote-unit sell sized off a
+  tiny spot quote at the horizon block; revert or effective tax ≥ 30% → true;
+  archive/network → UNRESOLVABLE, never false. NA for launchpad tokens.
+- `resolve-liq.ts` — LIQ_IMPAIRED: current liquidity ≤ 20% of the post-launch
+  peak via a removal. NA for launchpad tokens.
+- `resolve-insider.ts` — INSIDER_EXIT: replay the creator cluster's aggregate
+  balance from token `Transfer` logs (from/to ∈ cluster); a sell = a transfer to
+  the pool; net-sold ≥ 50% of peak → true.
+- `resolve.ts` — dispatcher: loads the launch (+ cluster), builds the pool key,
+  resolves blocks for the anchor/horizon, `outcomeApplies` → NA, dispatches.
+- `enumerate.ts` — `ensureOutcomeRows()`: one Outcome row per applicable
+  (label, horizon) for a report's anchor time; idempotent on the unique key;
+  NA rows for launchpad SELL/LIQ. Hooked into `report/persist.ts`.
+- `loop.ts` — `sweepDueOutcomes()` / `runOutcomesLoop()`: resolve PENDING
+  outcomes past their horizon; transient failures stay PENDING for a retry, the
+  rest land RESOLVED / NA / UNRESOLVABLE with `evidence` + `coverage`. Wired
+  into the worker; `pnpm outcomes:run [--loop] [--limit N]`.
+
+Schema (`m4_outcome_coverage`): `Outcome.coverage Json?`.
+
+45 new tests (chain 8, worker 24 + fixtures/logs helper): event decoders, price
+math, series builders, `blockAtTime`, and every resolver (true / false /
+NA / UNRESOLVABLE / archive-not-false). No live RPC in tests. `pnpm verify`
+green (rpc-budget 26 / chain 27 / scoring 18 / worker 93).
+
+Known: 24h–7d windows over a congested free RPC are slow even chunked at the
+probed span; the `outcomes` loop runs at low priority in the background and the
+M4d backfill enforces `--max-calls`.

@@ -55,7 +55,7 @@ export class RequestScheduler {
   };
 
   constructor(opts: SchedulerOptions) {
-    const burst = opts.burst ?? Math.max(Math.ceil(opts.rpm / 10), 10);
+    const burst = opts.burst ?? Math.max(Math.ceil(opts.rpm / 20), 8);
     this.bucket = new TokenBucket({
       capacity: burst,
       refillPerSec: opts.rpm / 60,

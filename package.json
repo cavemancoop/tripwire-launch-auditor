@@ -22,6 +22,7 @@
     "watcher:prune-stale": "pnpm --filter @launch-auditor/worker watcher:prune-stale",
     "commit:run": "pnpm --filter @launch-auditor/worker commit:run",
     "commit:verify": "pnpm --filter @launch-auditor/worker commit:verify",
+    "outcomes:run": "pnpm --filter @launch-auditor/worker outcomes:run",
     "contracts:build": "forge build --root packages/contracts",
     "contracts:test": "forge test --root packages/contracts",
     "contracts:deploy": "forge script packages/contracts/script/Deploy.s.sol --root packages/contracts --rpc-url robinhood --broadcast"

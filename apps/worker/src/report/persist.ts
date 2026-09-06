@@ -1,4 +1,5 @@
 import { Prisma, prisma, type $Enums } from '@launch-auditor/db';
+import { ensureOutcomeRows } from '../outcomes/enumerate';
 import { probabilitiesToColumns } from './crypto';
 import type { ReportDraft } from './types';
 
@@ -48,5 +49,27 @@ export async function persistLaunchReports(
     });
     if (d.validatorPassed) passed += 1;
   }
+
+  // M4: materialise the Outcome grid for this report's anchor time. One batch
+  // shares (chainId, tokenAddress, reportTime, trigger, launchId).
+  const first = drafts[0]?.content;
+  if (first?.launchId) {
+    const launch = await prisma.launch.findUnique({
+      where: { id: first.launchId },
+      select: { lpLockedByConstruction: true, retrospective: true },
+    });
+    if (launch) {
+      await ensureOutcomeRows({
+        chainId: first.chainId,
+        tokenAddress: first.tokenAddress,
+        reportTime: new Date(first.reportTime),
+        trigger: first.trigger,
+        launchId: first.launchId,
+        lpLockedByConstruction: launch.lpLockedByConstruction,
+        retrospective: launch.retrospective,
+      });
+    }
+  }
+
   return { stored: drafts.length, passed, failed: drafts.length - passed };
 }

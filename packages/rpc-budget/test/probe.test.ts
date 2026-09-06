@@ -23,9 +23,9 @@ describe('probeGetLogsRange', () => {
     expect(await probeGetLogsRange(request, { address: '0xpm', anchorBlock: anchor })).toBe(20_000);
   });
 
-  it('falls back to the smallest candidate on a non-range error', async () => {
+  it('falls back to the smallest candidate when every span errors', async () => {
     const request = async () => {
-      throw new Error('fetch failed: ECONNRESET');
+      throw new Error('some non-range failure');
     };
     expect(await probeGetLogsRange(request, { address: '0xpm', anchorBlock: anchor })).toBe(1_000);
   });
