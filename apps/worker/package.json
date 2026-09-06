@@ -17,6 +17,7 @@
   "dependencies": {
     "@launch-auditor/chain": "workspace:*",
     "@launch-auditor/db": "workspace:*",
+    "@launch-auditor/rpc-budget": "workspace:*",
     "@launch-auditor/scoring": "workspace:*",
     "bullmq": "catalog:",
     "canonicalize": "catalog:",

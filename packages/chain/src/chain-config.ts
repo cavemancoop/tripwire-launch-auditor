@@ -51,6 +51,25 @@ export function getChainConfig(chainId: number): ChainConfig {
   return cfg;
 }
 
+/**
+ * Runtime override for the eth_getLogs block-span limit. The config JSON carries
+ * a conservative default (`getLogsMaxRange`); on boot the worker probes the RPC's
+ * real limit (M4 `packages/rpc-budget`) and calls `setGetLogsMaxRange` with it.
+ * Every chunked scan reads through `getGetLogsMaxRange()` so the probed value
+ * takes effect without threading it through call sites.
+ */
+let getLogsMaxRangeOverride: number | null = null;
+
+export function setGetLogsMaxRange(blocks: number): void {
+  if (Number.isFinite(blocks) && blocks >= 1) {
+    getLogsMaxRangeOverride = Math.floor(blocks);
+  }
+}
+
+export function getGetLogsMaxRange(chainId = 4663): number {
+  return getLogsMaxRangeOverride ?? getChainConfig(chainId).getLogsMaxRange;
+}
+
 /** All Uniswap core addresses to poll for pool-creation, lowercased. */
 export function poolCreationSources(chainId: number): {
   v2Factory: string;

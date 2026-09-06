@@ -1,9 +1,6 @@
-import {
-  COMMIT_REGISTRY_ABI,
-  getPublicClient,
-  getWalletClient,
-} from '@launch-auditor/chain';
+import { COMMIT_REGISTRY_ABI, getWalletClient } from '@launch-auditor/chain';
 import { Prisma, prisma } from '@launch-auditor/db';
+import { getBudgetedClient, PRIORITY } from '@launch-auditor/rpc-budget';
 import { decodeEventLog, type Hex } from 'viem';
 import { loadEnv, type WorkerEnv } from '../env';
 import { ARTIFACT_KIND, computeArtifactHashes } from './artifacts';
@@ -35,7 +32,7 @@ export async function ensureArtifactsCommitted(): Promise<{ committed: number }>
 
   const h = computeArtifactHashes();
   const wallet = getWalletClient(env.rpcUrl, cfg.pk);
-  const pub = getPublicClient(env.rpcUrl);
+  const pub = getBudgetedClient(env.rpcUrl, { priority: PRIORITY.commit });
   const items: { label: string; kind: Hex; hash: Hex; column: 'weightHash' | 'featureCodeHash' | 'outcomeRuleHash' }[] = [
     { label: 'weights', kind: ARTIFACT_KIND.weights, hash: h.weights, column: 'weightHash' },
     { label: 'feature_code', kind: ARTIFACT_KIND.featureCode, hash: h.featureCode, column: 'featureCodeHash' },
@@ -111,7 +108,7 @@ export async function runCommitJob(opts: { force?: boolean } = {}): Promise<Comm
   const tree = buildMerkleTree(batch.map((r) => r.reportHash as Hex));
 
   const wallet = getWalletClient(env.rpcUrl, cfg.pk);
-  const pub = getPublicClient(env.rpcUrl);
+  const pub = getBudgetedClient(env.rpcUrl, { priority: PRIORITY.commit });
   const txHash = await wallet.writeContract({
     address: cfg.registry,
     abi: COMMIT_REGISTRY_ABI,

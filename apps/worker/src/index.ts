@@ -1,13 +1,53 @@
+import {
+  getGetLogsMaxRange,
+  poolCreationSources,
+  setGetLogsMaxRange,
+} from '@launch-auditor/chain';
+import { probeGetLogsRange } from '@launch-auditor/rpc-budget';
+import type { PublicClient } from 'viem';
 import { runCommitLoop } from './commit';
-import { loadEnv } from './env';
+import { loadEnv, type WorkerEnv } from './env';
 import { runPoller, type StopSignal } from './watcher/poller';
 import { rpc } from './watcher/rpc';
 import { startFeaturesWorker } from './watcher/t10';
+
+/**
+ * Establish the shared RPC budget before any scanning starts: log the rate, and
+ * either pin the eth_getLogs span from env or probe the RPC's real limit once so
+ * the watcher and (M4) backfill chunk at the largest size the node accepts.
+ */
+async function bootRpcBudget(client: PublicClient, env: WorkerEnv): Promise<void> {
+  console.log(
+    `[rpc-budget] ${env.rpcBudgetRpm} req/min shared · priority watcher>commit>outcomes>deepdive>backfill`,
+  );
+  if (env.rpcMaxGetLogsRange > 0) {
+    setGetLogsMaxRange(env.rpcMaxGetLogsRange);
+    console.log(`[rpc-budget] eth_getLogs span pinned to ${env.rpcMaxGetLogsRange} (env)`);
+    return;
+  }
+  try {
+    const head = await client.getBlockNumber();
+    const { v4PoolManager } = poolCreationSources(env.chainId);
+    const span = await probeGetLogsRange(
+      (args) => client.request(args as never) as Promise<unknown>,
+      { address: v4PoolManager, anchorBlock: head > 5n ? head - 5n : head },
+    );
+    setGetLogsMaxRange(span);
+    console.log(`[rpc-budget] probed eth_getLogs span = ${span} blocks`);
+  } catch (err) {
+    console.warn(
+      `[rpc-budget] getLogs range probe failed; using config default ${getGetLogsMaxRange(env.chainId)} —`,
+      err instanceof Error ? err.message : err,
+    );
+  }
+}
 
 async function main(): Promise<void> {
   const client = rpc();
   const env = loadEnv();
   const signal: StopSignal = { stopped: false };
+
+  await bootRpcBudget(client, env);
 
   const worker = startFeaturesWorker(client);
   worker.on('ready', () => console.log('[worker] features queue ready'));

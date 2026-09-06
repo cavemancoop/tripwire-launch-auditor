@@ -1,4 +1,4 @@
-import { getChainConfig } from '@launch-auditor/chain';
+import { getChainConfig, getGetLogsMaxRange } from '@launch-auditor/chain';
 import { Prisma, prisma } from '@launch-auditor/db';
 import { Worker } from 'bullmq';
 import type { Hex, PublicClient } from 'viem';
@@ -41,7 +41,7 @@ export async function runT10ForLaunch(
     liquiditySource: liquiditySource as Hex,
     fromBlock,
     toBlock,
-    maxRange: cfg.getLogsMaxRange,
+    maxRange: getGetLogsMaxRange(launch.chainId),
   });
 
   // §3.2 — creator cluster (rules 1-3; rule 4 no-op until an index is wired)
@@ -52,7 +52,7 @@ export async function runT10ForLaunch(
     liquiditySource,
     launchBlock: launch.launchBlock,
     windowBlocks: blocksIn10m,
-    maxRange: cfg.getLogsMaxRange,
+    maxRange: getGetLogsMaxRange(launch.chainId),
   });
 
   // item 3 — creator context. Prior-launch counts refresh every run (cheap DB);
@@ -78,7 +78,7 @@ export async function runT10ForLaunch(
     token,
     fromBlock,
     toBlock,
-    maxRange: cfg.getLogsMaxRange,
+    maxRange: getGetLogsMaxRange(launch.chainId),
     creator,
     cluster: clusterAddresses(cluster),
     liquiditySource,

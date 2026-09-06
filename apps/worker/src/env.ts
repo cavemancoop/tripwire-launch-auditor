@@ -22,6 +22,10 @@ export interface WorkerEnv {
   commitRegistryAddress?: `0x${string}`;
   commitIntervalSec: number;
   commitMaxLeaves: number;
+  /** shared RPC budget: sustained requests/min across all callers (M4) */
+  rpcBudgetRpm: number;
+  /** eth_getLogs span: 0 = probe the RPC's real limit on boot, else use this */
+  rpcMaxGetLogsRange: number;
 }
 
 let dotenvLoaded = false;
@@ -81,6 +85,8 @@ export function loadEnv(): WorkerEnv {
       | undefined,
     commitIntervalSec: Number(process.env.COMMIT_INTERVAL_SEC ?? 300),
     commitMaxLeaves: Number(process.env.COMMIT_MAX_LEAVES ?? 200),
+    rpcBudgetRpm: Number(process.env.RPC_BUDGET_RPM ?? 500),
+    rpcMaxGetLogsRange: Number(process.env.RPC_MAX_GETLOGS_RANGE ?? 0),
   };
 }
 

@@ -1,5 +1,6 @@
-import { COMMIT_REGISTRY_ABI, getPublicClient } from '@launch-auditor/chain';
+import { COMMIT_REGISTRY_ABI } from '@launch-auditor/chain';
 import { prisma } from '@launch-auditor/db';
+import { getBudgetedClient, PRIORITY } from '@launch-auditor/rpc-budget';
 import { parseAbiItem, type Hex } from 'viem';
 import { verifyProof } from '../commit/merkle';
 import { loadEnv } from '../env';
@@ -45,7 +46,7 @@ async function main(): Promise<void> {
   const env = loadEnv();
   let onChain = false;
   if (env.commitRegistryAddress && commit.blockNumber !== null) {
-    const client = getPublicClient(env.rpcUrl);
+    const client = getBudgetedClient(env.rpcUrl, { priority: PRIORITY.commit });
     const logs = await client.getLogs({
       address: env.commitRegistryAddress,
       event: parseAbiItem(

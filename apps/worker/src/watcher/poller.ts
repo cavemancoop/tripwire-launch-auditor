@@ -1,4 +1,4 @@
-import { getChainConfig } from '@launch-auditor/chain';
+import { getGetLogsMaxRange } from '@launch-auditor/chain';
 import type { PublicClient } from 'viem';
 import { loadEnv } from '../env';
 import { POOLS_STREAM, getCursor, setCursor } from './cursor';
@@ -42,7 +42,6 @@ export async function pollOnce(
 ): Promise<PollResult> {
   const env = loadEnv();
   const chainId = opts.chainId ?? env.chainId;
-  const cfg = getChainConfig(chainId);
 
   const head = await client.getBlockNumber();
   const safeHead = head > env.headLagBlocks ? head - env.headLagBlocks : 0n;
@@ -62,7 +61,7 @@ export async function pollOnce(
       ? from + opts.maxSpan - 1n
       : safeHead;
 
-  const detected = await detectPools(client, chainId, from, to, cfg.getLogsMaxRange);
+  const detected = await detectPools(client, chainId, from, to, getGetLogsMaxRange(chainId));
 
   let launchesIndexed = 0;
   let failed = 0;

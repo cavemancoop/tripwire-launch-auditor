@@ -87,6 +87,9 @@ importers:
       '@launch-auditor/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@launch-auditor/rpc-budget':
+        specifier: workspace:*
+        version: link:../../packages/rpc-budget
       '@launch-auditor/scoring':
         specifier: workspace:*
         version: link:../../packages/scoring
@@ -141,6 +144,25 @@ importers:
       prisma:
         specifier: 'catalog:'
         version: 6.19.3(typescript@5.9.3)
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vitest:
+        specifier: 'catalog:'
+        version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(tsx@4.23.13)
+
+  packages/rpc-budget:
+    dependencies:
+      '@launch-auditor/chain':
+        specifier: workspace:*
+        version: link:../chain
+      viem:
+        specifier: 'catalog:'
+        version: 2.56.3(typescript@5.9.3)
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.20.1
       typescript:
         specifier: 'catalog:'
         version: 5.9.3
