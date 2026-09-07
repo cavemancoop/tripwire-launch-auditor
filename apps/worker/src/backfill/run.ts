@@ -76,7 +76,7 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
       const probe = probeGetLogsRange((a) => client.request(a as never) as Promise<unknown>, {
         address: v4PoolManager,
         anchorBlock: head - 5n,
-        candidates: [10_000, 5_000, 2_000],
+        candidates: [9_999, 5_000, 2_000],
         topics: [POOL_EVENT_TOPIC0.v4Initialize], // sparse — an unfiltered scan can hang the RPC
       });
       const timeout = new Promise<number>((_, rej) =>

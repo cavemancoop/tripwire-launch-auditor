@@ -5,8 +5,9 @@
   "blockscoutApi": "https://robinhoodchain.blockscout.com/api/v2",
   "blockscoutApiNote": "Cloudflare/backend gives 403 or 500 to server-side calls and /api/v2/* is flaky even from the in-app browser. The Etherscan-compat path `/api?module=...&action=...` (e.g. action=getcontractcreation) does answer intermittently from the in-app browser and is the only reason the launchpad attribution below could be confirmed. NOT a runtime dependency (spec §8.1 / post-M3 checkpoint) — best-effort only, behind AddressHistoryProvider in M4.",
   "approxBlockSeconds": 0.1,
-  "getLogsMaxRange": 2000,
-  "getLogsMaxRangeNote": "Conservative. M4 packages/rpc-budget probes the RPC's real limit (10k vs 20k) on boot and overrides this.",
+  "getLogsMaxRange": 9999,
+  "getLogsMaxRangeNote": "blockmachine.io caps eth_getLogs at (toBlock-fromBlock) <= 10000, i.e. a 9999 inclusive span. M4 rpc-budget probes on boot ([9999, 5000, 2000]) and overrides this. ordofi tolerated ~2000 before flapping.",
+  "rpcNote": "2026-09-06: RH_RPC_URL is https://rpc-robinhood.blockmachine.io. ordofi (rpc.ordofi.network) archive is currently broken (missing trie node at depth) and eth_getLogs returns -32005 'network is busy' unpredictably. Tested alternatives: official rpc.mainnet.chain.robinhood.com works for small queries but hard-throttles 'Too Many Requests'; Pocket (robinhood.api.pocket.network) is non-archive; publicnode needs a paid token. blockmachine serves archive + gives clean 'rate limit exceeded' (retryable) but throttles ~12-request bursts. A keyed / dedicated node is the production answer.",
   "uniswap": {
     "v4PoolManager": {
       "address": "0x8366a39CC670B4001A1121B8F6A443A643e40951",

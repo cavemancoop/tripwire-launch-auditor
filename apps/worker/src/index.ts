@@ -35,7 +35,7 @@ async function bootRpcBudget(client: PublicClient, env: WorkerEnv): Promise<void
       {
         address: v4PoolManager,
         anchorBlock: head > 5n ? head - 5n : head,
-        candidates: [10_000, 5_000, 2_000],
+        candidates: [9_999, 5_000, 2_000],
         topics: [POOL_EVENT_TOPIC0.v4Initialize], // sparse — keep the probe response small
       },
     );
