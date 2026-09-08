@@ -62,13 +62,15 @@ export async function runT10ForLaunch(
   // The watcher may have latched onto a decoy / >10%-fee side pool at ingest.
   if (launch.poolKind === 'v4' || launch.poolKind === null) {
     try {
-      const day = BigInt(Math.round(86_400 / cfg.approxBlockSeconds));
+      // the primary pool is created at/near launch — a 2h forward window catches
+      // it without a 24h chunked scan (which was ~170 getLogs per launch)
+      const scanBlocks = BigInt(Math.round((2 * 3600) / cfg.approxBlockSeconds));
       const pick = await pickPrimaryV4Pool(client, {
         chainId: launch.chainId,
         token: launch.tokenAddress,
         currentPoolId: launch.poolId,
         scanFrom: launch.launchBlock,
-        scanTo: launch.launchBlock + day,
+        scanTo: launch.launchBlock + scanBlocks,
         activityFrom: fromBlock,
         activityTo: toBlock,
         maxRange,

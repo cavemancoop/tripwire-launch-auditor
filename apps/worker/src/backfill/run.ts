@@ -186,8 +186,9 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
       where: { retrospective: true, OR: [{ poolKind: 'v4' }, { poolKind: null }] },
       select: { id: true, chainId: true, tokenAddress: true, poolId: true, launchBlock: true },
     });
-    const day = BigInt(Math.round(86_400 / getChainConfig(chainId).approxBlockSeconds));
-    const win = BigInt(Math.round((10 * 60) / getChainConfig(chainId).approxBlockSeconds));
+    const secs = getChainConfig(chainId).approxBlockSeconds;
+    const scanBlocks = BigInt(Math.round((2 * 3600) / secs)); // 2h forward — the primary pool exists by then
+    const win = BigInt(Math.round((10 * 60) / secs));
     let switched = 0;
     let checked = 0;
     for (const r of rows) {
@@ -203,7 +204,7 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
               token: r.tokenAddress,
               currentPoolId: r.poolId,
               scanFrom: r.launchBlock,
-              scanTo: r.launchBlock + day,
+              scanTo: r.launchBlock + scanBlocks,
               activityFrom: r.launchBlock,
               activityTo: r.launchBlock + win,
               maxRange,
