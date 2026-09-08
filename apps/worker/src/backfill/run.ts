@@ -238,7 +238,7 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
   if (!opts.featuresOnly) {
     let quiet = 0;
     while (!overBudget() && quiet < 2) {
-      const r = await sweepDueOutcomes(client, 20, { qualifiedOnly });
+      const r = await sweepDueOutcomes(client, 60, { qualifiedOnly, concurrency: 8 });
       result.outcomes.picked += r.picked;
       result.outcomes.resolved += r.resolved;
       result.outcomes.na += r.na;

@@ -23,6 +23,11 @@ export interface SweepFilter {
   /** only resolve DRAWDOWN_80 + outcomes whose launch reached the qualified lane
    *  (checkpoint §C step 4: the heavy scans run on qualified launches only) */
   qualifiedOnly?: boolean;
+  /** resolve this many outcomes at once. The shared RPC scheduler (token bucket)
+   *  is the real rate limit, so concurrency just stops the loop being
+   *  latency-bound — each outcome is ~80 sequential getLogs. Default 1 (the live
+   *  worker loop); the backfill passes 8+. */
+  concurrency?: number;
 }
 
 /** Resolve every PENDING outcome whose horizon has passed, up to `limit`. */
@@ -58,7 +63,14 @@ export async function sweepDueOutcomes(
     failed: 0,
   };
 
-  for (const row of due) {
+  const deferRow = async (id: string, label: string, tokenAddress: string, msg: string) => {
+    out.retryLater++;
+    await prisma.outcome.update({ where: { id }, data: { measuredAt: new Date() } }); // stay PENDING
+    // eslint-disable-next-line no-console
+    console.warn(`[outcomes] ${label} ${tokenAddress} deferred: ${msg}`);
+  };
+
+  const resolveRow = async (row: (typeof due)[number]): Promise<void> => {
     try {
       const res = await withDeadline(
         () => resolveOneOutcome(client, row as OutcomeRow),
@@ -67,12 +79,8 @@ export async function sweepDueOutcomes(
       );
 
       if (res.status === 'UNRESOLVABLE' && res.reason && RETRYABLE.test(res.reason)) {
-        out.retryLater++;
-        await prisma.outcome.update({
-          where: { id: row.id },
-          data: { measuredAt: new Date() }, // stay PENDING
-        });
-        continue;
+        await deferRow(row.id, `${row.label}@${row.horizon}`, row.tokenAddress, res.reason);
+        return;
       }
 
       const status = res.status as $Enums.OutcomeStatus;
@@ -97,16 +105,9 @@ export async function sweepDueOutcomes(
       else out.unresolvable++;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      // a timeout or a transient RPC failure: leave PENDING for the next sweep
       if (err instanceof DeadlineError || RETRYABLE.test(msg)) {
-        out.retryLater++;
-        await prisma.outcome.update({
-          where: { id: row.id },
-          data: { measuredAt: new Date() }, // stay PENDING
-        });
-        // eslint-disable-next-line no-console
-        console.warn(`[outcomes] ${row.label}@${row.horizon} ${row.tokenAddress} deferred: ${msg}`);
-        continue;
+        await deferRow(row.id, `${row.label}@${row.horizon}`, row.tokenAddress, msg);
+        return;
       }
       out.failed++;
       // eslint-disable-next-line no-console
@@ -115,7 +116,17 @@ export async function sweepDueOutcomes(
         err instanceof Error ? err.message : err,
       );
     }
-  }
+  };
+
+  const concurrency = Math.max(1, filter.concurrency ?? 1);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(concurrency, due.length) }, async () => {
+    while (cursor < due.length) {
+      const row = due[cursor++]!;
+      await resolveRow(row);
+    }
+  });
+  await Promise.all(workers);
   return out;
 }
 
