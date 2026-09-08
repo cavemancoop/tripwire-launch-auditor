@@ -46,6 +46,7 @@ async function main(): Promise<void> {
     skipFeatures: process.argv.includes('--skip-features'),
     onlyLabels: str('--only-label')?.split(','),
     sweepOrder: process.argv.includes('--spread') ? 'spread' : undefined,
+    laneQualifiedOnly: process.argv.includes('--lane-qualified'),
     qualifiedOnly: !process.argv.includes('--all-heavy'),
     fromBlock: big('--from-block'),
     toBlock: big('--to-block'),
@@ -56,23 +57,35 @@ async function main(): Promise<void> {
     return;
   }
 
-  const rates = await observedBaseRates();
-  console.log('\n── observed base rates (retrospective, RESOLVED) ──');
-  if (rates.length === 0) {
-    console.log('  (none resolved yet)');
-  }
-  for (const r of rates) {
-    const suggested = logit(r.rate);
-    console.log(
-      `  ${r.key.padEnd(20)} n=${String(r.n).padStart(4)}  positives=${String(r.positives).padStart(4)}  ` +
-        `rate=${r.rate.toFixed(4)}  ->  det_v0.1 biasOverride ${suggested.toFixed(3)}`,
-    );
-  }
+  const printRates = (
+    label: string,
+    rates: Array<{ key: string; n: number; positives: number; rate: number }>,
+  ) => {
+    console.log(`\n── observed base rates — ${label} ──`);
+    if (rates.length === 0) {
+      console.log('  (none resolved yet)');
+      return;
+    }
+    for (const r of rates) {
+      const suggested = logit(r.rate);
+      console.log(
+        `  ${r.key.padEnd(20)} n=${String(r.n).padStart(4)}  positives=${String(r.positives).padStart(4)}  ` +
+          `rate=${r.rate.toFixed(4)}  ->  det_v0.1 biasOverride ${suggested.toFixed(3)}`,
+      );
+    }
+  };
+
+  const ratesAll = await observedBaseRates();
+  const ratesQ = await observedBaseRates({ qualifiedLaneOnly: true });
+  printRates('qualified lane only (use these for det_v0.1)', ratesQ);
+  printRates('all retrospective (incl. non-qualified noise)', ratesAll);
   console.log(
-    '\nTo apply: copy the biasOverride values into packages/scoring/weights/det_v0_1.json,\n' +
-      'or run again after more launches resolve for a tighter estimate.',
+    '\nTo apply: copy the qualified-lane biasOverride values into\n' +
+      'packages/scoring/weights/det_v0_1.json. Cells with n<20: keep the det_v0 prior.\n' +
+      'Note: DRAWDOWN/LIQ rates are likely UNDER-stated — the deadest tokens have no\n' +
+      'price/liquidity series and resolve UNRESOLVABLE, so they drop out of the denominator.',
   );
-  console.log('\n' + JSON.stringify({ ...res, baseRates: rates }, null, 2));
+  console.log('\n' + JSON.stringify({ ...res, baseRates: ratesQ, baseRatesAll: ratesAll }, null, 2));
 }
 
 main().catch((err) => {

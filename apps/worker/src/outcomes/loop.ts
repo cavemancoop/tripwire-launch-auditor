@@ -33,6 +33,11 @@ export interface SweepFilter {
   onlyLabels?: $Enums.OutcomeLabel[];
   /** oldest-horizon-first (default) or a spread across cells via id order */
   order?: 'horizon' | 'spread';
+  /** only outcomes whose launch reached the qualified lane — for ALL labels,
+   *  not just the heavy ones. ~87% of retrospective launches are non-qualified
+   *  spam / token-vs-token / >10%-fee side pools whose DRAWDOWN/TRADING_ALIVE
+   *  outcomes are unresolvable and would bias the base rate. */
+  laneQualifiedOnly?: boolean;
 }
 
 /** Resolve every PENDING outcome whose horizon has passed, up to `limit`. */
@@ -46,15 +51,17 @@ export async function sweepDueOutcomes(
       status: 'PENDING',
       horizonAt: { lte: new Date() },
       ...(filter.onlyLabels?.length ? { label: { in: filter.onlyLabels } } : {}),
-      ...(filter.qualifiedOnly
-        ? {
-            OR: [
-              { label: 'DRAWDOWN_80' as const },
-              { label: 'TRADING_ALIVE' as const }, // both apply to every launch
-              { launch: { lane: 'qualified' as const } },
-            ],
-          }
-        : {}),
+      ...(filter.laneQualifiedOnly
+        ? { launch: { lane: 'qualified' as const } }
+        : filter.qualifiedOnly
+          ? {
+              OR: [
+                { label: 'DRAWDOWN_80' as const },
+                { label: 'TRADING_ALIVE' as const }, // both apply to every launch
+                { launch: { lane: 'qualified' as const } },
+              ],
+            }
+          : {}),
     },
     orderBy: filter.order === 'spread' ? { id: 'asc' } : { horizonAt: 'asc' },
     take: limit,

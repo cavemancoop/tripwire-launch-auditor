@@ -45,6 +45,8 @@ export interface BackfillOptions {
   onlyLabels?: string[];
   /** 'spread' resolves across cells (id order) instead of oldest-horizon-first */
   sweepOrder?: 'horizon' | 'spread';
+  /** resolve outcomes for qualified-lane launches only, for every label */
+  laneQualifiedOnly?: boolean;
   log?: (msg: string) => void;
 }
 
@@ -247,6 +249,7 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
         concurrency: 8,
         onlyLabels: opts.onlyLabels as never,
         order: opts.sweepOrder,
+        laneQualifiedOnly: opts.laneQualifiedOnly,
       });
       result.outcomes.picked += r.picked;
       result.outcomes.resolved += r.resolved;
@@ -275,12 +278,20 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
   return result;
 }
 
-/** observed base rate per (label, horizon) among RESOLVED retrospective outcomes. */
-export async function observedBaseRates(): Promise<
-  Array<{ key: string; n: number; positives: number; rate: number }>
-> {
+/** observed base rate per (label, horizon) among RESOLVED retrospective outcomes.
+ *  qualifiedLaneOnly: restrict to launches that reached the qualified lane — the
+ *  population det_v0 actually scores; non-qualified retrospective launches are
+ *  mostly spam / side-pool noise and bias the rate. */
+export async function observedBaseRates(
+  opts: { qualifiedLaneOnly?: boolean } = {},
+): Promise<Array<{ key: string; n: number; positives: number; rate: number }>> {
   const rows = await prisma.outcome.findMany({
-    where: { status: 'RESOLVED', value: { not: null }, retrospective: true },
+    where: {
+      status: 'RESOLVED',
+      value: { not: null },
+      retrospective: true,
+      ...(opts.qualifiedLaneOnly ? { launch: { lane: 'qualified' } } : {}),
+    },
     select: { label: true, horizon: true, value: true },
   });
   const acc = new Map<string, { n: number; pos: number }>();
