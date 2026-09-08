@@ -1,6 +1,7 @@
 import {
   decodeHookPermissions,
   getChainConfig,
+  getLogsByTopicValues,
   getLogsChunked,
   hookRisk,
   POOL_EVENT_TOPIC0,
@@ -126,9 +127,11 @@ export async function computeCreatorDrainerApprovals(
   try {
     const logs = await withRetry(
       () =>
-        getLogsChunked(client, {
+        getLogsByTopicValues(client, {
           address: token as Hex,
-          topics: [APPROVAL_TOPIC0 as Hex, ownerTopics],
+          topic0: APPROVAL_TOPIC0 as Hex,
+          valuePosition: 1, // owner ∈ cluster
+          values: ownerTopics,
           fromBlock,
           toBlock,
           maxRange,

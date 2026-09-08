@@ -70,8 +70,8 @@ describe('computeCreatorDrainerApprovals', () => {
         if (method !== 'eth_getLogs') throw new Error(method);
         expect(params[0].topics[0]).toBe(APPROVAL_TOPIC0);
         return [
-          { topics: [APPROVAL_TOPIC0, addressToTopic(CREATOR), addressToTopic(DRAINER)], data: '0x' },
-          { topics: [APPROVAL_TOPIC0, addressToTopic(CREATOR), addressToTopic(DRAINER)], data: '0x' },
+          { topics: [APPROVAL_TOPIC0, addressToTopic(CREATOR), addressToTopic(DRAINER)], data: '0x', blockNumber: '0x1', logIndex: '0x0', transactionHash: '0xa' },
+          { topics: [APPROVAL_TOPIC0, addressToTopic(CREATOR), addressToTopic(DRAINER)], data: '0x', blockNumber: '0x2', logIndex: '0x0', transactionHash: '0xb' },
           {
             topics: [
               APPROVAL_TOPIC0,
@@ -79,6 +79,9 @@ describe('computeCreatorDrainerApprovals', () => {
               addressToTopic('0x8366a39cc670b4001a1121b8f6a443a643e40951'), // infra -> ignored
             ],
             data: '0x',
+            blockNumber: '0x3',
+            logIndex: '0x0',
+            transactionHash: '0xc',
           },
         ];
       }),

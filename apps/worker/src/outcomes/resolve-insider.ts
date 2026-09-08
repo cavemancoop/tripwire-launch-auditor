@@ -1,4 +1,4 @@
-import { getLogsChunked } from '@launch-auditor/chain';
+import { getLogsByTopicValues } from '@launch-auditor/chain';
 import type { Hex } from 'viem';
 import { addressToTopic, TRANSFER_TOPIC0, topicToAddress, transferValue } from '../watcher/erc20';
 import { withRetry } from '../watcher/retry';
@@ -26,12 +26,16 @@ export async function resolveInsiderExit(ctx: ResolverContext): Promise<Resoluti
   const coverage = newCoverage(fromBlock, toBlock, ctx.maxRange);
   const clusterTopics = [...cluster].map((a) => addressToTopic(a));
 
+  // from ∈ cluster (topic 1) and to ∈ cluster (topic 2), batched so a large
+  // cluster doesn't trip the RPC's per-request topic-value cap.
   const [outLogs, inLogs] = await Promise.all([
     withRetry(
       () =>
-        getLogsChunked(ctx.client, {
+        getLogsByTopicValues(ctx.client, {
           address: ctx.token as Hex,
-          topics: [TRANSFER_TOPIC0 as Hex, clusterTopics],
+          topic0: TRANSFER_TOPIC0 as Hex,
+          valuePosition: 1,
+          values: clusterTopics,
           fromBlock,
           toBlock,
           maxRange: ctx.maxRange,
@@ -40,9 +44,11 @@ export async function resolveInsiderExit(ctx: ResolverContext): Promise<Resoluti
     ),
     withRetry(
       () =>
-        getLogsChunked(ctx.client, {
+        getLogsByTopicValues(ctx.client, {
           address: ctx.token as Hex,
-          topics: [TRANSFER_TOPIC0 as Hex, null, clusterTopics],
+          topic0: TRANSFER_TOPIC0 as Hex,
+          valuePosition: 2,
+          values: clusterTopics,
           fromBlock,
           toBlock,
           maxRange: ctx.maxRange,
@@ -50,7 +56,7 @@ export async function resolveInsiderExit(ctx: ResolverContext): Promise<Resoluti
       { tries: 4, delayMs: 2000 },
     ),
   ]);
-  coverage.callCount = 2 * coverage.callCount;
+  coverage.callCount = 2 * coverage.callCount * Math.ceil(clusterTopics.length / 4);
 
   if (outLogs.length >= MAX_INSIDER_LOGS || inLogs.length >= MAX_INSIDER_LOGS) {
     coverage.gaps.push(
