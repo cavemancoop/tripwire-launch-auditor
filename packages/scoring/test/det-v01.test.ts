@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DET_V0_1_OVERRIDES, detV0, detV0_1, logit, mergeDetV01 } from '../src/det';
+import { DET_V0_1_OVERRIDES, DET_V0_WEIGHTS, detV0, detV0_1, logit, mergeDetV01 } from '../src/det';
 import type { FeatureInputs } from '../src/inputs';
 
 const base = (o: Partial<FeatureInputs> = {}): FeatureInputs => ({
@@ -41,19 +41,31 @@ describe('logit', () => {
 });
 
 describe('det_v0.1', () => {
-  it('overrides only the measured cell (INSIDER_EXIT@6h) and keeps det_v0 elsewhere', () => {
-    // M4 backfill measured only this cell (17/147 ≈ 0.1156 -> logit ≈ -2.0343)
-    expect(DET_V0_1_OVERRIDES.biasOverride).toEqual({ 'INSIDER_EXIT@6h': -2.0343 });
+  it('overrides only the measured cells and keeps det_v0 for the rest', () => {
+    // M4 backfill measured 5 cells; the rest keep their det_v0 prior.
+    const measured = Object.keys(DET_V0_1_OVERRIDES.biasOverride);
+    expect(measured).toContain('INSIDER_EXIT@6h');
+    expect(measured).toContain('TRADING_ALIVE@24h');
+    expect(measured).not.toContain('SELL_IMPAIRED@1h'); // contaminated — not measured
+    expect(measured).not.toContain('DRAWDOWN_80@7d'); // 0 resolved
+
+    // every override is a finite number
+    for (const v of Object.values(DET_V0_1_OVERRIDES.biasOverride)) {
+      expect(Number.isFinite(v)).toBe(true);
+    }
     const a = detV0(base());
     const b = detV0_1(base());
     expect(b.version).toBe('det_v0.1');
-    // the overridden cell differs
-    expect(b.probabilities['INSIDER_EXIT@6h']).not.toBe(a.probabilities['INSIDER_EXIT@6h']);
-    // every other forecast cell is unchanged
+    // non-measured cells are byte-for-byte det_v0
     for (const key of Object.keys(a.probabilities) as (keyof typeof a.probabilities)[]) {
-      if (key === 'INSIDER_EXIT@6h') continue;
-      expect(b.probabilities[key]).toBe(a.probabilities[key]);
+      if (!measured.includes(key)) expect(b.probabilities[key]).toBe(a.probabilities[key]);
     }
+    // mergeDetV01 puts the override into the bias, not the weights
+    const merged = mergeDetV01();
+    expect(merged.outcomes['TRADING_ALIVE@24h']!.bias).toBe(-1.016);
+    expect(merged.outcomes['SELL_IMPAIRED@1h']!.bias).toBe(
+      DET_V0_WEIGHTS.outcomes['SELL_IMPAIRED@1h']!.bias,
+    );
   });
 
   it('mergeDetV01 replaces only the overridden intercept, keeping weights', () => {

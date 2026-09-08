@@ -1,29 +1,33 @@
 {
   "version": "det_v0.1",
   "basedOn": "det_v0",
-  "note": "det_v0 with per-outcome intercepts re-set to logit(observed base rate) from the M4 retrospective backfill (checkpoint 8.3). Weight directions are unchanged. Only cells with a trustworthy observed rate get a `biasOverride`; every other cell keeps its det_v0 hand-set prior and is labelled 'not measured' in `provenance`. When feature coverage is poor (>70% of features null) the caller emits the base rate at confidence:low rather than this logistic.",
+  "note": "det_v0 with per-outcome intercepts re-set to logit(observed base rate) from the M4 retrospective backfill (checkpoint 8.3). Weight directions are unchanged. Only cells with a trustworthy observed rate get a `biasOverride`; every other cell keeps its det_v0 hand-set prior and is labelled 'not measured' in `provenance`. When feature coverage is poor (>70% of features null) the caller emits the base rate at confidence:low rather than this logistic. det_v0.2 (the full re-featured 14-day backfill) will re-derive every cell.",
   "biasOverride": {
-    "INSIDER_EXIT@6h": -2.0343
+    "INSIDER_EXIT@6h": -2.0,
+    "INSIDER_EXIT@24h": -2.058,
+    "LIQ_IMPAIRED@24h": -0.365,
+    "DRAWDOWN_80@24h": -0.649,
+    "TRADING_ALIVE@24h": -1.016
   },
   "provenance": {
     "backfillAsOf": "2026-09-08",
     "rpc": "chainstack-growth",
     "population": "retrospective launches, lane=qualified",
     "measured": {
-      "INSIDER_EXIT@6h": { "n": 147, "positives": 17, "rate": 0.1156, "note": "clean — 0 unresolvable" }
+      "INSIDER_EXIT@6h": { "n": 151, "positives": 18, "rate": 0.1192, "unresolvable": 0 },
+      "INSIDER_EXIT@24h": { "n": 53, "positives": 6, "rate": 0.1132, "unresolvable": 0 },
+      "LIQ_IMPAIRED@24h": { "n": 144, "positives": 59, "rate": 0.4097, "unresolvable": 8 },
+      "DRAWDOWN_80@24h": { "n": 102, "positives": 35, "rate": 0.3431, "unresolvable": 50, "note": "likely a floor — the deadest tokens have no price series and drop out of the denominator" },
+      "TRADING_ALIVE@24h": { "n": 79, "positives": 21, "rate": 0.2658, "unresolvable": 0, "note": "positive polarity: rate = P(still trading). ~73% of qualified launches stop trading by 24h" }
     },
     "notMeasured": {
-      "INSIDER_EXIT@24h": "n=20 too thin; keep det_v0 prior",
-      "INSIDER_EXIT@72h": "0 resolved (sweep never reached the 72h horizon)",
-      "SELL_IMPAIRED@1h": "resolver bug: 145/152 unresolvable, rest 100% true — not a rate",
-      "SELL_IMPAIRED@24h": "resolver bug: same",
-      "LIQ_IMPAIRED@24h": "n=19 too thin; keep det_v0 prior",
+      "INSIDER_EXIT@72h": "0 resolved (few qualified launches >= 72h old in the 14d window)",
+      "SELL_IMPAIRED@1h": "resolver+pool contamination: ~95% true with 112 unresolvable. Wrong-pool launches quote garbage; clean measurement needs the live pipeline or the full re-featured backfill. Keep det_v0 prior.",
+      "SELL_IMPAIRED@24h": "same",
       "LIQ_IMPAIRED@7d": "0 resolved",
-      "DRAWDOWN_80@24h": "n=18 qualified, 19 unresolvable — biased low (deadest tokens drop out); keep det_v0 prior",
       "DRAWDOWN_80@7d": "0 resolved",
-      "TRADING_ALIVE@24h": "0 resolved",
       "TRADING_ALIVE@7d": "0 resolved"
     },
-    "supersededBy": "the full 14-day backfill (post primary-pool + sell-impaired fixes) will re-derive every cell as det_v0.2"
+    "supersededBy": "det_v0.2 — the full 14-day backfill after the primary-pool + sell-impaired fixes, re-featuring every retrospective launch"
   }
 }
