@@ -1,5 +1,10 @@
 import { Prisma, prisma, type $Enums } from '@launch-auditor/db';
+import { DeadlineError, withDeadline } from '../watcher/retry';
 import { resolveOneOutcome, type OutcomeRow, type ResolveClient } from './resolve';
+
+/** one outcome should never take longer than this; on timeout it stays PENDING
+ *  for the next sweep (guards the backfill against a runaway scan) */
+const OUTCOME_DEADLINE_MS = 120_000;
 
 export interface SweepResult {
   picked: number;
@@ -11,7 +16,8 @@ export interface SweepResult {
 }
 
 /** treat as transient and leave PENDING for the next sweep */
-const RETRYABLE = /network|timeout|ETIMEDOUT|ECONNRESET|fetch failed|429|sweep error/i;
+const RETRYABLE =
+  /network|timeout|ETIMEDOUT|ECONNRESET|ECONNREFUSED|socket hang up|fetch failed|429|rate.?limit|too many requests|request limit|network is busy|-32005|-32097|capacity|throttl|sweep error/i;
 
 export interface SweepFilter {
   /** only resolve DRAWDOWN_80 + outcomes whose launch reached the qualified lane
@@ -54,7 +60,11 @@ export async function sweepDueOutcomes(
 
   for (const row of due) {
     try {
-      const res = await resolveOneOutcome(client, row as OutcomeRow);
+      const res = await withDeadline(
+        () => resolveOneOutcome(client, row as OutcomeRow),
+        OUTCOME_DEADLINE_MS,
+        `${row.label}@${row.horizon} ${row.tokenAddress}`,
+      );
 
       if (res.status === 'UNRESOLVABLE' && res.reason && RETRYABLE.test(res.reason)) {
         out.retryLater++;
@@ -86,6 +96,18 @@ export async function sweepDueOutcomes(
       else if (status === 'NA') out.na++;
       else out.unresolvable++;
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // a timeout or a transient RPC failure: leave PENDING for the next sweep
+      if (err instanceof DeadlineError || RETRYABLE.test(msg)) {
+        out.retryLater++;
+        await prisma.outcome.update({
+          where: { id: row.id },
+          data: { measuredAt: new Date() }, // stay PENDING
+        });
+        // eslint-disable-next-line no-console
+        console.warn(`[outcomes] ${row.label}@${row.horizon} ${row.tokenAddress} deferred: ${msg}`);
+        continue;
+      }
       out.failed++;
       // eslint-disable-next-line no-console
       console.error(

@@ -2,8 +2,10 @@ import { logit } from '@launch-auditor/scoring';
 import { observedBaseRates, runBackfill } from '../backfill/run';
 
 // pnpm backfill --days N [--max-calls M] [--max-launches K] [--end-hours-ago H]
-//               [--dry-run] [--resolve-only] [--features-only] [--all-heavy]
-//               [--from-block B] [--to-block B]
+//               [--dry-run] [--resolve-only] [--features-only] [--skip-features]
+//               [--all-heavy] [--from-block B] [--to-block B]
+//   --skip-features: fastest path to base rates — resolve outcomes on launches
+//                    that already have T+10m features, no feature backfill.
 //   Reconstruct features + outcomes for launches in the window (spec §7,
 //   retrospective=true). chain 4663 runs ~14k launches/day, so for a base-rate
 //   pass use --max-launches (sample from the front) and --end-hours-ago 25
@@ -35,6 +37,7 @@ async function main(): Promise<void> {
     dryRun: process.argv.includes('--dry-run'),
     resolveOnly: process.argv.includes('--resolve-only'),
     featuresOnly: process.argv.includes('--features-only'),
+    skipFeatures: process.argv.includes('--skip-features'),
     qualifiedOnly: !process.argv.includes('--all-heavy'),
     fromBlock: big('--from-block'),
     toBlock: big('--to-block'),

@@ -12,6 +12,7 @@ import { blockAtTime } from '../outcomes/block-time';
 import { sweepDueOutcomes, type SweepResult } from '../outcomes/loop';
 import { detectPools } from '../watcher/detect';
 import { ingestPool } from '../watcher/ingest';
+import { withDeadline } from '../watcher/retry';
 import { runT10ForLaunch } from '../watcher/t10';
 
 export interface BackfillOptions {
@@ -37,6 +38,9 @@ export interface BackfillOptions {
   resolveOnly?: boolean;
   /** stop after discovery + features, before outcome resolution */
   featuresOnly?: boolean;
+  /** skip the T+10m feature backfill entirely; go straight to outcome resolution
+   *  on rows that already have features (fastest path to base rates) */
+  skipFeatures?: boolean;
   log?: (msg: string) => void;
 }
 
@@ -111,18 +115,36 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
   const expectedLaunches = Number.isFinite(maxLaunches)
     ? maxLaunches
     : Math.max(1, Math.round((spanBlocks * 0.1 * perDay) / 86_400));
-  const estimatedCalls =
-    discoverChunks + // one filtered getLogs per chunk
-    expectedLaunches * 6 + // freshness + index features per ingested launch
-    expectedLaunches * 40 + // T+10m features
-    expectedLaunches * 80 + // DRAWDOWN price series
-    Math.round(expectedLaunches * 0.3) * 250; // heavy scans on the qualified ~30%
-
-  log(
-    `[backfill] window blocks ${fromBlock}..${toBlock} (${opts.days}d, ~${spanBlocks} blocks), ` +
-      `getLogs span ${maxRange}, est. RPC calls ~${estimatedCalls.toLocaleString()}` +
-      (opts.maxCalls > 0 ? `, cap ${opts.maxCalls.toLocaleString()}` : ', uncapped'),
-  );
+  const skipDiscovery = opts.resolveOnly || opts.skipFeatures;
+  let estimatedCalls: number;
+  if (skipDiscovery) {
+    // no discovery window — the work is bounded by pending due outcomes
+    const [duePending, unfeatured] = await Promise.all([
+      prisma.outcome.count({ where: { status: 'PENDING', horizonAt: { lte: new Date() } } }),
+      opts.skipFeatures
+        ? Promise.resolve(0)
+        : prisma.launch.count({ where: { retrospective: true, feature: { t10ComputedAt: null } } }),
+    ]);
+    estimatedCalls = duePending * 90 + unfeatured * 40;
+    log(
+      `[backfill] resolve pass — ${duePending} due PENDING outcomes` +
+        (unfeatured ? ` + ${unfeatured} unfeatured launches` : '') +
+        `, getLogs span ${maxRange}, est. RPC calls ~${estimatedCalls.toLocaleString()}` +
+        (opts.maxCalls > 0 ? `, cap ${opts.maxCalls.toLocaleString()}` : ', uncapped'),
+    );
+  } else {
+    estimatedCalls =
+      discoverChunks + // one filtered getLogs per chunk
+      expectedLaunches * 6 + // freshness + index features per ingested launch
+      expectedLaunches * 40 + // T+10m features
+      expectedLaunches * 80 + // DRAWDOWN price series
+      Math.round(expectedLaunches * 0.3) * 250; // heavy scans on the qualified ~30%
+    log(
+      `[backfill] window blocks ${fromBlock}..${toBlock} (${opts.days}d, ~${spanBlocks} blocks), ` +
+        `getLogs span ${maxRange}, est. RPC calls ~${estimatedCalls.toLocaleString()}` +
+        (opts.maxCalls > 0 ? `, cap ${opts.maxCalls.toLocaleString()}` : ', uncapped'),
+    );
+  }
 
   const result: BackfillResult = {
     window: { fromBlock: Number(fromBlock), toBlock: Number(toBlock), days: opts.days },
@@ -183,14 +205,16 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
   }
 
   // ── 2. T+10m features (frozen code) ─────────────────────────────────
-  const toFeature = opts.resolveOnly
-    ? (
-        await prisma.launch.findMany({
-          where: { retrospective: true, feature: { t10ComputedAt: null } },
-          select: { id: true },
-        })
-      ).map((l) => l.id)
-    : launchIds;
+  const toFeature = opts.skipFeatures
+    ? []
+    : opts.resolveOnly
+      ? (
+          await prisma.launch.findMany({
+            where: { retrospective: true, feature: { t10ComputedAt: null } },
+            select: { id: true },
+          })
+        ).map((l) => l.id)
+      : launchIds;
 
   for (const id of toFeature) {
     if (overBudget()) {
@@ -198,14 +222,17 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
       break;
     }
     try {
-      await runT10ForLaunch(client, id);
+      // one launch's feature scan must not stall the whole run (24h-hang guard)
+      await withDeadline(() => runT10ForLaunch(client, id), 120_000, `t10 ${id}`);
       result.t10Ran++;
     } catch (err) {
       result.t10Failed++;
       log(`[backfill] T+10m ${id} failed: ${(err as Error).message.split('\n')[0]}`);
     }
   }
-  log(`[backfill] features: ${result.t10Ran} ok, ${result.t10Failed} failed, ${used()} calls`);
+  if (toFeature.length) {
+    log(`[backfill] features: ${result.t10Ran} ok, ${result.t10Failed} failed, ${used()} calls`);
+  }
 
   // ── 3. outcome resolution ──────────────────────────────────────────
   if (!opts.featuresOnly) {

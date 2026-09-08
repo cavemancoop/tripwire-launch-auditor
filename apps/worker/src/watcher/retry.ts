@@ -44,3 +44,33 @@ export async function withRetry<T>(
   }
   throw lastErr;
 }
+
+export class DeadlineError extends Error {
+  constructor(ms: number, label?: string) {
+    super(`deadline of ${ms}ms exceeded${label ? ` for ${label}` : ''}`);
+    this.name = 'DeadlineError';
+  }
+}
+
+/**
+ * Reject with {@link DeadlineError} if `fn` has not settled within `ms`. The
+ * underlying promise is not cancelled (JS can't) but the shared RPC scheduler
+ * rate-limits whatever it's doing, so it settles and is GC'd soon after. Use
+ * this to stop one pathological launch / outcome from stalling a whole backfill
+ * — the earlier 24h "hang" was one T+10m scan waiting forever on a dead socket.
+ */
+export function withDeadline<T>(fn: () => Promise<T>, ms: number, label?: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new DeadlineError(ms, label)), ms);
+    fn().then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      },
+    );
+  });
+}

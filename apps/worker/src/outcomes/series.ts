@@ -14,11 +14,17 @@ import { newCoverage, type Coverage } from './coverage';
 
 export type LogClient = Parameters<typeof getLogsChunked>[0];
 
-/** getLogsChunked with backoff on ordofi's transient "network is busy" errors. */
+/**
+ * getLogsChunked with a light outer retry. The budgeted transport already
+ * retries each individual `eth_getLogs` on rate-limit / "busy" errors, and this
+ * outer wrapper restarts the *entire* multi-chunk scan from block 0 on any
+ * failure — so keep it to 2 tries, else a flaky endpoint + an 80-chunk window
+ * never completes (the 24h backfill hang).
+ */
 const chunkedLogs = (
   client: LogClient,
   params: Parameters<typeof getLogsChunked>[1],
-): Promise<RpcLog[]> => withRetry(() => getLogsChunked(client, params), { tries: 4, delayMs: 2000 });
+): Promise<RpcLog[]> => withRetry(() => getLogsChunked(client, params), { tries: 2, delayMs: 1500 });
 
 export interface PoolRef {
   poolKind: 'v2' | 'v3' | 'v4';
