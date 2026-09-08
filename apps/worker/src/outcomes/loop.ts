@@ -31,6 +31,9 @@ export interface SweepFilter {
   /** restrict to these outcome labels (base-rate backfill: fill one sparse cell
    *  at a time instead of letting the oldest-horizon cell hog the run) */
   onlyLabels?: $Enums.OutcomeLabel[];
+  /** skip these labels (e.g. deprioritise the slow INSIDER_EXIT@6h cell so the
+   *  72h / 7d / TRADING_ALIVE cells get reached) */
+  excludeLabels?: $Enums.OutcomeLabel[];
   /** oldest-horizon-first (default) or a spread across cells via id order */
   order?: 'horizon' | 'spread';
   /** only outcomes whose launch reached the qualified lane — for ALL labels,
@@ -51,6 +54,7 @@ export async function sweepDueOutcomes(
       status: 'PENDING',
       horizonAt: { lte: new Date() },
       ...(filter.onlyLabels?.length ? { label: { in: filter.onlyLabels } } : {}),
+      ...(filter.excludeLabels?.length ? { label: { notIn: filter.excludeLabels } } : {}),
       ...(filter.laneQualifiedOnly
         ? { launch: { lane: 'qualified' as const } }
         : filter.qualifiedOnly

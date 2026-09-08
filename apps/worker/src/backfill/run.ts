@@ -1,5 +1,6 @@
 import {
   POOL_EVENT_TOPIC0,
+  getChainConfig,
   getGetLogsMaxRange,
   poolCreationSources,
   setGetLogsMaxRange,
@@ -12,6 +13,7 @@ import { blockAtTime } from '../outcomes/block-time';
 import { sweepDueOutcomes, type SweepResult } from '../outcomes/loop';
 import { detectPools } from '../watcher/detect';
 import { ingestPool } from '../watcher/ingest';
+import { pickPrimaryV4Pool } from '../watcher/primary-pool';
 import { withDeadline } from '../watcher/retry';
 import { runT10ForLaunch } from '../watcher/t10';
 
@@ -47,6 +49,13 @@ export interface BackfillOptions {
   sweepOrder?: 'horizon' | 'spread';
   /** resolve outcomes for qualified-lane launches only, for every label */
   laneQualifiedOnly?: boolean;
+  /** re-run T+10m for every retrospective launch, not just the unfeatured ones */
+  refeature?: boolean;
+  /** cheap pass: just re-derive each retrospective launch's primary v4 pool
+   *  (after the M4 pool-selection fix) — ~4 getLogs each, no full re-feature */
+  repool?: boolean;
+  /** skip these outcome labels in the sweep (e.g. deprioritise INSIDER_EXIT) */
+  excludeLabels?: string[];
   log?: (msg: string) => void;
 }
 
@@ -171,6 +180,67 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
   const used = (): number => budgetStats(rpcUrl).started - startCalls;
   const overBudget = (): boolean => opts.maxCalls > 0 && used() >= opts.maxCalls;
 
+  // ── 0. re-derive the primary pool (cheap; after the M4 pool-selection fix) ──
+  if (opts.repool) {
+    const rows = await prisma.launch.findMany({
+      where: { retrospective: true, OR: [{ poolKind: 'v4' }, { poolKind: null }] },
+      select: { id: true, chainId: true, tokenAddress: true, poolId: true, launchBlock: true },
+    });
+    const day = BigInt(Math.round(86_400 / getChainConfig(chainId).approxBlockSeconds));
+    const win = BigInt(Math.round((10 * 60) / getChainConfig(chainId).approxBlockSeconds));
+    let switched = 0;
+    let checked = 0;
+    for (const r of rows) {
+      if (overBudget()) {
+        result.stoppedEarly = true;
+        break;
+      }
+      try {
+        const pick = await withDeadline(
+          () =>
+            pickPrimaryV4Pool(client, {
+              chainId: r.chainId,
+              token: r.tokenAddress,
+              currentPoolId: r.poolId,
+              scanFrom: r.launchBlock,
+              scanTo: r.launchBlock + day,
+              activityFrom: r.launchBlock,
+              activityTo: r.launchBlock + win,
+              maxRange,
+            }),
+          60_000,
+          `repool ${r.id}`,
+        );
+        checked++;
+        if (pick.chosen && pick.changed) {
+          switched++;
+          await prisma.launch.update({
+            where: { id: r.id },
+            data: {
+              poolKind: 'v4',
+              poolId: pick.chosen.poolId,
+              poolAddress: null,
+              poolFee: pick.chosen.fee ?? undefined,
+              poolTickSpacing: pick.chosen.tickSpacing ?? undefined,
+              poolHooks: pick.chosen.hooks,
+              quoteAddress: pick.chosen.quote ?? undefined,
+              poolFeeSuspect: pick.chosen.feeSuspect,
+              primaryPoolCheckedAt: new Date(),
+            },
+          });
+        } else if (pick.chosen) {
+          await prisma.launch.update({
+            where: { id: r.id },
+            data: { poolFeeSuspect: pick.chosen.feeSuspect, primaryPoolCheckedAt: new Date() },
+          });
+        }
+      } catch (err) {
+        log(`[backfill] repool ${r.id} failed: ${(err as Error).message.split('\n')[0]}`);
+      }
+    }
+    log(`[backfill] repool: ${switched}/${checked} launches switched pools, ${used()} calls`);
+  }
+
   // ── 1. discovery + ingest ────────────────────────────────────────────
   const launchIds: string[] = [];
   if (!opts.resolveOnly) {
@@ -211,12 +281,18 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
   }
 
   // ── 2. T+10m features (frozen code) ─────────────────────────────────
+  // --refeature: re-run T+10m for ALL retrospective launches, not just the
+  // unfeatured ones — needed after the primary-pool fix so historical rows stop
+  // pointing at decoy side pools.
   const toFeature = opts.skipFeatures
     ? []
     : opts.resolveOnly
       ? (
           await prisma.launch.findMany({
-            where: { retrospective: true, feature: { t10ComputedAt: null } },
+            where: {
+              retrospective: true,
+              ...(opts.refeature ? {} : { feature: { t10ComputedAt: null } }),
+            },
             select: { id: true },
           })
         ).map((l) => l.id)
@@ -248,6 +324,7 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
         qualifiedOnly,
         concurrency: 8,
         onlyLabels: opts.onlyLabels as never,
+        excludeLabels: opts.excludeLabels as never,
         order: opts.sweepOrder,
         laneQualifiedOnly: opts.laneQualifiedOnly,
       });

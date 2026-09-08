@@ -3,11 +3,16 @@ import { observedBaseRates, runBackfill } from '../backfill/run';
 
 // pnpm backfill --days N [--max-calls M] [--max-launches K] [--end-hours-ago H]
 //               [--dry-run] [--resolve-only] [--features-only] [--skip-features]
-//               [--only-label L1,L2] [--spread] [--all-heavy] [--from-block B] [--to-block B]
-//   --skip-features: fastest path to base rates — resolve outcomes on launches
-//                    that already have T+10m features, no feature backfill.
-//   --only-label DRAWDOWN_80  : resolve just that cell (fill a sparse base rate)
-//   --spread                  : resolve across cells, not oldest-horizon-first
+//               [--refeature] [--only-label L1,L2] [--exclude-label L1,L2]
+//               [--spread] [--lane-qualified] [--all-heavy] [--from-block B] [--to-block B]
+//   --skip-features : resolve outcomes on already-featured launches, no feature backfill
+//   --repool        : cheap — just re-derive each retrospective launch's primary
+//                     v4 pool (~4 getLogs each) after the pool-selection fix
+//   --refeature     : re-run the full T+10m for EVERY retrospective launch
+//   --only-label X  : resolve just that cell (fill a sparse base rate)
+//   --exclude-label INSIDER_EXIT : skip a slow cell so 72h/7d/TRADING_ALIVE get reached
+//   --spread        : resolve across cells, not oldest-horizon-first
+//   --lane-qualified: every label restricted to qualified-lane launches
 //   Reconstruct features + outcomes for launches in the window (spec §7,
 //   retrospective=true). chain 4663 runs ~14k launches/day, so for a base-rate
 //   pass use --max-launches (sample from the front) and --end-hours-ago 25
@@ -45,8 +50,11 @@ async function main(): Promise<void> {
     featuresOnly: process.argv.includes('--features-only'),
     skipFeatures: process.argv.includes('--skip-features'),
     onlyLabels: str('--only-label')?.split(','),
+    excludeLabels: str('--exclude-label')?.split(','),
     sweepOrder: process.argv.includes('--spread') ? 'spread' : undefined,
     laneQualifiedOnly: process.argv.includes('--lane-qualified'),
+    refeature: process.argv.includes('--refeature'),
+    repool: process.argv.includes('--repool'),
     qualifiedOnly: !process.argv.includes('--all-heavy'),
     fromBlock: big('--from-block'),
     toBlock: big('--to-block'),
