@@ -41,12 +41,19 @@ describe('logit', () => {
 });
 
 describe('det_v0.1', () => {
-  it('equals det_v0 while biasOverride is empty (but is a distinct version label)', () => {
-    expect(DET_V0_1_OVERRIDES.biasOverride).toEqual({});
+  it('overrides only the measured cell (INSIDER_EXIT@6h) and keeps det_v0 elsewhere', () => {
+    // M4 backfill measured only this cell (17/147 ≈ 0.1156 -> logit ≈ -2.0343)
+    expect(DET_V0_1_OVERRIDES.biasOverride).toEqual({ 'INSIDER_EXIT@6h': -2.0343 });
     const a = detV0(base());
     const b = detV0_1(base());
     expect(b.version).toBe('det_v0.1');
-    expect(b.probabilities).toEqual(a.probabilities);
+    // the overridden cell differs
+    expect(b.probabilities['INSIDER_EXIT@6h']).not.toBe(a.probabilities['INSIDER_EXIT@6h']);
+    // every other forecast cell is unchanged
+    for (const key of Object.keys(a.probabilities) as (keyof typeof a.probabilities)[]) {
+      if (key === 'INSIDER_EXIT@6h') continue;
+      expect(b.probabilities[key]).toBe(a.probabilities[key]);
+    }
   });
 
   it('mergeDetV01 replaces only the overridden intercept, keeping weights', () => {

@@ -1,6 +1,29 @@
 {
   "version": "det_v0.1",
   "basedOn": "det_v0",
-  "note": "det_v0 with per-outcome intercepts re-set to logit(observed base rate) from the M4 3-day backfill pass (checkpoint 8.3). Weight directions are unchanged. `biasOverride` is empty until that pass runs; while empty, det_v0.1 is numerically identical to det_v0 but is scored as its own forecaster. When feature coverage is poor (>70% of features null), the caller emits the base rate at confidence:low rather than this logistic.",
-  "biasOverride": {}
+  "note": "det_v0 with per-outcome intercepts re-set to logit(observed base rate) from the M4 retrospective backfill (checkpoint 8.3). Weight directions are unchanged. Only cells with a trustworthy observed rate get a `biasOverride`; every other cell keeps its det_v0 hand-set prior and is labelled 'not measured' in `provenance`. When feature coverage is poor (>70% of features null) the caller emits the base rate at confidence:low rather than this logistic.",
+  "biasOverride": {
+    "INSIDER_EXIT@6h": -2.0343
+  },
+  "provenance": {
+    "backfillAsOf": "2026-09-08",
+    "rpc": "chainstack-growth",
+    "population": "retrospective launches, lane=qualified",
+    "measured": {
+      "INSIDER_EXIT@6h": { "n": 147, "positives": 17, "rate": 0.1156, "note": "clean — 0 unresolvable" }
+    },
+    "notMeasured": {
+      "INSIDER_EXIT@24h": "n=20 too thin; keep det_v0 prior",
+      "INSIDER_EXIT@72h": "0 resolved (sweep never reached the 72h horizon)",
+      "SELL_IMPAIRED@1h": "resolver bug: 145/152 unresolvable, rest 100% true — not a rate",
+      "SELL_IMPAIRED@24h": "resolver bug: same",
+      "LIQ_IMPAIRED@24h": "n=19 too thin; keep det_v0 prior",
+      "LIQ_IMPAIRED@7d": "0 resolved",
+      "DRAWDOWN_80@24h": "n=18 qualified, 19 unresolvable — biased low (deadest tokens drop out); keep det_v0 prior",
+      "DRAWDOWN_80@7d": "0 resolved",
+      "TRADING_ALIVE@24h": "0 resolved",
+      "TRADING_ALIVE@7d": "0 resolved"
+    },
+    "supersededBy": "the full 14-day backfill (post primary-pool + sell-impaired fixes) will re-derive every cell as det_v0.2"
+  }
 }
