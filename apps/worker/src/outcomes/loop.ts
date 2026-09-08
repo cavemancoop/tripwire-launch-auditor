@@ -28,6 +28,11 @@ export interface SweepFilter {
    *  latency-bound — each outcome is ~80 sequential getLogs. Default 1 (the live
    *  worker loop); the backfill passes 8+. */
   concurrency?: number;
+  /** restrict to these outcome labels (base-rate backfill: fill one sparse cell
+   *  at a time instead of letting the oldest-horizon cell hog the run) */
+  onlyLabels?: $Enums.OutcomeLabel[];
+  /** oldest-horizon-first (default) or a spread across cells via id order */
+  order?: 'horizon' | 'spread';
 }
 
 /** Resolve every PENDING outcome whose horizon has passed, up to `limit`. */
@@ -40,6 +45,7 @@ export async function sweepDueOutcomes(
     where: {
       status: 'PENDING',
       horizonAt: { lte: new Date() },
+      ...(filter.onlyLabels?.length ? { label: { in: filter.onlyLabels } } : {}),
       ...(filter.qualifiedOnly
         ? {
             OR: [
@@ -50,7 +56,7 @@ export async function sweepDueOutcomes(
           }
         : {}),
     },
-    orderBy: { horizonAt: 'asc' },
+    orderBy: filter.order === 'spread' ? { id: 'asc' } : { horizonAt: 'asc' },
     take: limit,
   });
 

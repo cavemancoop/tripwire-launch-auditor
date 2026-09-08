@@ -41,6 +41,10 @@ export interface BackfillOptions {
   /** skip the T+10m feature backfill entirely; go straight to outcome resolution
    *  on rows that already have features (fastest path to base rates) */
   skipFeatures?: boolean;
+  /** resolve only these outcome labels (fill one sparse base-rate cell at a time) */
+  onlyLabels?: string[];
+  /** 'spread' resolves across cells (id order) instead of oldest-horizon-first */
+  sweepOrder?: 'horizon' | 'spread';
   log?: (msg: string) => void;
 }
 
@@ -238,7 +242,12 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
   if (!opts.featuresOnly) {
     let quiet = 0;
     while (!overBudget() && quiet < 2) {
-      const r = await sweepDueOutcomes(client, 60, { qualifiedOnly, concurrency: 8 });
+      const r = await sweepDueOutcomes(client, 60, {
+        qualifiedOnly,
+        concurrency: 8,
+        onlyLabels: opts.onlyLabels as never,
+        order: opts.sweepOrder,
+      });
       result.outcomes.picked += r.picked;
       result.outcomes.resolved += r.resolved;
       result.outcomes.na += r.na;

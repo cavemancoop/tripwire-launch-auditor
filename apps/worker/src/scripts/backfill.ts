@@ -3,9 +3,11 @@ import { observedBaseRates, runBackfill } from '../backfill/run';
 
 // pnpm backfill --days N [--max-calls M] [--max-launches K] [--end-hours-ago H]
 //               [--dry-run] [--resolve-only] [--features-only] [--skip-features]
-//               [--all-heavy] [--from-block B] [--to-block B]
+//               [--only-label L1,L2] [--spread] [--all-heavy] [--from-block B] [--to-block B]
 //   --skip-features: fastest path to base rates — resolve outcomes on launches
 //                    that already have T+10m features, no feature backfill.
+//   --only-label DRAWDOWN_80  : resolve just that cell (fill a sparse base rate)
+//   --spread                  : resolve across cells, not oldest-horizon-first
 //   Reconstruct features + outcomes for launches in the window (spec §7,
 //   retrospective=true). chain 4663 runs ~14k launches/day, so for a base-rate
 //   pass use --max-launches (sample from the front) and --end-hours-ago 25
@@ -16,6 +18,10 @@ import { observedBaseRates, runBackfill } from '../backfill/run';
 function num(name: string, def: number): number {
   const i = process.argv.indexOf(name);
   return i >= 0 ? Number(process.argv[i + 1]) : def;
+}
+function str(name: string): string | undefined {
+  const i = process.argv.indexOf(name);
+  return i >= 0 ? process.argv[i + 1] : undefined;
 }
 function big(name: string): bigint | undefined {
   const i = process.argv.indexOf(name);
@@ -38,6 +44,8 @@ async function main(): Promise<void> {
     resolveOnly: process.argv.includes('--resolve-only'),
     featuresOnly: process.argv.includes('--features-only'),
     skipFeatures: process.argv.includes('--skip-features'),
+    onlyLabels: str('--only-label')?.split(','),
+    sweepOrder: process.argv.includes('--spread') ? 'spread' : undefined,
     qualifiedOnly: !process.argv.includes('--all-heavy'),
     fromBlock: big('--from-block'),
     toBlock: big('--to-block'),
