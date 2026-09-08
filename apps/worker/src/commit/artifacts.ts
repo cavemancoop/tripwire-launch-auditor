@@ -40,6 +40,7 @@ const FEATURE_CODE_FILES = [
   'apps/worker/src/watcher/classify.ts',
   'apps/worker/src/watcher/freshness.ts',
   'apps/worker/src/watcher/hooks.ts',
+  'apps/worker/src/watcher/primary-pool.ts',
   'apps/worker/src/watcher/erc20.ts',
   'packages/chain/src/v4-hooks.ts',
   'apps/worker/src/scanners/goplus.ts',

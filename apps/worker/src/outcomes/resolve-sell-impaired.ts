@@ -6,11 +6,19 @@ import type { ResolverContext } from './context';
 const TAX_FLOOR = 0.3; // effective sell tax >= 30% => impaired
 
 /**
- * SELL_IMPAIRED (spec §1): a fixed-size sell simulation reverts, or effective
- * sell tax >= 30%, at the horizon block. Fixed size = 100 units of the paired
- * asset's worth of the token (100 USDG for USDG pools), priced off a tiny spot
- * quote (checkpoint §8.4, RPC-only). Archive/network failure => UNRESOLVABLE,
- * never false (checkpoint §C step 2).
+ * SELL_IMPAIRED (spec §1): at the horizon block, a fixed-size sell simulation
+ * shows an effective sell tax >= 30%. Fixed size = 100 units of the paired
+ * asset's worth of the token, priced off a tiny spot quote (checkpoint §8.4,
+ * RPC-only).
+ *
+ * A **failed** quoter call — revert, archive miss, network error, or a
+ * degenerate 0-output spot — is UNRESOLVABLE with the reason, never an outcome
+ * (spec §8.3; checkpoint §C step 2). We cannot tell a genuine honeypot revert
+ * from a bad poolKey / wrong-pool / archive quirk, and treating reverts as
+ * `impaired=true` posted a spurious 100% rate into the benchmark. `true` is
+ * only ever returned from the successful-quote tax comparison, or a bulk sell
+ * that quotes to 0 *after* the spot quote succeeded (the pool demonstrably
+ * quotes, and 100 units of sells drain it to nothing).
  */
 export async function resolveSellImpaired(ctx: ResolverContext): Promise<Resolution> {
   if (ctx.lpLockedByConstruction) return notApplicable('launchpad token: LP locked by construction');
@@ -35,13 +43,15 @@ export async function resolveSellImpaired(ctx: ResolverContext): Promise<Resolut
   });
   coverage.callCount += 1;
   if (!spot.ok) {
-    if (spot.error === 'revert') {
-      return resolved(true, { reason: 'spot sell quote reverts', horizonBlock: Number(ctx.horizonBlock) }, coverage);
-    }
-    return unresolvable(`spot quote ${spot.error} at horizon block`, coverage);
+    return unresolvable(`spot sell quote ${spot.error} at horizon block`, coverage, {
+      horizonBlock: Number(ctx.horizonBlock),
+    });
   }
   if (spot.amountOut === 0n) {
-    return resolved(true, { reason: 'spot sell quote returns 0', horizonBlock: Number(ctx.horizonBlock) }, coverage);
+    // a 1e-12 sell returning exactly 0 is a broken quote setup, not a signal
+    return unresolvable('spot sell quote returns 0 (degenerate quote)', coverage, {
+      horizonBlock: Number(ctx.horizonBlock),
+    });
   }
 
   const notionalQuoteRaw = 100n * 10n ** BigInt(ctx.quoteDecimals);
@@ -61,12 +71,12 @@ export async function resolveSellImpaired(ctx: ResolverContext): Promise<Resolut
   });
   coverage.callCount += 1;
   if (!bulk.ok) {
-    if (bulk.error === 'revert') {
-      return resolved(true, { reason: '100-unit sell quote reverts', sellSizeTokens: sellSize.toString() }, coverage);
-    }
-    return unresolvable(`bulk quote ${bulk.error} at horizon block`, coverage);
+    return unresolvable(`100-unit sell quote ${bulk.error} at horizon block`, coverage, {
+      sellSizeTokens: sellSize.toString(),
+    });
   }
   if (bulk.amountOut === 0n) {
+    // spot quoted fine, so the pool works; 100 units of sells yielding 0 is real
     return resolved(true, { reason: '100-unit sell quote returns 0', sellSizeTokens: sellSize.toString() }, coverage);
   }
 

@@ -7,6 +7,7 @@ import type { DetectedPool } from './detect';
 import { computeIndexFeatures } from './features';
 import { checkTokenFreshness } from './freshness';
 import { computeHookFeatures } from './hooks';
+import { isFeeSuspect } from './primary-pool';
 import { creatorQuotaExceeded } from './quota';
 import { withRetry } from './retry';
 
@@ -139,6 +140,7 @@ export async function ingestPool(
       poolFee: pc.fee ?? undefined,
       poolTickSpacing: pc.tickSpacing ?? undefined,
       poolHooks: lc(pc.hooks),
+      poolFeeSuspect: isFeeSuspect(pc.fee),
       creatorAddress: creator,
       launchBlock: blockNumber,
       launchTxHash: txHash.toLowerCase(),
@@ -149,7 +151,9 @@ export async function ingestPool(
       retrospective: deps.retrospective ?? false,
       feature: {
         create: {
-          schemaVersion: 'v0',
+          // v0.1 (2026-09-08): primary-pool selection — features derive from the
+          // known-quote pool, re-checked at T+10m, not the first Initialize seen.
+          schemaVersion: 'v0.1',
           creatorDevbuyPct: idx.creatorDevbuyPct,
           // feature 3 (creator_age_days / prior_*) is computed on the T+10m job —
           // the age nonce-search is 1-6s/RPC-call and must stay off the poller.

@@ -36,6 +36,7 @@ import { computeFeature9 } from './feature9';
 import { computeCreatorDrainerApprovals, computeSidePoolCount } from './hooks';
 import { computeT10Features } from './features';
 import { computeHolderStats } from './holders';
+import { pickPrimaryV4Pool } from './primary-pool';
 
 /**
  * T+10m feature pass for one launch (spec §3.3 items 4, 5, 6):
@@ -50,16 +51,67 @@ export async function runT10ForLaunch(
   if (!launch) return;
 
   const cfg = getChainConfig(launch.chainId);
-  const src =
-    launch.poolKind === 'v4' ? cfg.uniswap.v4PoolManager.address : launch.poolAddress;
-  if (!src) return;
-  const liquiditySource = src.toLowerCase();
-
   const blocksIn10m = BigInt(Math.round((10 * 60) / cfg.approxBlockSeconds));
   const fromBlock = launch.launchBlock;
   const toBlock = launch.launchBlock + blocksIn10m;
   const token = launch.tokenAddress as Hex;
   const creator = launch.creatorAddress;
+  const maxRange = getGetLogsMaxRange(launch.chainId);
+
+  // M4 — re-derive the primary v4 pool before anything reads launch.pool*.
+  // The watcher may have latched onto a decoy / >10%-fee side pool at ingest.
+  if (launch.poolKind === 'v4' || launch.poolKind === null) {
+    try {
+      const day = BigInt(Math.round(86_400 / cfg.approxBlockSeconds));
+      const pick = await pickPrimaryV4Pool(client, {
+        chainId: launch.chainId,
+        token: launch.tokenAddress,
+        currentPoolId: launch.poolId,
+        scanFrom: launch.launchBlock,
+        scanTo: launch.launchBlock + day,
+        activityFrom: fromBlock,
+        activityTo: toBlock,
+        maxRange,
+      });
+      if (pick.chosen && pick.changed) {
+        launch.poolKind = 'v4';
+        launch.poolId = pick.chosen.poolId;
+        launch.poolAddress = null;
+        launch.poolFee = pick.chosen.fee ?? null;
+        launch.poolTickSpacing = pick.chosen.tickSpacing ?? null;
+        launch.poolHooks = pick.chosen.hooks;
+        launch.quoteAddress = pick.chosen.quote ?? launch.quoteAddress;
+        launch.poolFeeSuspect = pick.chosen.feeSuspect;
+      } else if (pick.chosen) {
+        launch.poolFeeSuspect = pick.chosen.feeSuspect;
+      }
+      await prisma.launch.update({
+        where: { id: launchId },
+        data: {
+          poolId: launch.poolId,
+          poolAddress: launch.poolAddress,
+          poolFee: launch.poolFee ?? undefined,
+          poolTickSpacing: launch.poolTickSpacing ?? undefined,
+          poolHooks: launch.poolHooks,
+          quoteAddress: launch.quoteAddress ?? undefined,
+          poolFeeSuspect: launch.poolFeeSuspect,
+          primaryPoolCheckedAt: new Date(),
+        },
+      });
+      if (pick.changed) {
+        // eslint-disable-next-line no-console
+        console.log(`[t10] ${launchId} primary pool: ${pick.reason}`);
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(`[t10] ${launchId} primary-pool check failed: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  const src =
+    launch.poolKind === 'v4' ? cfg.uniswap.v4PoolManager.address : launch.poolAddress;
+  if (!src) return;
+  const liquiditySource = src.toLowerCase();
 
   // item 6 — buyers
   const feats = await computeT10Features(client, {

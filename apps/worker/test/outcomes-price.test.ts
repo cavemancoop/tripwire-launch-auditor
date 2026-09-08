@@ -139,10 +139,28 @@ describe('resolveSellImpaired', () => {
     expect(r.reason).toMatch(/archive/);
   });
 
-  it('true when the spot quote itself reverts', async () => {
+  it('unresolvable when the spot quote reverts, never true (bad poolKey vs honeypot is ambiguous)', async () => {
     const r = await resolveSellImpaired(
       baseCtx({ client: quoterClient(['revert']) as never, label: 'SELL_IMPAIRED' }),
     );
+    expect(r.status).toBe('UNRESOLVABLE');
+    expect(r.value).toBeNull();
+    expect(r.reason).toMatch(/revert/);
+  });
+
+  it('unresolvable when the bulk quote reverts after a good spot quote', async () => {
+    const r = await resolveSellImpaired(
+      baseCtx({ client: quoterClient([10n ** 12n, 'revert']) as never, label: 'SELL_IMPAIRED' }),
+    );
+    expect(r.status).toBe('UNRESOLVABLE');
+    expect(r.value).toBeNull();
+  });
+
+  it('true when the bulk quote returns 0 after a good spot quote', async () => {
+    const r = await resolveSellImpaired(
+      baseCtx({ client: quoterClient([10n ** 12n, 0n]) as never, label: 'SELL_IMPAIRED' }),
+    );
+    expect(r.status).toBe('RESOLVED');
     expect(r.value).toBe(true);
   });
 

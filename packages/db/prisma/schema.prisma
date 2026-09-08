@@ -102,6 +102,11 @@ model Launch {
   poolFee        Int?    // v3/v4 fee (hundredths of a bip); null for v2
   poolTickSpacing Int?   // v3/v4 tick spacing; null for v2
   poolHooks      String? // v4 hooks contract (zero address = none); null for v2/v3
+  // M4 primary-pool selection: a token can have many v4 pools; the real one is
+  // paired with a known quote asset with the most activity. poolFeeSuspect flags
+  // fee >= 10% (decoy / token-vs-token pools). primaryPoolCheckedAt = last re-eval.
+  poolFeeSuspect      Boolean   @default(false)
+  primaryPoolCheckedAt DateTime?
   creatorAddress String
   launchBlock    BigInt
   launchTxHash   String
