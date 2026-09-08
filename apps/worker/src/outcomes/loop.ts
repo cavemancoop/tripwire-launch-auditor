@@ -30,7 +30,13 @@ export async function sweepDueOutcomes(
       status: 'PENDING',
       horizonAt: { lte: new Date() },
       ...(filter.qualifiedOnly
-        ? { OR: [{ label: 'DRAWDOWN_80' as const }, { launch: { lane: 'qualified' as const } }] }
+        ? {
+            OR: [
+              { label: 'DRAWDOWN_80' as const },
+              { label: 'TRADING_ALIVE' as const }, // both apply to every launch
+              { launch: { lane: 'qualified' as const } },
+            ],
+          }
         : {}),
     },
     orderBy: { horizonAt: 'asc' },
