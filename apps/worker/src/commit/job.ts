@@ -1,7 +1,7 @@
 import { COMMIT_REGISTRY_ABI, getWalletClient } from '@launch-auditor/chain';
 import { Prisma, prisma } from '@launch-auditor/db';
 import { getBudgetedClient, PRIORITY } from '@launch-auditor/rpc-budget';
-import { decodeEventLog, type Hex } from 'viem';
+import { decodeEventLog, type Hex, type PublicClient, type TransactionReceipt } from 'viem';
 import { loadEnv, type WorkerEnv } from '../env';
 import {
   ARTIFACT_KIND,
@@ -10,6 +10,22 @@ import {
   type ArtifactHashes,
 } from './artifacts';
 import { buildMerkleTree } from './merkle';
+
+/**
+ * Chain 4663 mines in ~1s, but a load-balanced RPC (Chainstack) can serve the
+ * first `eth_getTransactionReceipt` from a node that hasn't seen the tx yet —
+ * viem's default poll then times out ("Timed out while waiting ... to be
+ * confirmed") even though the tx landed. Poll fast, retry hard, wait 3 min.
+ */
+function waitReceipt(pub: PublicClient, hash: Hex): Promise<TransactionReceipt> {
+  return pub.waitForTransactionReceipt({
+    hash,
+    timeout: 180_000,
+    pollingInterval: 1_500,
+    retryCount: 12,
+    retryDelay: 2_000,
+  });
+}
 
 export interface CommitResult {
   committed: boolean;
@@ -54,7 +70,7 @@ export async function ensureArtifactsCommitted(): Promise<{ committed: number }>
       account: wallet.account!,
       chain: wallet.chain,
     });
-    const receipt = await pub.waitForTransactionReceipt({ hash: txHash });
+    const receipt = await waitReceipt(pub, txHash);
     const base = {
       kind: 'ARTIFACT' as const,
       chainId: env.chainId,
@@ -149,7 +165,7 @@ export async function recommitArtifacts(
       account: wallet.account!,
       chain: wallet.chain,
     });
-    const receipt = await pub.waitForTransactionReceipt({ hash: txHash });
+    const receipt = await waitReceipt(pub, txHash);
     const col = ARTIFACT_COLUMN[label];
     await prisma.commit.create({
       data: {
@@ -208,7 +224,7 @@ async function runCommitBatch(opts: { force?: boolean }): Promise<CommitResult> 
     account: wallet.account!,
     chain: wallet.chain,
   });
-  const receipt = await pub.waitForTransactionReceipt({ hash: txHash });
+  const receipt = await waitReceipt(pub, txHash);
   if (receipt.status !== 'success') {
     return { committed: false, reason: `commitBatch tx reverted (${txHash})` };
   }
