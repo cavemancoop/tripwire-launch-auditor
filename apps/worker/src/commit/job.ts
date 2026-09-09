@@ -12,19 +12,35 @@ import {
 import { buildMerkleTree } from './merkle';
 
 /**
- * Chain 4663 mines in ~1s, but a load-balanced RPC (Chainstack) can serve the
- * first `eth_getTransactionReceipt` from a node that hasn't seen the tx yet —
- * viem's default poll then times out ("Timed out while waiting ... to be
- * confirmed") even though the tx landed. Poll fast, retry hard, wait 3 min.
+ * Chain 4663 mines in ~1s, but a load-balanced RPC (Chainstack) serves the first
+ * `eth_getTransactionReceipt` calls from nodes that haven't seen the tx yet —
+ * viem's `waitForTransactionReceipt` then throws (TransactionReceiptNotFound /
+ * "Timed out ... to be confirmed") even though the tx has mined. Poll
+ * `getTransactionReceipt` ourselves, swallowing not-found, until a wall-clock
+ * deadline.
  */
-function waitReceipt(pub: PublicClient, hash: Hex): Promise<TransactionReceipt> {
-  return pub.waitForTransactionReceipt({
-    hash,
-    timeout: 180_000,
-    pollingInterval: 1_500,
-    retryCount: 12,
-    retryDelay: 2_000,
-  });
+async function waitReceipt(
+  pub: PublicClient,
+  hash: Hex,
+  { deadlineMs = 240_000, intervalMs = 2_000 } = {},
+): Promise<TransactionReceipt> {
+  const deadline = Date.now() + deadlineMs;
+  let lastErr: unknown;
+  while (Date.now() < deadline) {
+    try {
+      const r = await pub.getTransactionReceipt({ hash });
+      if (r) return r;
+    } catch (err) {
+      lastErr = err;
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!/could not be found|not be processed|not found|receipt/i.test(msg)) throw err;
+    }
+    await new Promise((res) => setTimeout(res, intervalMs));
+  }
+  throw new Error(
+    `receipt for ${hash} not found within ${deadlineMs}ms (tx likely mined — check the explorer)` +
+      (lastErr instanceof Error ? `: ${lastErr.message}` : ''),
+  );
 }
 
 export interface CommitResult {
