@@ -589,3 +589,86 @@ scale makes its own design problem (index qualified-launch wallets, not a census
 
 Spec §1 + §3.3 updated (repo + planning copies). ~24 new tests. `pnpm verify`
 green (worker 23 files).
+
+## Session 2026-09-09 — det_v0.2 backfill + M5b Orbio discovery (no code yet)
+
+Paused mid-M5b at the user's request; working tree unchanged. This entry is the
+handoff state — pick up from "Open / next" below.
+
+### det_v0.2 backfill — RAN TO COMPLETION
+`pnpm backfill --resolve-only --refeature --exclude-label INSIDER_EXIT --spread --lane-qualified --max-calls 150000`
+
+- **75,409 RPC calls** (cap 150k not reached; `stoppedEarly:false` — exhausted the
+  qualified-lane non-INSIDER work). `--refeature` rebuilt all 1,250 retrospective
+  launches (53.7k calls); resolution +225 RESOLVED / ~76 UNRESOLVABLE.
+- **RU estimate ~0.75–2.25M** (handoff weighting ~10–30M RU per 1M calls). No burn
+  concern. Exact figure is in the Chainstack console, not readable from here.
+- Log: session scratchpad `bf-detv02-20260909-124131.log`.
+
+**New qualified-lane base rates (NOT applied to `det_v0_1.json` — user open item #4,
+needs accept-vs-hand-tune + an on-chain artifact re-commit):**
+
+| cell | n | rate | suggested biasOverride | note |
+|---|---|---|---|---|
+| `SELL_IMPAIRED@1h`  | 53 | 0.962 | +3.239 | newly measurable — refeature fixed the wrong-pool quotes |
+| `SELL_IMPAIRED@24h` | 49 | 0.959 | +3.157 | newly measurable |
+| `TRADING_ALIVE@24h` | 204 | 0.275 | -0.972 | n 79 → 204 |
+| `LIQ_IMPAIRED@24h`  | 194 | 0.402 | -0.397 | n 144 → 194 |
+| `DRAWDOWN_80@24h`   | 131 | 0.336 | -0.682 | n 102 → 131 |
+| `INSIDER_EXIT@6h` / `@24h` | 151 / 53 | 0.119 / 0.113 | -2.000 / -2.058 | unchanged |
+| `*@7d`, `INSIDER_EXIT@72h` | 0 | — | — | still nothing (excluded / not old enough) |
+
+Caveat: `SELL_IMPAIRED` ~96% true even after refeaturing — either genuine (fixed-size
+sells wreck thin fresh pools) or still artifact. User decides before it goes in.
+
+### M5b — Orbio MCP connected; live tool set differs from spec §7.2 / §12
+
+OAuth completed (user, browser). **The real tools are not the spec's five:**
+
+| Spec expected | Actual | Delta |
+|---|---|---|
+| `orbio_get_balance` | `orbio_get_balance` `{}` | `balance.usd` = spendable quota = accrued+purchased+deposited−claimed−spent |
+| `orbio_claim_key` (≤$200, drawn down) | — | gone |
+| — | `orbio_create_key` `{label?:string≤60}` | mints key, **secret once**, retires existing key same call → this is claim AND rotate; **no amount, key holds nothing** |
+| `orbio_get_key_status` | `orbio_get_key_status` `{}` | hasKey, prefix, createdAt, lastUsedAt, baseUrl, anthropicBaseUrl, legacy{} |
+| `orbio_rotate_key` | — | gone → use `orbio_create_key` |
+| `orbio_revoke_key` (unspent → balance) | `orbio_revoke_key` `{}` | balance **untouched**, no refund (key never held credit) |
+| — | `orbio_delete_key` `{}` | legacy-only: disables pre-gateway OpenRouter key, returns its unspent to balance. one-way |
+
+**Model reality:** a key holds nothing; the account balance IS the quota; every request
+spends credits first then deposited $. "Drain-then-rotate the key at reserve" is
+impossible as written — reinterpreted below.
+
+**Live readings 2026-09-09:** balance `$20.33` (accrued `$206.00`, claimed `$150.68`,
+gateway spent `$0`). Orbio key exists (`sk-orbio-HCfJKw`, created 19:05Z, `lastUsedAt:null`
+— we do NOT hold its secret). Legacy OpenRouter key `sk-or-v1-a62…aed`: `remainingUsd $8.14`,
+not disabled.
+
+Gateway base URLs: OpenAI-shape `https://api.orbio.so/api/v1`, Anthropic-shape
+`https://api.orbio.so/api`. Model ids are OpenRouter ids.
+
+### Decisions locked this session (user)
+1. **State machine (adapted spec §7.2):** NO_KEY →`create_key`→ ACTIVE; 60s poll of
+   `get_balance`+`get_key_status`; keep an explicit **DRAINING** state (balance below a
+   low-water mark but above hard reserve — still serving, flagged); `balance − RESERVE_USD
+   ≤ 0` → STARVED (wait for hourly accrual, **no rotate** — a new key spends the same empty
+   balance); key age ≥ `hygieneRotateDays` (7) → ROTATING →`create_key`→ ACTIVE (hygiene
+   only); local `MetabolismSpend` sum vs `get_balance.spent.usd` mismatch → REVOKING
+   →`revoke_key`→ NO_KEY (then manual). STARVED → balance recovers above reserve → ACTIVE.
+2. **Reserve floor:** fixed **`RESERVE_USD`** env param, default **$3**. `claimSize` /
+   `reserveR` drop out of Metabolism (nothing to claim).
+3. Budget policy 3rd term: `balance.usd − RESERVE_USD` (was `keyRemaining − reserve`).
+4. Build split (CLAUDE.md >200 lines): **M5b-1** MCP client + `pnpm orbio:auth` + 5 typed
+   wrappers + fixtures · **M5b-2** 60s lifecycle runner + signed `lifecycle_log` writer +
+   `GET /v1/lifecycle` · **M5b-3** `MetabolismSpend` ledger + IDS reconciler (spender is the
+   M6 deep-dive; wire call sites in M6).
+
+### Open / next (when the user is back)
+- **Answer needed:** run `orbio_delete_key` (reclaim $8.14) / `orbio_create_key` (capture
+  secret → `.env` `ORBIO_API_KEY`) / neither (build M5b-1 on recorded fixtures). Nothing
+  else in M5b-1 is blocked once this is answered.
+- Deps to add (pinned, exact; not in catalog yet): `@modelcontextprotocol/sdk`,
+  `@openrouter/agent`, `@openrouter/sdk` — `apps/worker` + workspace `catalog:`. Needs a
+  `pnpm install` (network) the user runs.
+- Not yet done: apply det_v0.2 base rates to `det_v0_1.json` + `pnpm commit:run --artifacts`
+  (user open item #4).
