@@ -22,6 +22,7 @@
     "watcher:prune-stale": "pnpm --filter @launch-auditor/worker watcher:prune-stale",
     "commit:run": "pnpm --filter @launch-auditor/worker commit:run",
     "commit:verify": "pnpm --filter @launch-auditor/worker commit:verify",
+    "commit:reconcile": "pnpm --filter @launch-auditor/worker commit:reconcile",
     "outcomes:run": "pnpm --filter @launch-auditor/worker outcomes:run",
     "scorer:run": "pnpm --filter @launch-auditor/worker scorer:run",
     "backfill": "pnpm --filter @launch-auditor/worker backfill",
