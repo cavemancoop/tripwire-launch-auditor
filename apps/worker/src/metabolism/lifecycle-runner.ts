@@ -33,6 +33,8 @@ import {
   orbioRevokeKey,
   type OrbioConnection,
 } from './orbio-client';
+import { reconcileIds, type IdsReconcile } from './ids-reconcile';
+import { totalSpendUsd } from './spend-ledger';
 import { nextState, type LifecycleEvent, type LifecycleState } from './state';
 import {
   loadEncryptionKey,
@@ -48,6 +50,7 @@ export interface LifecycleConfig {
   lowWaterUsd: number;
   hygieneRotateDays: number;
   idsToleranceUsd: number;
+  idsGraceUsd: number;
 }
 
 export interface LifecycleReading {
@@ -61,10 +64,12 @@ export interface LifecycleReading {
   holdSecret: boolean;
   /** age of the current key in days, or null when there is no key */
   keyAgeDays: number | null;
-  /** Σ MetabolismSpend.costUsd (local ledger) */
+  /** Σ MetabolismSpend.costUsd (local ledger) — kept for the lifecycle_log row */
   ledgerSpendUsd: number;
-  /** orbio_get_balance.spent.usd (provider) */
+  /** orbio_get_balance.spent.usd (provider) — kept for the lifecycle_log row */
   providerSpendUsd: number;
+  /** M5b-3: per-key baseline reconcile of the two above */
+  ids: IdsReconcile;
 }
 
 export type LifecycleDecision =
@@ -82,24 +87,16 @@ export type LifecycleDecision =
   | { kind: 'revoke'; from: LifecycleState; reason: string };
 
 const r2 = (n: number): string => n.toFixed(2);
-const r4 = (n: number): string => n.toFixed(4);
 
 /** Pure: given a live reading + config, what should the runner do this tick? */
 export function decideLifecycle(r: LifecycleReading, cfg: LifecycleConfig): LifecycleDecision {
   const spendable = r.balanceUsd - cfg.reserveUsd;
-  const idsMismatch =
-    Number.isFinite(r.ledgerSpendUsd) &&
-    Number.isFinite(r.providerSpendUsd) &&
-    Math.abs(r.ledgerSpendUsd - r.providerSpendUsd) > cfg.idsToleranceUsd;
   const S = r.state;
 
-  // IDS mismatch preempts everything from any state that holds a key
-  if (idsMismatch && S !== 'NO_KEY' && S !== 'STARVED' && S !== 'REVOKING') {
-    return {
-      kind: 'revoke',
-      from: S,
-      reason: `ids: local ledger $${r4(r.ledgerSpendUsd)} vs provider spent $${r4(r.providerSpendUsd)} (tolerance $${cfg.idsToleranceUsd})`,
-    };
+  // IDS mismatch (provider gateway spend outpaced the local ledger) preempts
+  // everything from any state that holds a key.
+  if (r.ids.mismatch && S !== 'NO_KEY' && S !== 'STARVED' && S !== 'REVOKING') {
+    return { kind: 'revoke', from: S, reason: r.ids.reason };
   }
 
   switch (S) {
@@ -374,6 +371,7 @@ export async function runLifecycleLoop(
     lowWaterUsd: env.metabolismLowWaterUsd,
     hygieneRotateDays: env.metabolismHygieneRotateDays,
     idsToleranceUsd: env.metabolismIdsToleranceUsd,
+    idsGraceUsd: env.metabolismIdsGraceUsd,
   };
   const intervalMs = env.metabolismStatusPollSec * 1000;
   const connect = deps.connect ?? (() => connectOrbio());
@@ -410,8 +408,36 @@ export async function runLifecycleLoop(
         orbioGetBalance(c.client),
         orbioGetKeyStatus(c.client),
       ]);
-      const ledgerAgg = await prisma.metabolismSpend.aggregate({ _sum: { costUsd: true } });
+      const ledgerSpendUsd = await totalSpendUsd();
+      const providerSpendUsd = balance.spent.usd;
       const blob = readOAuthBlob(storePath, encKey);
+
+      // Establish / refresh the per-key IDS baseline before reconciling, so the
+      // first tick with a new key never trips.
+      if (
+        status.hasKey &&
+        status.prefix &&
+        (!blob.spendBaseline || blob.spendBaseline.keyPrefix !== status.prefix)
+      ) {
+        blob.spendBaseline = {
+          keyPrefix: status.prefix,
+          providerSpentUsd: providerSpendUsd,
+          ledgerUsd: ledgerSpendUsd,
+          at: new Date().toISOString(),
+        };
+        updateOAuthBlob(storePath, encKey, { spendBaseline: blob.spendBaseline });
+        // eslint-disable-next-line no-console
+        console.log(`[metabolism] IDS baseline set for ${status.prefix} (provider $${r2(providerSpendUsd)}, ledger $${r2(ledgerSpendUsd)})`);
+      }
+
+      const ids = reconcileIds({
+        keyPrefix: status.prefix ?? null,
+        providerSpentUsd: providerSpendUsd,
+        ledgerSpendUsd,
+        baseline: blob.spendBaseline ?? null,
+        toleranceUsd: cfg.idsToleranceUsd,
+        graceUsd: cfg.idsGraceUsd,
+      });
 
       const holdSecret =
         typeof blob.gatewayKey === 'string' &&
@@ -428,12 +454,12 @@ export async function runLifecycleLoop(
           status.hasKey && status.createdAt
             ? (Date.now() - Date.parse(status.createdAt)) / 86_400_000
             : null,
-        ledgerSpendUsd: ledgerAgg._sum.costUsd ?? 0,
-        providerSpendUsd: balance.spent.usd,
+        ledgerSpendUsd,
+        providerSpendUsd,
+        ids,
       };
 
-      const idsMismatch =
-        Math.abs(reading.ledgerSpendUsd - reading.providerSpendUsd) > cfg.idsToleranceUsd;
+      const idsMismatch = ids.mismatch;
       const common = {
         balanceUsd: reading.balanceUsd,
         reserveUsd: cfg.reserveUsd,
@@ -450,6 +476,13 @@ export async function runLifecycleLoop(
         updateOAuthBlob(storePath, encKey, {
           gatewayKey: created.key,
           gatewayKeyPrefix: created.prefix,
+          // fresh key ⇒ fresh IDS baseline (this tick's provider spend, current ledger Σ)
+          spendBaseline: {
+            keyPrefix: created.prefix,
+            providerSpentUsd: providerSpendUsd,
+            ledgerUsd: ledgerSpendUsd,
+            at: new Date().toISOString(),
+          },
         });
         // eslint-disable-next-line no-console
         console.log(`[metabolism] minted ${created.prefix} (${why})`);
@@ -457,6 +490,10 @@ export async function runLifecycleLoop(
       };
 
       const decision = decideLifecycle(reading, cfg);
+      if (ids.direction === 'ledger_ahead') {
+        // eslint-disable-next-line no-console
+        console.warn(`[metabolism] ${ids.reason}`);
+      }
 
       if (decision.kind === 'steady') {
         await writer.append({
@@ -546,7 +583,11 @@ export async function runLifecycleLoop(
           // eslint-disable-next-line no-console
           console.error('[metabolism] revoke_key failed', e instanceof Error ? e.message : e);
         }
-        updateOAuthBlob(storePath, encKey, { gatewayKey: null, gatewayKeyPrefix: null });
+        updateOAuthBlob(storePath, encKey, {
+          gatewayKey: null,
+          gatewayKeyPrefix: null,
+          spendBaseline: null,
+        });
         checkAgainstStateMachine('REVOKING', 'REVOKED', 'NO_KEY');
         await writer.append({
           isSnapshot: false,

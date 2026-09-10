@@ -3,4 +3,6 @@ export * from './budget';
 export * from './token-store';
 export * from './lifecycle';
 export * from './orbio-client';
+export * from './ids-reconcile';
+export * from './spend-ledger';
 export * from './lifecycle-runner';

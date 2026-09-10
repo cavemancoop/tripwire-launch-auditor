@@ -34,8 +34,10 @@ export interface WorkerEnv {
   metabolismHygieneRotateDays: number;
   /** lifecycle poll cadence (spec §8: 60s) */
   metabolismStatusPollSec: number;
-  /** |local ledger − orbio_get_balance.spent| over this → REVOKING (IDS) */
+  /** |local ledger − orbio_get_balance.spent| rounding tolerance for the IDS check */
   metabolismIdsToleranceUsd: number;
+  /** IDS settlement grace: absorbs ~one in-flight deep-dive not yet in the ledger */
+  metabolismIdsGraceUsd: number;
 }
 
 let dotenvLoaded = false;
@@ -104,6 +106,10 @@ export function loadEnv(): WorkerEnv {
     metabolismHygieneRotateDays: Number(process.env.METABOLISM_HYGIENE_ROTATE_DAYS || 7),
     metabolismStatusPollSec: Number(process.env.METABOLISM_STATUS_POLL_SEC || 60),
     metabolismIdsToleranceUsd: Number(process.env.METABOLISM_IDS_TOLERANCE_USD || 0.01),
+    metabolismIdsGraceUsd: Number(
+      process.env.METABOLISM_IDS_GRACE_USD ||
+        Number(process.env.DEEPDIVE_CAP_PER_RUN_USD || 0.2) + 0.05,
+    ),
   };
 }
 

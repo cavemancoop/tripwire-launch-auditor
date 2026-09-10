@@ -9,6 +9,7 @@ import {
   type LifecyclePersistRecord,
   type LifecycleReading,
 } from '../src/metabolism/lifecycle-runner';
+import type { IdsReconcile } from '../src/metabolism/ids-reconcile';
 import { nextState } from '../src/metabolism/state';
 
 const CFG: LifecycleConfig = {
@@ -16,6 +17,23 @@ const CFG: LifecycleConfig = {
   lowWaterUsd: 6,
   hygieneRotateDays: 7,
   idsToleranceUsd: 0.01,
+  idsGraceUsd: 0.25,
+};
+
+const IDS_OK: IdsReconcile = {
+  mismatch: false,
+  direction: 'ok',
+  providerDeltaUsd: 0,
+  ledgerDeltaUsd: 0,
+  excessUsd: 0,
+  reason: 'ids ok',
+};
+const IDS_MISMATCH: IdsReconcile = {
+  ...IDS_OK,
+  mismatch: true,
+  direction: 'provider_ahead',
+  excessUsd: 1.5,
+  reason: 'ids: gateway outpaced the ledger by $1.5000',
 };
 
 const base: LifecycleReading = {
@@ -27,6 +45,7 @@ const base: LifecycleReading = {
   keyAgeDays: 1,
   ledgerSpendUsd: 0,
   providerSpendUsd: 0,
+  ids: IDS_OK,
 };
 const read = (over: Partial<LifecycleReading>): LifecycleReading => ({ ...base, ...over });
 
@@ -88,8 +107,15 @@ describe('decideLifecycle — adapted §8 machine (2026-09-09 decisions)', () =>
   });
 
   it('IDS mismatch preempts everything, even a hygiene-due key', () => {
-    const d = decideLifecycle(read({ keyAgeDays: 30, ledgerSpendUsd: 1.0, providerSpendUsd: 2.5 }), CFG);
-    expect(d).toMatchObject({ kind: 'revoke', from: 'ACTIVE' });
+    const d = decideLifecycle(read({ keyAgeDays: 30, ids: IDS_MISMATCH }), CFG);
+    expect(d).toMatchObject({ kind: 'revoke', from: 'ACTIVE', reason: IDS_MISMATCH.reason });
+  });
+
+  it('IDS mismatch does NOT act from NO_KEY / STARVED / REVOKING', () => {
+    expect(decideLifecycle(read({ state: 'STARVED', balanceUsd: 1, ids: IDS_MISMATCH }), CFG).kind).toBe('steady');
+    expect(
+      decideLifecycle(read({ state: 'NO_KEY', hasKey: false, holdSecret: false, ids: IDS_MISMATCH }), CFG).kind,
+    ).toBe('transition');
   });
 
   it('STARVED + balance recovers, key still valid → ACTIVE without minting', () => {

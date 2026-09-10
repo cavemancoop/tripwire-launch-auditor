@@ -789,3 +789,44 @@ sets `createdAt` explicitly rather than adding a signed-`at` column.
 - `MetabolismSpend` ledger writes + the real IDS reconciler (per-key, not a global Σ).
   M5b-2 wires the inputs: `ledgerSpendUsd` = `Σ MetabolismSpend.costUsd` (0 until M6),
   `providerSpendUsd` = `orbio_get_balance.spent.usd`.
+
+## M5b-3 — MetabolismSpend ledger + per-key IDS reconciler (2026-09-09)
+
+### Added
+- `apps/worker/src/metabolism/spend-ledger.ts` — `recordSpend` / `totalSpendUsd` /
+  `spendByKey` over the `MetabolismSpend` table. One row per `llm_deepdive_v0` run,
+  **idempotent on the OpenRouter `generationId`** (a retried generation is never
+  double-counted). Rejects negative / non-finite `costUsd`. Storage seam
+  (`SpendStore`) so it is unit-tested without Postgres. **The spender is the M6
+  deep-dive — M6 wires the call sites**; M5b-3 is the write/read surface + reconciler.
+- `apps/worker/src/metabolism/ids-reconcile.ts` — `reconcileIds` (pure). Orbio only
+  exposes an account-wide gateway `spent.usd`, so the IDS check runs against a
+  **per-key baseline**: the runner snapshots `(provider spent, ledger Σ)` into the
+  encrypted store (`OrbioOAuthBlob.spendBaseline`) when a key is minted, and each
+  tick compares the two deltas since. `mismatch` fires only when the provider
+  outpaces the local ledger by `> max(idsToleranceUsd, idsGraceUsd)` — the
+  compromise direction. Ledger-ahead (unsettled / over-recorded) → `direction:
+  'ledger_ahead'`, logged, never revoked. No baseline / key mismatch →
+  `'no_baseline'`, no action.
+- `lifecycle-runner.ts` integration:
+  - `LifecycleReading.ids: IdsReconcile`; `decideLifecycle` now reads `r.ids.mismatch`
+    / `r.ids.reason` instead of recomputing a naive `abs(ledger − provider)`.
+  - each tick: `totalSpendUsd()` for the ledger Σ → establish/refresh the per-key
+    baseline if missing → `reconcileIds` → feed `decideLifecycle`. `mint()` writes a
+    fresh baseline for the new key; the revoke path clears it.
+  - `LifecycleConfig.idsGraceUsd`, `env.metabolismIdsGraceUsd`
+    (`METABOLISM_IDS_GRACE_USD`, default `DEEPDIVE_CAP_PER_RUN_USD + 0.05`).
+- `token-store.ts` — `OrbioOAuthBlob.spendBaseline?: SpendBaseline`.
+- Tests: `apps/worker/test/spend-ledger.test.ts` (5 — insert, generationId
+  idempotency, no-id insert, validation), `apps/worker/test/ids-reconcile.test.ts`
+  (8 — no baseline, wrong key, provider-ahead, within-grace, ledger-ahead, exact,
+  tolerance floor). `lifecycle-runner.test.ts` updated for the `ids` field (+1 test:
+  IDS mismatch does not act from NO_KEY / STARVED / REVOKING).
+
+### Verify — GREEN
+`pnpm verify`: typecheck (6 pkgs) + 201 worker tests (+14) + 5 api tests. No migration
+(`MetabolismSpend` already in the M5 metabolism-ledger migration).
+
+### Not done (M6)
+- The deep-dive that actually calls `recordSpend(...)` with the OpenRouter usage +
+  `GET /api/v1/generation?id=` cost, tagged with the current `keyHashPrefix`.

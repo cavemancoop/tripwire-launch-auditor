@@ -5,6 +5,7 @@ import type {
   OAuthClientInformationFull,
   OAuthTokens,
 } from '@modelcontextprotocol/sdk/shared/auth.js';
+import type { SpendBaseline } from './ids-reconcile';
 
 /**
  * AES-256-GCM for the Orbio OAuth token at rest (`.env` `TOKEN_ENCRYPTION_KEY`,
@@ -81,6 +82,9 @@ export interface OrbioOAuthBlob {
   gatewayKey?: string;
   /** `sk-orbio-…` prefix of `gatewayKey`, safe to log */
   gatewayKeyPrefix?: string;
+  /** M5b-3: per-key IDS baseline — `(provider spent, local ledger Σ)` snapshotted
+   *  when `gatewayKey` was minted. Cleared on revoke. */
+  spendBaseline?: SpendBaseline;
   /** ISO timestamp of the last write, for the lifecycle log / diagnostics */
   updatedAt?: string;
 }

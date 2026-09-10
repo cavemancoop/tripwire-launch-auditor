@@ -37,7 +37,7 @@ delayed job fills T+10m features. Launchpad attribution (`source`) is `raw` unti
 per-pad factory addresses in `packages/chain/config/chain.4663.json` are confirmed and
 their `verified` flags flipped.
 
-## Metabolism — Orbio MCP client + lifecycle runner (M5b-1 / M5b-2)
+## Metabolism — Orbio MCP client + lifecycle runner + spend ledger (M5b-1 / M5b-2 / M5b-3)
 
 The deep-dive's compute is funded through the Orbio MCP (spec §8). `apps/worker/src/metabolism/orbio-client.ts`
 is a Streamable-HTTP MCP client for `ORBIO_MCP_URL` with an OAuth 2.1 provider whose
@@ -80,7 +80,8 @@ wrappers, and appends signed rows to `lifecycle_log`.
   balance); ledger-vs-provider spend mismatch `→ REVOKING → NO_KEY` then **HALT**
   (awaits a human `pnpm orbio:auth`).
 - **Config:** `RESERVE_USD` (3), `METABOLISM_LOW_WATER_USD` (2×reserve),
-  `METABOLISM_HYGIENE_ROTATE_DAYS` (7), `METABOLISM_IDS_TOLERANCE_USD` (0.01).
+  `METABOLISM_HYGIENE_ROTATE_DAYS` (7), `METABOLISM_IDS_TOLERANCE_USD` (0.01),
+  `METABOLISM_IDS_GRACE_USD` (`DEEPDIVE_CAP_PER_RUN_USD` + 0.05).
 - **Signed log:** one row per transition + one snapshot per tick. Each row's
   `bodyHash = keccak256(RFC-8785(body))`, chained via `prevHash`, signed
   (EIP-191) by the agent key. Hashing lives in `@launch-auditor/db`
@@ -90,6 +91,21 @@ wrappers, and appends signed rows to `lifecycle_log`.
   independently verifiable offline.
 - The minted gateway key (secret) is persisted encrypted in the same token store
   (`gatewayKey`) so a worker restart does not orphan it; the M6 deep-dive reads it.
+
+### Spend ledger + IDS reconciler (M5b-3)
+
+- `metabolism/spend-ledger.ts` — `recordSpend` / `totalSpendUsd` / `spendByKey`
+  over the `MetabolismSpend` table, one row per `llm_deepdive_v0` run, idempotent
+  on the OpenRouter `generationId`. **The spender is the M6 deep-dive** — M5b-3 is
+  the API + reconciler only; M6 wires the call sites.
+- `metabolism/ids-reconcile.ts` — `reconcileIds` (pure). Orbio exposes only an
+  account-wide gateway `spent.usd`, so the check runs against a **per-key
+  baseline**: when a key is minted the runner snapshots `(provider spent,
+  ledger Σ)` into the encrypted store (`spendBaseline`); each tick it compares the
+  two *deltas since that snapshot*. Only the provider outpacing the ledger beyond
+  `max(METABOLISM_IDS_TOLERANCE_USD, METABOLISM_IDS_GRACE_USD)` is a compromise
+  signal → REVOKING → NO_KEY → HALT. Ledger-ahead (unsettled / over-recorded) is
+  logged, never revoked.
 
 ## Prerequisites
 
