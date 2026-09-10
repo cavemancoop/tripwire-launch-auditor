@@ -38,6 +38,18 @@ export interface WorkerEnv {
   metabolismIdsToleranceUsd: number;
   /** IDS settlement grace: absorbs ~one in-flight deep-dive not yet in the ledger */
   metabolismIdsGraceUsd: number;
+  /** M6 deep-dive — OpenRouter-shaped gateway base URL (Orbio) */
+  orbioGatewayV1Url: string;
+  /** pinned exact model slug for `llm_deepdive_v0` (no ~latest / openrouter/auto) */
+  openrouterModelDeepdive: string;
+  /** attribution: HTTP-Referer (dashboard URL) */
+  openrouterHttpReferer: string;
+  /** attribution: X-Title */
+  openrouterXTitle: string;
+  /** hard per-run compute cap for one deep-dive (spec §5: ≤ 0.20 USD) */
+  deepdiveCapPerRunUsd: number;
+  /** daily cap fed to the Metabolism budget policy */
+  deepdiveDailyCapUsd: number;
 }
 
 let dotenvLoaded = false;
@@ -110,6 +122,12 @@ export function loadEnv(): WorkerEnv {
       process.env.METABOLISM_IDS_GRACE_USD ||
         Number(process.env.DEEPDIVE_CAP_PER_RUN_USD || 0.2) + 0.05,
     ),
+    orbioGatewayV1Url: process.env.ORBIO_GATEWAY_V1_URL || 'https://api.orbio.so/api/v1',
+    openrouterModelDeepdive: process.env.OPENROUTER_MODEL_DEEPDIVE || '',
+    openrouterHttpReferer: process.env.OPENROUTER_HTTP_REFERER || '',
+    openrouterXTitle: process.env.OPENROUTER_X_TITLE || 'Launch Auditor',
+    deepdiveCapPerRunUsd: Number(process.env.DEEPDIVE_CAP_PER_RUN_USD || 0.2),
+    deepdiveDailyCapUsd: Number(process.env.DEEPDIVE_DAILY_CAP_USD || 5),
   };
 }
 

@@ -107,6 +107,25 @@ wrappers, and appends signed rows to `lifecycle_log`.
   signal → REVOKING → NO_KEY → HALT. Ledger-ahead (unsettled / over-recorded) is
   logged, never revoked.
 
+## LLM deep-dive `llm_deepdive_v0` (M6, in progress)
+
+The Orbio-funded scored forecaster (spec §5). **M6a** shipped the plumbing:
+
+- `deepdive/openrouter.ts` — `@openrouter/agent` client on the Orbio gateway
+  (`ORBIO_GATEWAY_V1_URL`), key from the Metabolism store, attribution headers,
+  `generationCost(id)` for the authoritative per-call cost. `OPENROUTER_MODEL_DEEPDIVE`
+  must be a pinned exact slug (no `~latest` / `openrouter/auto`) — set it before any
+  scored run; `assertScoredModelSlug` enforces it.
+- `deepdive/tools.ts` — 8 read-only tools (`address_token_activity`, `token_transfers`,
+  `cluster_expand`, `price_series`, `holder_snapshot`, `contract_code`, `scanhood_scan`,
+  `scanhood_quote`) over a per-target `DeepdiveContext`, + `web_search` server tool.
+  Every result is an evidence row `{tool,query,value,source,block}`; a failed read is a
+  limitation, never a finding (§8.2).
+- `deepdive/contract-code.ts` — runtime code hash + EIP-1967 proxy resolution.
+
+M6b (agent loop + scored output) and M6c (persist → §8.3 validate → commit → score,
+qualified-lane trigger + `POST /v1/deepdive/{token}`) are next.
+
 ## Prerequisites
 
 - Node >= 22 (24 works), pnpm 11

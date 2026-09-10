@@ -9,6 +9,9 @@ catalogs:
     '@modelcontextprotocol/sdk':
       specifier: 1.30.0
       version: 1.30.0
+    '@openrouter/agent':
+      specifier: 0.11.0
+      version: 0.11.0
     '@prisma/client':
       specifier: ^6.0.0
       version: 6.19.3
@@ -105,6 +108,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: 'catalog:'
         version: 1.30.0(zod@4.6.1)
+      '@openrouter/agent':
+        specifier: 'catalog:'
+        version: 0.11.0
       bullmq:
         specifier: 'catalog:'
         version: 5.81.4
@@ -452,6 +458,17 @@ packages:
   '@noble/hashes@1.8.0':
     resolution: {integrity: sha512-jCs9ldd7NwzpgXDIf6P3+NrHh9/sD6CQdxHyjQI+h/6rDNo88ypBxxz45UDuZHz9r3tNz7N/VInSVoVdtXEI4A==}
     engines: {node: ^14.21.3 || >=16}
+
+  '@openrouter/agent@0.11.0':
+    resolution: {integrity: sha512-8idTYNZ4MjQyNJ2HKMTSmocVgQYajB43xG3rqa7ronK8Xfqx6XnIKvfhtqmAeJTPkhYppVuuQ+DKkMXlVEA+SA==}
+    peerDependencies:
+      '@modelcontextprotocol/client': ^2.0.0
+    peerDependenciesMeta:
+      '@modelcontextprotocol/client':
+        optional: true
+
+  '@openrouter/sdk@0.13.67':
+    resolution: {integrity: sha512-kUVaFYA9Xehq67ndTk98i+tRLfYH/F6xSf/WuC8dsukBzcgBvYQydoeKw4Xe+peXG/wOVtDxukWt5SqzhbloKw==}
 
   '@pinojs/redact@0.4.0':
     resolution: {integrity: sha512-k2ENnmBugE/rzQfEcdWHcCY+/FM3VLzH9cYEsbdsoqrvzAKRhUZeRNhAZvB8OitQJ1TBed3yqWtdjzS6wJKBwg==}
@@ -1749,6 +1766,15 @@ snapshots:
       '@noble/hashes': 1.8.0
 
   '@noble/hashes@1.8.0': {}
+
+  '@openrouter/agent@0.11.0':
+    dependencies:
+      '@openrouter/sdk': 0.13.67
+      zod: 4.6.1
+
+  '@openrouter/sdk@0.13.67':
+    dependencies:
+      zod: 4.6.1
 
   '@pinojs/redact@0.4.0': {}
 

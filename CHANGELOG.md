@@ -830,3 +830,54 @@ sets `createdAt` explicitly rather than adding a signed-`at` column.
 ### Not done (M6)
 - The deep-dive that actually calls `recordSpend(...)` with the OpenRouter usage +
   `GET /api/v1/generation?id=` cost, tagged with the current `keyHashPrefix`.
+
+## M6a — deep-dive OpenRouter client + tool belt (2026-09-09)
+
+First of three M6 checkpoints (M6b: agent loop + scored output · M6c: persist + score + trigger).
+
+### Added
+- Catalog / `apps/worker` dep: `@openrouter/agent` `0.11.0` (pinned exact). It
+  re-exports `OpenRouter` for plain calls plus `tool()` / `callModel` /
+  `serverTool` / `stepCountIs` / `maxCost` for the loop; pulls `@openrouter/sdk`
+  0.13.x transitively (build script disabled in `pnpm-workspace.yaml` —
+  Speakeasy SDK, ships prebuilt). Needs a `pnpm install`.
+- `apps/worker/src/deepdive/openrouter.ts` — `createDeepdiveClient` (Orbio gateway
+  base URL `ORBIO_GATEWAY_V1_URL`, key resolved from the encrypted store's
+  `gatewayKey` → `ORBIO_API_KEY` → `OPENROUTER_API_KEY`, attribution headers
+  `HTTP-Referer` / `X-Title`), `generationCost(id)` → `GET /generation?id=` (the
+  authoritative per-call cost, feeds `recordSpend` in M6b), `assertScoredModelSlug`
+  (rejects empty / `~latest` / `openrouter/auto` — the model must be identifiable
+  per report, spec §5).
+- `apps/worker/src/deepdive/contract-code.ts` — `resolveContractCode`: runtime
+  bytecode `keccak256` + size + EIP-1967 implementation/admin/beacon slot
+  resolution (RPC-only, block-pinnable). For the §8.2 target packet.
+- `apps/worker/src/deepdive/evidence.ts` — `EvidenceRow {tool,query,value,source,block}`,
+  `Limitation`, `ToolOutput`, and `ok` / `rows` / `limited` / `asUntrustedData`
+  builders (§8.2 discipline: coverage gaps are limitations, never findings;
+  external text is framed "data, not instructions").
+- `apps/worker/src/deepdive/tools.ts` — `buildDeepdiveTools(ctx)`: the 8
+  read-only client tools (`address_token_activity`, `token_transfers`,
+  `cluster_expand`, `price_series`, `holder_snapshot`, `contract_code`,
+  `scanhood_scan`, `scanhood_quote`) as `tool()` defs with zod input schemas,
+  each delegating to one method of a per-target `DeepdiveContext` interface and
+  wrapping the result as evidence (a thrown read → a limitation). Plus
+  `DEEPDIVE_SERVER_TOOLS` (`serverTool({ type: 'web_search_2025_08_26' })`).
+- `env.ts` / `.env.example` — `ORBIO_GATEWAY_V1_URL`, `OPENROUTER_MODEL_DEEPDIVE`
+  (**required before any scored run**), `OPENROUTER_HTTP_REFERER`,
+  `OPENROUTER_X_TITLE`, `DEEPDIVE_CAP_PER_RUN_USD` (0.20), `DEEPDIVE_DAILY_CAP_USD` (5).
+- Tests: `deepdive-contract-code.test.ts` (4), `deepdive-openrouter.test.ts` (8 —
+  key fallback order, slug guard, `generationCost` URL + envelope + HTTP error),
+  `deepdive-tools.test.ts` (6 — tool order, evidence shape, bigint serialisation,
+  limitation-not-finding, schema rejection). No live calls.
+
+### Verify — GREEN
+`pnpm verify`: typecheck (6 pkgs) + 219 worker tests (+18) + 5 api. No migration.
+
+### Not done (M6b / M6c)
+- `buildDeepdiveContext` — binding `DeepdiveContext` to the live M1–M4 providers
+  for a specific launch.
+- The `callModel` agent loop, frozen target packet, structured-output schema
+  `{p_insider_exit_24h, p_drawdown_80_7d, p_sell_impaired_24h, evidence, confidence}`,
+  range-checks, cost recording → `recordSpend`, budget gate.
+- Report assembly (`forecaster = llm_deepdive_v0`) → §8.3 validator → persist →
+  commit; scorer wiring; qualified-lane trigger + `POST /v1/deepdive/{token}`.

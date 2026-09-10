@@ -6,6 +6,8 @@ packages:
 # All five are first-party build tooling: esbuild (vitest/tsx transpile),
 # the Prisma engine binaries, and msgpackr's optional native accelerator.
 allowBuilds:
+  # Speakeasy-generated SDK; ships prebuilt esm/, no build step we need.
+  '@openrouter/sdk': false
   '@prisma/client': true
   '@prisma/engines': true
   esbuild: true
@@ -29,6 +31,10 @@ catalog:
   # OAuth + Streamable-HTTP client surface is load-bearing; no silent minor bumps.
   "@modelcontextprotocol/sdk": 1.30.0
   zod: 4.6.1
+  # M6 deep-dive. `@openrouter/agent` re-exports `OpenRouter` (plain calls) plus
+  # tool() / callModel / serverTool / stepCountIs / maxCost for the agent loop;
+  # it pulls @openrouter/sdk 0.13.x transitively. Pinned exact.
+  "@openrouter/agent": 0.11.0
 
 minimumReleaseAgeExclude:
   - zod@4.6.1

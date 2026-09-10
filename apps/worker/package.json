@@ -26,6 +26,7 @@
     "@launch-auditor/rpc-budget": "workspace:*",
     "@launch-auditor/scoring": "workspace:*",
     "@modelcontextprotocol/sdk": "catalog:",
+    "@openrouter/agent": "catalog:",
     "bullmq": "catalog:",
     "canonicalize": "catalog:",
     "viem": "catalog:",
