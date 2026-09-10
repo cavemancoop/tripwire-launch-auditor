@@ -15,6 +15,8 @@
     "outcomes:run": "tsx src/scripts/outcomes-run.ts",
     "scorer:run": "tsx src/scripts/scorer-run.ts",
     "backfill": "tsx src/scripts/backfill.ts",
+    "orbio:auth": "tsx src/scripts/orbio-auth.ts",
+    "orbio:probe": "tsx src/scripts/orbio-probe.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests"
   },
@@ -23,9 +25,11 @@
     "@launch-auditor/db": "workspace:*",
     "@launch-auditor/rpc-budget": "workspace:*",
     "@launch-auditor/scoring": "workspace:*",
+    "@modelcontextprotocol/sdk": "catalog:",
     "bullmq": "catalog:",
     "canonicalize": "catalog:",
-    "viem": "catalog:"
+    "viem": "catalog:",
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",

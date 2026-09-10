@@ -25,3 +25,10 @@ catalog:
   "@prisma/client": ^6.0.0
   prisma: ^6.0.0
   canonicalize: ^2.0.0
+  # M5b Metabolism (Orbio MCP). Pinned exact (latest on npm 2026-09-09) — the
+  # OAuth + Streamable-HTTP client surface is load-bearing; no silent minor bumps.
+  "@modelcontextprotocol/sdk": 1.30.0
+  zod: 4.6.1
+
+minimumReleaseAgeExclude:
+  - zod@4.6.1

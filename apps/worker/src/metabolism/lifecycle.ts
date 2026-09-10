@@ -1,7 +1,9 @@
-import { keccak256, stringToHex, type Hex } from 'viem';
+import { GENESIS_HASH, lifecycleBodyHash } from '@launch-auditor/db';
+import { type Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { canonicalJson } from '../report/crypto';
 import { isManualReason, type LifecycleState } from './state';
+
+export { GENESIS_HASH } from '@launch-auditor/db';
 
 /**
  * The signed lifecycle log (spec §8 — "the signed lifecycle log as evidence").
@@ -30,8 +32,6 @@ export interface LifecycleEntry extends LifecycleEntryInput {
   bodyHash: Hex;
 }
 
-export const GENESIS_HASH: Hex = `0x${'00'.repeat(32)}`;
-
 export function buildLifecycleEntry(
   input: LifecycleEntryInput,
   prevHash: Hex = GENESIS_HASH,
@@ -51,7 +51,7 @@ export function buildLifecycleEntry(
     idsMismatch: input.idsMismatch ?? false,
     prevHash,
   };
-  const bodyHash = keccak256(stringToHex(canonicalJson(body)));
+  const bodyHash = lifecycleBodyHash(body);
   return { ...input, at: body.at, prevHash, bodyHash };
 }
 

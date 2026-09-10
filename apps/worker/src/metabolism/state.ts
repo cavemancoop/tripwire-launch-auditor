@@ -57,6 +57,10 @@ export function nextState(
       if (event === 'LOW_BALANCE') return R('DRAINING', 'key remaining is low');
       if (event === 'DRAINED') return R('ROTATING', 'key drained below reserve');
       if (event === 'HYGIENE_DUE') return R('ROTATING', 'scheduled key rotation (hygiene)');
+      // M5b-2 adaptation: balance below the hard reserve → STARVED directly. A
+      // fresh key would spend the same empty balance, so there is nothing to
+      // rotate into (2026-09-09 decision).
+      if (event === 'NO_CREDITS') return R('STARVED', 'balance below the hard reserve — nothing to serve');
       if (event === 'STATUS_OK') return R('ACTIVE', 'status ok');
       return null;
 

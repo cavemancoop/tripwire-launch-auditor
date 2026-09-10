@@ -26,6 +26,16 @@ export interface WorkerEnv {
   rpcBudgetRpm: number;
   /** eth_getLogs span: 0 = probe the RPC's real limit on boot, else use this */
   rpcMaxGetLogsRange: number;
+  /** M5b Metabolism: hard reserve held back; STARVED when balance − this ≤ 0 */
+  metabolismReserveUsd: number;
+  /** balance below this (but above reserve) → DRAINING (still serving, flagged) */
+  metabolismLowWaterUsd: number;
+  /** key age ≥ this → hygiene ROTATING → create_key → ACTIVE */
+  metabolismHygieneRotateDays: number;
+  /** lifecycle poll cadence (spec §8: 60s) */
+  metabolismStatusPollSec: number;
+  /** |local ledger − orbio_get_balance.spent| over this → REVOKING (IDS) */
+  metabolismIdsToleranceUsd: number;
 }
 
 let dotenvLoaded = false;
@@ -87,6 +97,13 @@ export function loadEnv(): WorkerEnv {
     commitMaxLeaves: Number(process.env.COMMIT_MAX_LEAVES ?? 200),
     rpcBudgetRpm: Number(process.env.RPC_BUDGET_RPM ?? 500),
     rpcMaxGetLogsRange: Number(process.env.RPC_MAX_GETLOGS_RANGE ?? 0),
+    metabolismReserveUsd: Number(process.env.RESERVE_USD || 3),
+    metabolismLowWaterUsd:
+      Number(process.env.METABOLISM_LOW_WATER_USD || 0) ||
+      Number(process.env.RESERVE_USD || 3) * 2,
+    metabolismHygieneRotateDays: Number(process.env.METABOLISM_HYGIENE_ROTATE_DAYS || 7),
+    metabolismStatusPollSec: Number(process.env.METABOLISM_STATUS_POLL_SEC || 60),
+    metabolismIdsToleranceUsd: Number(process.env.METABOLISM_IDS_TOLERANCE_USD || 0.01),
   };
 }
 

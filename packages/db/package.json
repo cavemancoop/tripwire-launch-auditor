@@ -15,7 +15,9 @@
     "postinstall": "prisma generate"
   },
   "dependencies": {
-    "@prisma/client": "catalog:"
+    "@prisma/client": "catalog:",
+    "canonicalize": "catalog:",
+    "viem": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",

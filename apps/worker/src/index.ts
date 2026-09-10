@@ -8,6 +8,7 @@ import { probeGetLogsRange } from '@launch-auditor/rpc-budget';
 import type { PublicClient } from 'viem';
 import { runCommitLoop } from './commit';
 import { loadEnv, type WorkerEnv } from './env';
+import { runLifecycleLoop } from './metabolism';
 import { runOutcomesLoop } from './outcomes';
 import { runPoller, type StopSignal } from './watcher/poller';
 import { rpc } from './watcher/rpc';
@@ -78,6 +79,15 @@ async function main(): Promise<void> {
   }
 
   void runOutcomesLoop(client, signal);
+
+  if (env.agentPrivateKey && process.env.TOKEN_ENCRYPTION_KEY) {
+    console.log('[metabolism] lifecycle loop enabled');
+    void runLifecycleLoop(signal);
+  } else {
+    console.log(
+      '[metabolism] lifecycle loop disabled (AGENT_EIP712_PRIVATE_KEY / TOKEN_ENCRYPTION_KEY not set)',
+    );
+  }
 
   console.log('[watcher] starting pool-creation poller for chain', client.chain?.id ?? '(env)');
   await runPoller(client, signal);

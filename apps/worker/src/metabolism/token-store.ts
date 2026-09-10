@@ -1,4 +1,10 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import type {
+  OAuthClientInformationFull,
+  OAuthTokens,
+} from '@modelcontextprotocol/sdk/shared/auth.js';
 
 /**
  * AES-256-GCM for the Orbio OAuth token at rest (`.env` `TOKEN_ENCRYPTION_KEY`,
@@ -47,4 +53,97 @@ export async function keyHashPrefix(token: string): Promise<string> {
 /** Generate a fresh 32-byte key, base64 — for `.env` setup. */
 export function generateEncryptionKey(): string {
   return randomBytes(32).toString('base64');
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Persisted OAuth store
+ *
+ * The Orbio MCP OAuth flow (spec §8.1 "clone, `pnpm orbio:auth`, `pnpm start`")
+ * produces three things the worker must keep between processes: the dynamically
+ * registered client, the PKCE verifier (only across the redirect), and the
+ * tokens. All three live in ONE JSON blob, encrypted as a unit with
+ * `encryptToken` above and written to a gitignored file. Nothing here is ever
+ * logged; callers get the decrypted blob in memory only.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+export interface OrbioOAuthBlob {
+  /** result of RFC 7591 dynamic client registration */
+  clientInformation?: OAuthClientInformationFull;
+  /** PKCE code_verifier — set only between authorize-redirect and code exchange */
+  codeVerifier?: string;
+  /** access + refresh tokens */
+  tokens?: OAuthTokens;
+  /**
+   * The gateway key minted by `orbio_create_key` (secret shown once). Persisted
+   * here — encrypted, same blob as the OAuth token — so the deep-dive (M6) can
+   * use it and a worker restart does not orphan the key. Cleared on revoke.
+   */
+  gatewayKey?: string;
+  /** `sk-orbio-…` prefix of `gatewayKey`, safe to log */
+  gatewayKeyPrefix?: string;
+  /** ISO timestamp of the last write, for the lifecycle log / diagnostics */
+  updatedAt?: string;
+}
+
+const STORE_FILENAME = 'token-store.enc.json';
+
+/** Walk up from `startDir` for the file that marks the monorepo root. */
+function findRepoRoot(startDir: string): string {
+  let dir = startDir;
+  for (let i = 0; i < 8; i += 1) {
+    if (existsSync(join(dir, 'pnpm-workspace.yaml'))) return dir;
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return startDir;
+}
+
+/**
+ * Absolute path to the encrypted store. `ORBIO_TOKEN_STORE` wins; otherwise
+ * `<repo-root>/.orbio/token-store.enc.json`.
+ */
+export function tokenStorePath(env: NodeJS.ProcessEnv = process.env): string {
+  const override = env.ORBIO_TOKEN_STORE?.trim();
+  if (override) return override;
+  return join(findRepoRoot(process.cwd()), '.orbio', STORE_FILENAME);
+}
+
+/** Read + decrypt the store. Returns an empty blob when the file is absent. */
+export function readOAuthBlob(path: string, key: Buffer): OrbioOAuthBlob {
+  if (!existsSync(path)) return {};
+  const wire = readFileSync(path, 'utf8').trim();
+  if (!wire) return {};
+  const blob = JSON.parse(decryptToken(wire, key)) as OrbioOAuthBlob;
+  return blob ?? {};
+}
+
+/** Encrypt + write the store, creating the directory. Mode 0600 where supported. */
+export function writeOAuthBlob(path: string, key: Buffer, blob: OrbioOAuthBlob): void {
+  mkdirSync(dirname(path), { recursive: true });
+  const wire = encryptToken(
+    JSON.stringify({ ...blob, updatedAt: new Date().toISOString() }),
+    key,
+  );
+  writeFileSync(path, wire + '\n', { encoding: 'utf8', mode: 0o600 });
+}
+
+/**
+ * Merge `patch` into the on-disk blob under a read-modify-write. Passing
+ * `codeVerifier: null` / `tokens: null` deletes that field (used by
+ * `invalidateCredentials`).
+ */
+export function updateOAuthBlob(
+  path: string,
+  key: Buffer,
+  patch: Partial<Record<keyof OrbioOAuthBlob, unknown>>,
+): OrbioOAuthBlob {
+  const current = readOAuthBlob(path, key);
+  const next: OrbioOAuthBlob = { ...current };
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === null) delete (next as Record<string, unknown>)[k];
+    else (next as Record<string, unknown>)[k] = v;
+  }
+  writeOAuthBlob(path, key, next);
+  return next;
 }

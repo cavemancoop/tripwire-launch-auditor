@@ -37,6 +37,60 @@ delayed job fills T+10m features. Launchpad attribution (`source`) is `raw` unti
 per-pad factory addresses in `packages/chain/config/chain.4663.json` are confirmed and
 their `verified` flags flipped.
 
+## Metabolism — Orbio MCP client + lifecycle runner (M5b-1 / M5b-2)
+
+The deep-dive's compute is funded through the Orbio MCP (spec §8). `apps/worker/src/metabolism/orbio-client.ts`
+is a Streamable-HTTP MCP client for `ORBIO_MCP_URL` with an OAuth 2.1 provider whose
+registration + tokens persist encrypted (AES-256-GCM, `TOKEN_ENCRYPTION_KEY`) via
+`token-store.ts` — no token in the DB, logs, or `.env`.
+
+```bash
+# one-time browser sign-in (wallet holding $ORBIO); stores an encrypted token
+pnpm orbio:auth
+
+# call each wrapper once against LIVE Orbio and record test/fixtures/orbio/*.json
+pnpm orbio:probe --yes
+```
+
+Five typed, zod-validated wrappers (the entire live tool set as of 2026-09-09 — the
+spec's `orbio_claim_key` / `orbio_rotate_key` do not exist):
+
+| wrapper | args | effect |
+|---|---|---|
+| `orbioGetBalance` | — | `balance.usd` = spendable quota (a key holds no money) |
+| `orbioCreateKey` | `{ label?: ≤60 }` | mints a key, secret **once**, retires any existing key (claim + rotate in one) |
+| `orbioGetKeyStatus` | — | `hasKey`, `prefix`, `createdAt`, `lastUsedAt`, base URLs |
+| `orbioRevokeKey` | — | disables the current key; **no** balance change / refund |
+| `orbioDeleteKey` | — | legacy only: disables the pre-gateway OpenRouter key, returns its unspent to balance — **one-way** |
+
+`pnpm orbio:probe` mutates live account state (three of the five calls) and refuses to
+run without `--yes`. Wrapper schemas are calibrated to the recorded fixtures and
+exercised offline by `apps/worker/test/orbio-client.test.ts`.
+
+### Lifecycle runner (M5b-2)
+
+`runLifecycleLoop` starts with the worker when both `AGENT_EIP712_PRIVATE_KEY` and
+`TOKEN_ENCRYPTION_KEY` are set. Every `METABOLISM_STATUS_POLL_SEC` (60s) it polls
+`orbio_get_balance` + `orbio_get_key_status`, runs the adapted §8 state machine
+(`decideLifecycle`, a pure function that drives `metabolism/state.ts`), acts via the
+wrappers, and appends signed rows to `lifecycle_log`.
+
+- **States:** `NO_KEY → ACTIVE → DRAINING`; hygiene `→ ROTATING → ACTIVE`;
+  `balance − RESERVE_USD ≤ 0 → STARVED` (no rotate — a fresh key spends the same
+  balance); ledger-vs-provider spend mismatch `→ REVOKING → NO_KEY` then **HALT**
+  (awaits a human `pnpm orbio:auth`).
+- **Config:** `RESERVE_USD` (3), `METABOLISM_LOW_WATER_USD` (2×reserve),
+  `METABOLISM_HYGIENE_ROTATE_DAYS` (7), `METABOLISM_IDS_TOLERANCE_USD` (0.01).
+- **Signed log:** one row per transition + one snapshot per tick. Each row's
+  `bodyHash = keccak256(RFC-8785(body))`, chained via `prevHash`, signed
+  (EIP-191) by the agent key. Hashing lives in `@launch-auditor/db`
+  (`lifecycleBodyHash` / `verifyLifecycleRows`) so the worker and API agree.
+- **Endpoint:** `GET /v1/lifecycle?limit=200` (spec §9, free) returns the rows
+  oldest→newest with a server-side `verified` boolean; the rows are also
+  independently verifiable offline.
+- The minted gateway key (secret) is persisted encrypted in the same token store
+  (`gatewayKey`) so a worker restart does not orphan it; the M6 deep-dive reads it.
+
 ## Prerequisites
 
 - Node >= 22 (24 works), pnpm 11

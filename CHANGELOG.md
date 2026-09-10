@@ -672,3 +672,120 @@ Gateway base URLs: OpenAI-shape `https://api.orbio.so/api/v1`, Anthropic-shape
   `pnpm install` (network) the user runs.
 - Not yet done: apply det_v0.2 base rates to `det_v0_1.json` + `pnpm commit:run --artifacts`
   (user open item #4).
+
+## M5b-1 — Orbio MCP client + `pnpm orbio:auth` + 5 typed wrappers (2026-09-09)
+
+Built against live Orbio. The user chose "run it live": `pnpm orbio:probe --yes`
+called every wrapper once, including the one-way `orbio_delete_key`. Fixtures are
+the real responses (secrets scrubbed); schemas are calibrated to them.
+
+### Added
+- Catalog (pinned exact, latest on npm 2026-09-09): `@modelcontextprotocol/sdk` `1.30.0`,
+  `zod` `4.6.1`. Added to `apps/worker` deps. **`pnpm install` is the user's to run.**
+- `apps/worker/src/metabolism/token-store.ts` — extended with a persisted OAuth store:
+  one AES-256-GCM blob (`{clientInformation, codeVerifier, tokens}`) at
+  `<repo-root>/.orbio/token-store.enc.json` (gitignored; `ORBIO_TOKEN_STORE` overrides).
+  `readOAuthBlob` / `writeOAuthBlob` / `updateOAuthBlob` (merge; `null` deletes a field).
+- `apps/worker/src/metabolism/orbio-client.ts`:
+  - `OrbioAuthProvider implements OAuthClientProvider` — file-backed, public client
+    (`token_endpoint_auth_method: none`), `redirectToAuthorization` throws
+    `OrbioInteractiveAuthRequired` unless an `onAuthorize` hook is wired.
+  - `connectOrbio()` — Streamable-HTTP transport to `ORBIO_MCP_URL`; non-interactive,
+    maps `UnauthorizedError` → `OrbioNotAuthedError` ("run `pnpm orbio:auth`").
+  - `extractToolPayload` / `callOrbioTool` — unwrap the MCP `CallToolResult`
+    (structuredContent → single JSON text block), throw on `isError`.
+  - 5 wrappers + zod schemas + `validate*` fns: `orbioGetBalance`, `orbioCreateKey`
+    (`label` ≤60 guard), `orbioGetKeyStatus`, `orbioRevokeKey`, `orbioDeleteKey`.
+    Schemas validate every field Metabolism reads and `.passthrough()` the rest.
+- `apps/worker/src/scripts/orbio-auth.ts` — `pnpm orbio:auth`: localhost callback
+  listener + browser open + `transport.finishAuth(code)` + a fresh verify connect.
+- `apps/worker/src/scripts/orbio-probe.ts` — `pnpm orbio:probe --yes`: calls each
+  wrapper once LIVE, writes `apps/worker/test/fixtures/orbio/<tool>.json` (secrets
+  redacted), writes the minted key to `.env` `ORBIO_API_KEY`, prints before/after
+  balance + key status. Refuses to run without `--yes` (3 of 5 calls mutate; one is
+  one-way). Call order: get_balance → get_key_status → create_key → revoke_key → delete_key.
+- `apps/worker/test/orbio-client.test.ts` — `extractToolPayload`, schema-vs-fixture
+  for all five, wrappers against a stub client, `OrbioAuthProvider` encrypted round-trip.
+- `.env.example` — M5 block reworked: `RESERVE_USD=3` (replaces `METABOLISM_RESERVE_R`
+  / `_CLAIM_SIZE_USD` per the 2026-09-09 decision), `ORBIO_OAUTH_CALLBACK_PORT`,
+  `ORBIO_TOKEN_STORE`, `ORBIO_API_KEY`. README "Metabolism" section.
+
+### Live probe — RAN (2026-09-09, user authed, all 5 wrappers called once)
+
+Real responses recorded in `apps/worker/test/fixtures/orbio/` (API-key material
+scrubbed: `key`/`prefix`/`legacy.label` → `sk-…-REDACTED`; wallet + USD figures kept).
+Schemas in `orbio-client.ts` were then tightened to the exact shapes:
+
+| tool | shape learned |
+|---|---|
+| `orbio_get_balance` | `wallets[]`, and `accrued/purchased/deposited/depositBalance/spent/claimed/balance` each `{usd:number, microUsd:string}`, plus `depositFrozen:bool` |
+| `orbio_get_key_status` | `hasKey`, `prefix`/`createdAt`/`lastUsedAt` (nullable), `baseUrl`, `anthropicBaseUrl`, `legacy: {label,limitUsd,usageUsd,remainingUsd,disabled,readable} \| null` |
+| `orbio_create_key` | `{ key, prefix, baseUrl, anthropicBaseUrl, replaced:bool }` — `replaced:true` = it retired the old key |
+| `orbio_revoke_key` | `{ revoked: true }` |
+| `orbio_delete_key` | `{ refunded: {usd,microUsd}, label }` |
+
+**Account state moved (irreversible parts as expected):**
+- balance.usd `24.011879` → `~32.15` (delete_key refunded the legacy key's `$8.137950`)
+- `accrued $209.69`, `claimed $150.68`, gateway `spent $0`
+- old gateway key `sk-orbio-HCfJKw` retired by `create_key`; the key it minted was
+  then **revoked** (step 4) — account now has **no gateway key**
+- legacy OpenRouter key `sk-or-v1-a62…aed` (`remainingUsd $8.14`) **deleted / disabled** — one-way
+- `.env` `ORBIO_API_KEY` blanked (probe wrote it, step 4 revoked it — it was dead on arrival)
+
+### Verify — GREEN
+`pnpm verify` passes: typecheck (all pkgs) + 155 worker tests (19 new in
+`orbio-client.test.ts`) + rpc-budget + api. Forge skipped (not on PATH, as usual).
+
+### Not done (later M5b)
+- M5b-2: 60s lifecycle runner + signed `lifecycle_log` writer + `GET /v1/lifecycle`.
+- M5b-3: `MetabolismSpend` ledger + IDS reconciler.
+- `@openrouter/agent` / `@openrouter/sdk` — deferred to M6 (not needed for M5b-1).
+
+## M5b-2 — lifecycle runner + signed lifecycle_log writer + GET /v1/lifecycle (2026-09-09)
+
+### Added
+- `apps/worker/src/metabolism/lifecycle-runner.ts`:
+  - `decideLifecycle(reading, cfg)` — **pure**; the adapted §8 machine from the
+    2026-09-09 decisions. Drives `metabolism/state.ts` (`checkAgainstStateMachine`
+    asserts every emitted `(from,event,to)` is a real `nextState` edge). Adaptations:
+    `balance − RESERVE_USD ≤ 0` → STARVED directly (never drain-then-rotate);
+    ROTATING is hygiene-only; ledger-vs-provider spend mismatch → REVOKING → NO_KEY
+    then **halt** (in-memory + reseeded from the last row's `idsMismatch`, cleared
+    only by a worker restart / manual re-auth); key present at Orbio but its secret
+    not in the store → revoke + remint.
+  - `LifecycleLogWriter` — hash-chained, agent-signed append to `lifecycle_log`.
+    Keeps `prevHash` in memory (seed via `.fromDb`), sets `createdAt` explicitly to
+    the signed `at` so rows re-verify. Injectable persistence (`LifecyclePersist`).
+  - `runLifecycleLoop(signal)` — 60s poll of `orbio_get_balance` +
+    `orbio_get_key_status`; one transition row per change + one snapshot per tick;
+    reconnects the MCP client on error. `METABOLISM_STATUS_POLL_SEC` cadence.
+- `packages/db/src/lifecycle-chain.ts` (new; `packages/db` gains `viem` + `canonicalize`):
+  `GENESIS_HASH`, `lifecycleBodyHash(body)` (keccak256 of RFC-8785 canonical JSON),
+  `verifyLifecycleRows(rows)` → `{ linked, startsAtGenesis, brokenAt, length }`.
+  One canonicalisation shared by the worker writer and the API. `metabolism/lifecycle.ts`
+  now delegates its hash to `lifecycleBodyHash` (behaviour unchanged; 17 metabolism tests still green).
+- `apps/api` (gains `@launch-auditor/db`): `GET /v1/lifecycle?limit=200` (spec §9) —
+  rows oldest→newest + server-side `verified` / `startsAtGenesis` / `brokenAt` +
+  a `verification` block describing the offline check. Injectable reader for tests.
+- `apps/worker/src/index.ts` — starts `runLifecycleLoop` when `AGENT_EIP712_PRIVATE_KEY`
+  and `TOKEN_ENCRYPTION_KEY` are both set (logged disabled otherwise).
+- `metabolism/state.ts` — added `ACTIVE + NO_CREDITS → STARVED` (the one edge the
+  adapted drain path needs; existing transitions untouched).
+- `token-store.ts` — `OrbioOAuthBlob` gains `gatewayKey` / `gatewayKeyPrefix`
+  (minted key persisted encrypted so a restart doesn't orphan it; cleared on revoke).
+- `env.ts` — `metabolismReserveUsd` (`RESERVE_USD`, 3), `metabolismLowWaterUsd`
+  (`METABOLISM_LOW_WATER_USD`, default 2×reserve), `metabolismHygieneRotateDays` (7),
+  `metabolismStatusPollSec` (60), `metabolismIdsToleranceUsd` (0.01). `.env.example` updated.
+- Tests: `apps/worker/test/lifecycle-runner.test.ts` (32 — every `decideLifecycle`
+  branch, state-machine agreement, writer hash-chain + signature recovery + tamper),
+  `apps/api/test/lifecycle.test.ts` (4 — serve/verify, tamper→`verified:false`, limit clamp, empty).
+
+### Verify — GREEN
+`pnpm verify`: typecheck (6 pkgs) + 187 worker tests + 5 api tests + rpc-budget/db/scoring/chain.
+No new migration — `lifecycle_log` already has every column (init migration); the runner
+sets `createdAt` explicitly rather than adding a signed-`at` column.
+
+### Not done (M5b-3)
+- `MetabolismSpend` ledger writes + the real IDS reconciler (per-key, not a global Σ).
+  M5b-2 wires the inputs: `ledgerSpendUsd` = `Σ MetabolismSpend.costUsd` (0 until M6),
+  `providerSpendUsd` = `orbio_get_balance.spent.usd`.

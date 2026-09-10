@@ -26,6 +26,8 @@
     "outcomes:run": "pnpm --filter @launch-auditor/worker outcomes:run",
     "scorer:run": "pnpm --filter @launch-auditor/worker scorer:run",
     "backfill": "pnpm --filter @launch-auditor/worker backfill",
+    "orbio:auth": "pnpm --filter @launch-auditor/worker orbio:auth",
+    "orbio:probe": "pnpm --filter @launch-auditor/worker orbio:probe",
     "contracts:build": "forge build --root packages/contracts",
     "contracts:test": "forge test --root packages/contracts",
     "contracts:deploy": "forge script packages/contracts/script/Deploy.s.sol --root packages/contracts --rpc-url robinhood --broadcast"
