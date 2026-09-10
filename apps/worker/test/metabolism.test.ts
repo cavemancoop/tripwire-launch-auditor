@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildLifecycleEntry,
   dailyDeepdiveBudget,
+  deepdiveRunGate,
   daysSinceLastManualAction,
   daysUnattended,
   decryptToken,
@@ -65,6 +66,28 @@ describe('dailyDeepdiveBudget (spec §8 policy)', () => {
   it('runsAffordable divides by the per-run cap', () => {
     expect(runsAffordable(1.0, 0.2)).toBe(5);
     expect(runsAffordable(0.19, 0.2)).toBe(0);
+  });
+});
+
+describe('deepdiveRunGate (M6 per-run hard gate)', () => {
+  const IN = { capPerRunUsd: 0.2, dailyCapUsd: 5, todaySpendUsd: 1, spendableUsd: 30 };
+
+  it('allows a run and caps its cost at the per-run limit', () => {
+    const g = deepdiveRunGate(IN);
+    expect(g).toMatchObject({ allowed: true, remainingTodayUsd: 4, maxRunCostUsd: 0.2 });
+  });
+  it('blocks when the daily cap is exhausted', () => {
+    const g = deepdiveRunGate({ ...IN, todaySpendUsd: 5 });
+    expect(g.allowed).toBe(false);
+    expect(g.reason).toMatch(/daily cap/);
+  });
+  it('blocks when the balance is at/below reserve', () => {
+    expect(deepdiveRunGate({ ...IN, spendableUsd: 0 }).allowed).toBe(false);
+    expect(deepdiveRunGate({ ...IN, spendableUsd: -1 }).reason).toMatch(/reserve/);
+  });
+  it('caps the run to the smallest of per-run / remaining-daily / spendable', () => {
+    expect(deepdiveRunGate({ ...IN, todaySpendUsd: 4.95 }).maxRunCostUsd).toBe(0.05);
+    expect(deepdiveRunGate({ ...IN, spendableUsd: 0.08 }).maxRunCostUsd).toBe(0.08);
   });
 });
 

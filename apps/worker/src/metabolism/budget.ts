@@ -55,6 +55,44 @@ export function runsAffordable(budgetUsd: number, capPerRunUsd: number): number 
   return Math.floor(budgetUsd / capPerRunUsd);
 }
 
+/**
+ * M6 — the hard per-run gate checked immediately before a deep-dive:
+ *  - the run's cap must fit under the remaining daily cap
+ *  - the run's cap must fit under the spendable balance (`balance − RESERVE_USD`,
+ *    the M5b-2 budget 3rd term)
+ * `maxRunCostUsd` is what to pass as `maxCost` to the agent loop.
+ */
+export interface DeepdiveRunGateInputs {
+  capPerRunUsd: number;
+  dailyCapUsd: number;
+  /** Σ MetabolismSpend.costUsd since 00:00 UTC */
+  todaySpendUsd: number;
+  /** orbio_get_balance.balance.usd − RESERVE_USD */
+  spendableUsd: number;
+}
+
+export interface DeepdiveRunGate {
+  allowed: boolean;
+  reason: string;
+  remainingTodayUsd: number;
+  maxRunCostUsd: number;
+}
+
+export function deepdiveRunGate(i: DeepdiveRunGateInputs): DeepdiveRunGate {
+  const remainingTodayUsd = round2(Math.max(0, i.dailyCapUsd - i.todaySpendUsd));
+  const maxRunCostUsd = round2(Math.max(0, Math.min(i.capPerRunUsd, remainingTodayUsd, i.spendableUsd)));
+  if (i.spendableUsd <= 0) {
+    return { allowed: false, reason: `balance is at or below the reserve (spendable $${round2(i.spendableUsd)})`, remainingTodayUsd, maxRunCostUsd };
+  }
+  if (remainingTodayUsd <= 0) {
+    return { allowed: false, reason: `daily cap $${round2(i.dailyCapUsd)} reached (spent $${round2(i.todaySpendUsd)})`, remainingTodayUsd, maxRunCostUsd };
+  }
+  if (maxRunCostUsd <= 0) {
+    return { allowed: false, reason: 'nothing affordable this run', remainingTodayUsd, maxRunCostUsd };
+  }
+  return { allowed: true, reason: `ok — up to $${maxRunCostUsd} this run`, remainingTodayUsd, maxRunCostUsd };
+}
+
 /** Days since the last manual credential action (spec §8 headline metric). */
 export function daysUnattended(lastManualActionAt: Date | null, now: Date = new Date()): number {
   if (!lastManualActionAt) return 0;

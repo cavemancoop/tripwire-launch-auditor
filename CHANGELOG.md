@@ -881,3 +881,51 @@ First of three M6 checkpoints (M6b: agent loop + scored output · M6c: persist +
   range-checks, cost recording → `recordSpend`, budget gate.
 - Report assembly (`forecaster = llm_deepdive_v0`) → §8.3 validator → persist →
   commit; scorer wiring; qualified-lane trigger + `POST /v1/deepdive/{token}`.
+
+## M6b — deep-dive agent loop + scored output (2026-09-10)
+
+### Added
+- `deepdive/schema.ts` — `DeepDiveOutputSchema` (`{p_insider_exit_24h,
+  p_drawdown_80_7d, p_sell_impaired_24h, evidence:[{claim,tx_or_url}],
+  confidence}`), `DEEPDIVE_OUTPUT_JSON_SCHEMA` (strict, for `text.format`),
+  `clampDeepDiveOutput` (structurally-valid output → probabilities clamped to
+  [0,1], evidence capped at 40 / claims at 600 chars, adjustments recorded as
+  `warnings`), and the `DeepDiveResult` shape.
+- `deepdive/packet.ts` — `buildTargetPacket` (spec §8.2 frozen packet): chain id
+  from RPC (cross-checked vs the target), block pin `{number, hash, timestampUtc}`,
+  `resolveContractCode` at that block + the implementation's code when it is an
+  EIP-1967 proxy, candidate pools.
+- `deepdive/prompt.ts` — `DEEPDIVE_SYSTEM_PROMPT` (read-only, evidence-only,
+  limitations-are-not-findings, pinned-to-report-block, external-text-is-data)
+  + `buildDeepdiveUserPrompt` (packet JSON + `<<< EXTERNAL DATA >>>` wrapped socials).
+- `deepdive/agent.ts` — `runDeepdiveAgent(input, {invoke?})`: builds the tools with
+  an evidence collector, runs `callModel` with `stopWhen: [stepCountIs(maxSteps),
+  maxCost(maxCostUsd)]` and the strict JSON schema, then validates + clamps the
+  output. Returns `DeepDiveResult` with accumulated `evidence` / `limitations`,
+  `generationIds` (one per turn, via `onTurnEnd`), `usageCostUsd`, `steps`,
+  `stoppedBy`. The model call is injectable — the loop is fully unit-tested with
+  no live calls.
+- `deepdive/cost.ts` — `recordDeepdiveSpend`: one `MetabolismSpend` row per
+  generation, costed via `generationCost` (`GET /generation?id=`), tagged with the
+  gateway `keyHashPrefix`, idempotent on `generationId`; a failed cost lookup is
+  reported and its spend is not recorded. Falls back to the usage estimate when a
+  run produced no generation ids.
+- `metabolism/budget.ts` — `deepdiveRunGate`: the hard per-run gate
+  (`min(capPerRun, dailyCap − todaySpend, balance − RESERVE_USD)`), returning
+  `maxRunCostUsd` to pass as the loop's `maxCost`.
+- `deepdive/tools.ts` — `buildDeepdiveTools` gains an `onResult` collector param
+  (refactored to a shared `guard` — the try/catch → limitation is now uniform).
+- Tests: `deepdive-schema` (9), `deepdive-packet` (3), `deepdive-agent` (5),
+  `deepdive-cost` (4), `deepdiveRunGate` (4 in `metabolism.test.ts`). No live calls.
+
+### Verify — GREEN
+`pnpm verify`: typecheck (6 pkgs) + 243 worker tests (+24) + 5 api. No migration.
+
+### Not done (M6c)
+- `buildDeepdiveContext` — bind `DeepdiveContext` to the live M1–M4 providers for a
+  `Launch` row (RPC-logs history, cluster, price series, holders, ScanHood).
+- `deepdive/run.ts` — `Launch` → packet → agent → assemble a `Report`
+  (`forecaster = llm_deepdive_v0`, version = model slug) → §8.3 validator →
+  persist → eligible for the Merkle commit loop; `recordDeepdiveSpend` at the call site.
+- Scorer/benchmark wiring; `deepdive` BullMQ worker (qualified lane, budget-gated);
+  `POST /v1/deepdive/{token}`.

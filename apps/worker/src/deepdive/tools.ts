@@ -58,7 +58,28 @@ const transferRow = (t: TokenTransfer) => ({
   txHash: t.txHash,
 });
 
-export function buildDeepdiveTools(ctx: DeepdiveContext) {
+/**
+ * Build the 8 client tools. `onResult` (M6b) receives every tool's
+ * {@link ToolOutput} so the agent can accumulate the evidence / limitations the
+ * model saw without re-deriving them.
+ */
+export function buildDeepdiveTools(ctx: DeepdiveContext, onResult?: (out: ToolOutput) => void) {
+  const emit = (out: ToolOutput): ToolOutput => {
+    onResult?.(out);
+    return out;
+  };
+  const guard = async (
+    name: string,
+    query: Record<string, unknown>,
+    produce: () => Promise<ToolOutput>,
+  ): Promise<ToolOutput> => {
+    try {
+      return emit(await produce());
+    } catch (e) {
+      return emit(limited(name, query, errText(e)));
+    }
+  };
+
   const addressTokenActivity = tool({
     name: 'address_token_activity',
     description:
@@ -69,9 +90,8 @@ export function buildDeepdiveTools(ctx: DeepdiveContext) {
       fromBlock: blockNum,
       toBlock: blockNum,
     }),
-    execute: async (p): Promise<ToolOutput> => {
-      const query = { ...p };
-      try {
+    execute: (p): Promise<ToolOutput> =>
+      guard('address_token_activity', { ...p }, async () => {
         const ts = await ctx.addressTokenActivity({
           address: p.address,
           token: p.token,
@@ -80,24 +100,20 @@ export function buildDeepdiveTools(ctx: DeepdiveContext) {
         });
         return ok({
           tool: 'address_token_activity',
-          query,
+          query: { ...p },
           source: 'rpc-logs',
           block: String(p.toBlock),
           value: { count: ts.length, transfers: ts.slice(0, MAX_ROWS).map(transferRow), truncated: ts.length > MAX_ROWS },
         });
-      } catch (e) {
-        return limited('address_token_activity', query, errText(e));
-      }
-    },
+      }),
   });
 
   const tokenTransfers = tool({
     name: 'token_transfers',
     description: 'All ERC-20 Transfer logs for one token contract in a block window (oldest first). Keep the window small.',
     inputSchema: z.object({ token: hexAddr, fromBlock: blockNum, toBlock: blockNum }),
-    execute: async (p): Promise<ToolOutput> => {
-      const query = { ...p };
-      try {
+    execute: (p): Promise<ToolOutput> =>
+      guard('token_transfers', { ...p }, async () => {
         const ts = await ctx.tokenTransfers({
           token: p.token,
           fromBlock: toBig(p.fromBlock),
@@ -105,15 +121,12 @@ export function buildDeepdiveTools(ctx: DeepdiveContext) {
         });
         return ok({
           tool: 'token_transfers',
-          query,
+          query: { ...p },
           source: 'rpc-logs',
           block: String(p.toBlock),
           value: { count: ts.length, transfers: ts.slice(0, MAX_ROWS).map(transferRow), truncated: ts.length > MAX_ROWS },
         });
-      } catch (e) {
-        return limited('token_transfers', query, errText(e));
-      }
-    },
+      }),
   });
 
   const clusterExpand = tool({
@@ -121,13 +134,12 @@ export function buildDeepdiveTools(ctx: DeepdiveContext) {
     description:
       'Expand the creator cluster: funder / sibling / direct-transfer-recipient addresses with a per-rule confidence. Rule 4 (first-ever inbound) is disabled (no index).',
     inputSchema: z.object({ creator: hexAddr }),
-    execute: async (p): Promise<ToolOutput> => {
-      const query = { ...p };
-      try {
+    execute: (p): Promise<ToolOutput> =>
+      guard('cluster_expand', { ...p }, async () => {
         const c = await ctx.clusterExpand({ creator: p.creator });
         return ok({
           tool: 'cluster_expand',
-          query,
+          query: { ...p },
           source: 'rpc-logs',
           block: null,
           value: {
@@ -135,28 +147,24 @@ export function buildDeepdiveTools(ctx: DeepdiveContext) {
             members: c.members.map((m) => ({ address: m.address, rule: m.rule, confidence: m.confidence, evidenceTx: m.evidenceTx })),
           },
         });
-      } catch (e) {
-        return limited('cluster_expand', query, errText(e));
-      }
-    },
+      }),
   });
 
   const priceSeries = tool({
     name: 'price_series',
     description: 'Trade prices from Swap logs for the primary pool over a block window (oldest first; token decimals NOT applied). Includes coverage gaps.',
     inputSchema: z.object({ poolId: z.string(), fromBlock: blockNum, toBlock: blockNum }),
-    execute: async (p): Promise<ToolOutput> => {
-      const query = { ...p };
-      try {
+    execute: (p): Promise<ToolOutput> =>
+      guard('price_series', { ...p }, async () => {
         const s = await ctx.priceSeries({
           poolId: p.poolId,
           fromBlock: toBig(p.fromBlock),
           toBlock: toBig(p.toBlock),
         });
-        const out = rows('price_series', [
+        return rows('price_series', [
           {
             tool: 'price_series',
-            query,
+            query: { ...p },
             source: 'rpc-logs',
             block: String(p.toBlock),
             value: {
@@ -166,24 +174,19 @@ export function buildDeepdiveTools(ctx: DeepdiveContext) {
             },
           },
         ]);
-        return out;
-      } catch (e) {
-        return limited('price_series', query, errText(e));
-      }
-    },
+      }),
   });
 
   const holderSnapshot = tool({
     name: 'holder_snapshot',
     description: 'Reconstructed holder stats at a block: holder count, cluster supply %, top-10 non-creator %. From Transfer logs (net balances).',
     inputSchema: z.object({ token: hexAddr, block: blockNum }),
-    execute: async (p): Promise<ToolOutput> => {
-      const query = { ...p };
-      try {
+    execute: (p): Promise<ToolOutput> =>
+      guard('holder_snapshot', { ...p }, async () => {
         const h = await ctx.holderSnapshot({ token: p.token, block: toBig(p.block) });
         return ok({
           tool: 'holder_snapshot',
-          query,
+          query: { ...p },
           source: 'rpc-logs',
           block: String(p.block),
           value: {
@@ -193,60 +196,45 @@ export function buildDeepdiveTools(ctx: DeepdiveContext) {
             totalSupply: h.totalSupply === null ? null : h.totalSupply.toString(),
           },
         });
-      } catch (e) {
-        return limited('holder_snapshot', query, errText(e));
-      }
-    },
+      }),
   });
 
   const contractCode = tool({
     name: 'contract_code',
     description: 'Runtime bytecode hash + size and EIP-1967 proxy resolution (implementation / admin / beacon) for an address, optionally pinned to a block.',
     inputSchema: z.object({ address: hexAddr, block: blockNum.optional() }),
-    execute: async (p): Promise<ToolOutput> => {
-      const query = { ...p };
-      try {
+    execute: (p): Promise<ToolOutput> =>
+      guard('contract_code', { ...p }, async () => {
         const c = await ctx.contractCode({
           address: p.address,
           block: p.block === undefined ? undefined : toBig(p.block),
         });
-        return ok({ tool: 'contract_code', query, source: 'rpc', block: c.block, value: c });
-      } catch (e) {
-        return limited('contract_code', query, errText(e));
-      }
-    },
+        return ok({ tool: 'contract_code', query: { ...p }, source: 'rpc', block: c.block, value: c });
+      }),
   });
 
   const scanhoodScan = tool({
     name: 'scanhood_scan',
     description: 'ScanHood token report: honeypot simulation (sellable), round-trip loss %, LP status, deployer history, verdict. Corroboration only.',
     inputSchema: z.object({ token: hexAddr }),
-    execute: async (p): Promise<ToolOutput> => {
-      const query = { ...p };
-      try {
+    execute: (p): Promise<ToolOutput> =>
+      guard('scanhood_scan', { ...p }, async () => {
         const s = await ctx.scanhoodScan({ token: p.token });
-        if (!s) return limited('scanhood_scan', query, 'ScanHood returned no data for this token');
-        return ok({ tool: 'scanhood_scan', query, source: 'scanhood', block: null, value: s });
-      } catch (e) {
-        return limited('scanhood_scan', query, errText(e));
-      }
-    },
+        if (!s) return limited('scanhood_scan', { ...p }, 'ScanHood returned no data for this token');
+        return ok({ tool: 'scanhood_scan', query: { ...p }, source: 'scanhood', block: null, value: s });
+      }),
   });
 
   const scanhoodQuote = tool({
     name: 'scanhood_quote',
     description: 'ScanHood simulated sell of `sizeUsdg` worth of the token: amountIn / amountOut / venue, or an error. Corroboration for sell-impact only.',
     inputSchema: z.object({ token: hexAddr, sizeUsdg: z.number().positive() }),
-    execute: async (p): Promise<ToolOutput> => {
-      const query = { ...p };
-      try {
+    execute: (p): Promise<ToolOutput> =>
+      guard('scanhood_quote', { ...p }, async () => {
         const q = await ctx.scanhoodQuote({ token: p.token, sizeUsdg: p.sizeUsdg });
-        if (!q) return limited('scanhood_quote', query, 'ScanHood returned no quote');
-        return ok({ tool: 'scanhood_quote', query, source: 'scanhood', block: null, value: q });
-      } catch (e) {
-        return limited('scanhood_quote', query, errText(e));
-      }
-    },
+        if (!q) return limited('scanhood_quote', { ...p }, 'ScanHood returned no quote');
+        return ok({ tool: 'scanhood_quote', query: { ...p }, source: 'scanhood', block: null, value: q });
+      }),
   });
 
   return [
