@@ -7,6 +7,7 @@ import {
 import { probeGetLogsRange } from '@launch-auditor/rpc-budget';
 import type { PublicClient } from 'viem';
 import { runCommitLoop } from './commit';
+import { runDeepdiveLoop, startDeepdiveWorker } from './deepdive';
 import { loadEnv, type WorkerEnv } from './env';
 import { runLifecycleLoop } from './metabolism';
 import { runOutcomesLoop } from './outcomes';
@@ -87,6 +88,15 @@ async function main(): Promise<void> {
     console.log(
       '[metabolism] lifecycle loop disabled (AGENT_EIP712_PRIVATE_KEY / TOKEN_ENCRYPTION_KEY not set)',
     );
+  }
+
+  if (env.openrouterModelDeepdive && env.agentPrivateKey) {
+    console.log(`[deepdive] enabled — model ${env.openrouterModelDeepdive}`);
+    const ddWorker = startDeepdiveWorker();
+    ddWorker.on('error', (err) => console.error('[deepdive] worker error', err));
+    void runDeepdiveLoop(signal);
+  } else {
+    console.log('[deepdive] disabled (OPENROUTER_MODEL_DEEPDIVE / AGENT_EIP712_PRIVATE_KEY not set)');
   }
 
   console.log('[watcher] starting pool-creation poller for chain', client.chain?.id ?? '(env)');

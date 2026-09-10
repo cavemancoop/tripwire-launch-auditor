@@ -50,6 +50,8 @@ export interface WorkerEnv {
   deepdiveCapPerRunUsd: number;
   /** daily cap fed to the Metabolism budget policy */
   deepdiveDailyCapUsd: number;
+  /** max tool-execution turns per deep-dive run */
+  deepdiveMaxSteps: number;
 }
 
 let dotenvLoaded = false;
@@ -128,6 +130,7 @@ export function loadEnv(): WorkerEnv {
     openrouterXTitle: process.env.OPENROUTER_X_TITLE || 'Launch Auditor',
     deepdiveCapPerRunUsd: Number(process.env.DEEPDIVE_CAP_PER_RUN_USD || 0.2),
     deepdiveDailyCapUsd: Number(process.env.DEEPDIVE_DAILY_CAP_USD || 5),
+    deepdiveMaxSteps: Number(process.env.DEEPDIVE_MAX_STEPS || 12),
   };
 }
 

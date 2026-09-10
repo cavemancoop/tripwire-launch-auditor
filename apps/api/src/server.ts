@@ -5,6 +5,7 @@ import {
   type LifecycleChainRow,
 } from '@launch-auditor/db';
 import Fastify, { type FastifyInstance } from 'fastify';
+import { makeDeepdiveEnqueuer, type DeepdiveEnqueuer } from './deepdive-queue';
 
 /** One `lifecycle_log` row as served by `GET /v1/lifecycle`. */
 export interface LifecycleApiRow extends LifecycleChainRow {
@@ -49,14 +50,20 @@ const prismaLifecycleReader: LifecycleReader = async (limit) => {
     .reverse();
 };
 
+const HEX_ADDR = /^0x[0-9a-fA-F]{40}$/;
+
 export interface BuildServerOptions {
   /** injectable for tests — defaults to a Prisma-backed reader */
   lifecycleReader?: LifecycleReader;
+  /** injectable for tests — defaults to a BullMQ producer on the `deepdive` queue */
+  enqueueDeepdive?: DeepdiveEnqueuer;
 }
 
 export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
   const app = Fastify({ logger: false });
   const readLifecycle = opts.lifecycleReader ?? prismaLifecycleReader;
+  let enqueueDeepdive = opts.enqueueDeepdive;
+  const getEnqueue = (): DeepdiveEnqueuer => (enqueueDeepdive ??= makeDeepdiveEnqueuer());
 
   app.get('/health', async () => ({
     ok: true,
@@ -91,6 +98,23 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
         chain: 'entries[i].prevHash === entries[i-1].bodyHash; entries[0].prevHash === genesisHash',
       },
     };
+  });
+
+  // spec §9 — `POST /v1/deepdive/{token}`: enqueue an on-demand `llm_deepdive_v0`
+  // run. Free during the contest; x402 / API-key gating is M7. The worker's
+  // `startDeepdiveWorker` resolves the token to a launch and scores it.
+  app.post('/v1/deepdive/:token', async (req, reply) => {
+    const { token } = req.params as { token: string };
+    if (!HEX_ADDR.test(token)) {
+      return reply.code(400).send({ error: 'token must be a 20-byte hex address' });
+    }
+    try {
+      const { id } = await getEnqueue()({ tokenAddress: token.toLowerCase(), trigger: 'on_demand' });
+      return reply.code(202).send({ queued: true, token: token.toLowerCase(), jobId: id ?? null });
+    } catch (err) {
+      req.log.error(err);
+      return reply.code(503).send({ error: 'could not enqueue the deep-dive' });
+    }
   });
 
   return app;

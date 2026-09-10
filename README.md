@@ -107,24 +107,31 @@ wrappers, and appends signed rows to `lifecycle_log`.
   signal → REVOKING → NO_KEY → HALT. Ledger-ahead (unsettled / over-recorded) is
   logged, never revoked.
 
-## LLM deep-dive `llm_deepdive_v0` (M6, in progress)
+## LLM deep-dive `llm_deepdive_v0` (M6)
 
-The Orbio-funded scored forecaster (spec §5). **M6a** shipped the plumbing:
+The Orbio-funded scored forecaster (spec §5). Pipeline (`apps/worker/src/deepdive/`):
 
-- `deepdive/openrouter.ts` — `@openrouter/agent` client on the Orbio gateway
-  (`ORBIO_GATEWAY_V1_URL`), key from the Metabolism store, attribution headers,
-  `generationCost(id)` for the authoritative per-call cost. `OPENROUTER_MODEL_DEEPDIVE`
-  must be a pinned exact slug (no `~latest` / `openrouter/auto`) — set it before any
-  scored run; `assertScoredModelSlug` enforces it.
-- `deepdive/tools.ts` — 8 read-only tools (`address_token_activity`, `token_transfers`,
-  `cluster_expand`, `price_series`, `holder_snapshot`, `contract_code`, `scanhood_scan`,
-  `scanhood_quote`) over a per-target `DeepdiveContext`, + `web_search` server tool.
-  Every result is an evidence row `{tool,query,value,source,block}`; a failed read is a
-  limitation, never a finding (§8.2).
-- `deepdive/contract-code.ts` — runtime code hash + EIP-1967 proxy resolution.
+1. **budget gate** — `deepdiveRunGate`: `min(DEEPDIVE_CAP_PER_RUN_USD, dailyCap −
+   today's spend, balance − RESERVE_USD)`; a run is skipped when nothing is affordable.
+2. **frozen packet** (`packet.ts`) — RPC chain-id cross-check, block pin
+   `{number, hash, timestampUtc}`, runtime code hash + EIP-1967 proxy resolution.
+3. **agent loop** (`agent.ts`) — `@openrouter/agent` `callModel` on the Orbio gateway,
+   8 read-only tools (`address_token_activity`, `token_transfers`, `cluster_expand`,
+   `price_series`, `holder_snapshot`, `contract_code`, `scanhood_scan`, `scanhood_quote`)
+   + `web_search`, `stopWhen: [stepCountIs, maxCost]`, strict JSON output
+   `{p_insider_exit_24h, p_drawdown_80_7d, p_sell_impaired_24h, evidence, confidence}`.
+   Every tool result is an evidence row; a failed read is a limitation, never a finding (§8.2).
+4. **assemble + sign + validate** (`report.ts`) — a `Report` with
+   `forecaster = llm_deepdive_v0`, EIP-712 signed, run through the §8.3 validator,
+   persisted like `det_v0` (so the §2 scorer picks it up with no special casing).
+5. **cost** (`cost.ts`) — one `MetabolismSpend` row per generation, costed from
+   `GET /generation?id=`, tagged with the gateway key.
 
-M6b (agent loop + scored output) and M6c (persist → §8.3 validate → commit → score,
-qualified-lane trigger + `POST /v1/deepdive/{token}`) are next.
+**Triggers:** `runDeepdiveLoop` sweeps qualified-lane launches (budget-gated);
+`POST /v1/deepdive/{token}` enqueues an on-demand run on the `deepdive` queue
+(free during the contest; x402 gating is M7). Both need `OPENROUTER_MODEL_DEEPDIVE`
+set to a **pinned exact slug** (no `~latest` / `openrouter/auto`) — `assertScoredModelSlug`
+refuses otherwise, since the model must be identifiable per report.
 
 ## Prerequisites
 

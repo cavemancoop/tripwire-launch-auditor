@@ -74,6 +74,9 @@ importers:
       '@launch-auditor/db':
         specifier: workspace:*
         version: link:../../packages/db
+      bullmq:
+        specifier: 'catalog:'
+        version: 5.81.4
       fastify:
         specifier: 'catalog:'
         version: 5.12.1

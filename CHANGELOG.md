@@ -929,3 +929,58 @@ First of three M6 checkpoints (M6b: agent loop + scored output · M6c: persist +
   persist → eligible for the Merkle commit loop; `recordDeepdiveSpend` at the call site.
 - Scorer/benchmark wiring; `deepdive` BullMQ worker (qualified lane, budget-gated);
   `POST /v1/deepdive/{token}`.
+
+## M6c — deep-dive persist + score + trigger (2026-09-10)
+
+Completes M6. `llm_deepdive_v0` now produces signed, §8.3-validated reports that
+the existing scorer picks up unchanged (it is report-backed like `det_v0`).
+
+### Added
+- `deepdive/report.ts` — `assembleDeepdiveReport` / `assembleDeepdiveReportSigned`:
+  the three deep-dive probabilities → `INSIDER_EXIT@24h` / `DRAWDOWN_80@7d` /
+  `SELL_IMPAIRED@24h`; `confidence` + `evidence` carried on the report; limitations,
+  chain-id mismatch and clamp warnings folded into `coverage`; block pin from the
+  packet; EIP-712 signed with the agent key; run through the §8.3 validator.
+- `deepdive/context.ts` — `buildDeepdiveContext(launch, {rpc, scanhoodBaseUrl}, cfg)`:
+  binds the 8 `DeepdiveContext` methods to the live M1–M4 providers
+  (`RpcLogsAddressHistory`, `getLogsChunked`, `buildCreatorCluster`,
+  `buildPriceSeries`, `computeHolderStats`, `resolveContractCode`, ScanHood).
+- `deepdive/run.ts`:
+  - `runDeepdive({launchId, trigger, reportBlock?, force?}, deps?)` — pinned-slug
+    check → budget gate (`deepdiveRunGate` with today's `MetabolismSpend` Σ + the
+    latest lifecycle snapshot's spendable balance) → `buildTargetPacket` →
+    `buildDeepdiveContext` → `runDeepdiveAgent` (maxCost = `min(gate, per-run cap)`)
+    → assemble + sign + validate → `persistLaunchReports` → `recordDeepdiveSpend`
+    tagged with the gateway `keyHashPrefix`. All I/O injectable — fully unit-tested.
+  - `sweepDeepdiveEligible` / `runDeepdiveLoop` — periodic scan of qualified-lane,
+    non-retrospective, T+10m-complete launches without an `llm_deepdive_v0` report;
+    stops early when the budget is exhausted.
+  - `startDeepdiveWorker` — BullMQ consumer of the `deepdive` queue for on-demand runs.
+- `apps/api` (gains `bullmq`): `POST /v1/deepdive/{token}` (spec §9) — validates the
+  address, enqueues `{tokenAddress, trigger:'on_demand'}` on the `deepdive` queue,
+  returns 202. Free during the contest; x402 / API-key gating is M7. Enqueuer
+  injectable (`apps/api/src/deepdive-queue.ts`).
+- `apps/worker/src/index.ts` — starts `runDeepdiveLoop` + `startDeepdiveWorker` when
+  `OPENROUTER_MODEL_DEEPDIVE` and `AGENT_EIP712_PRIVATE_KEY` are both set.
+- `report/types.ts` + `report/persist.ts` — `ReportContent` gains optional
+  `confidence` / `evidence`, persisted to the `Report` columns (the deterministic
+  forecasters omit them, so their canonical JSON / hashes are unchanged).
+- `env.ts` / `.env.example` — `DEEPDIVE_MAX_STEPS` (12).
+- Tests: `deepdive-report` (6), `deepdive-run` (5 — full pipeline, slug guard,
+  budget-blocked-no-agent-call, already-scored skip, maxCost cap), `deepdive-endpoint`
+  (3, api). No live calls.
+
+### Scoring
+No scorer change needed — `collectScoreRows` / `scoreBenchmark` are forecaster-agnostic
+and read the standard probability columns, so `llm_deepdive_v0` appears in the §2
+benchmark table and its comparisons vs `det_v0` automatically once reports resolve.
+
+### Verify — GREEN
+`pnpm verify`: typecheck (6 pkgs) + 254 worker tests (+11) + 8 api tests (+3). No migration.
+
+### Not done (later)
+- The scored model slug — set `OPENROUTER_MODEL_DEEPDIVE` to a pinned exact slug
+  before the first live run; `runDeepdive` refuses otherwise.
+- x402 / API-key gating on `POST /v1/deepdive` (M7).
+- The `evm-token-due-diligence` skill's eleven separately-rated surfaces (spec §8.2)
+  — v0 ships the three outcome probabilities + evidence ledger only.

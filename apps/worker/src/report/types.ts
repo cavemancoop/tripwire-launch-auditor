@@ -23,6 +23,10 @@ export interface ReportContent {
   probabilities: Partial<Record<OutcomeKey, number>>;
   /** feature names that were null when this report was produced (§8.2) */
   coverage: string[];
+  /** 0..1 self-rated confidence (M6 `llm_deepdive_v0`); omitted by the deterministic forecasters */
+  confidence?: number;
+  /** evidence ledger (M6 `llm_deepdive_v0`): {claim, tx_or_url} */
+  evidence?: { claim: string; tx_or_url: string | null }[];
 }
 
 export interface ReportDraft {

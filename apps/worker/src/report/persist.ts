@@ -43,6 +43,11 @@ export async function persistLaunchReports(
         pTradingAlive7d: cols.pTradingAlive7d,
         coverage: d.content.coverage as Prisma.InputJsonValue,
         blockPin: d.content.blockPin as unknown as Prisma.InputJsonValue,
+        confidence: d.content.confidence ?? null,
+        evidence:
+          d.content.evidence === undefined
+            ? undefined
+            : (d.content.evidence as unknown as Prisma.InputJsonValue),
         canonicalJson: d.canonicalJson,
         reportHash: d.reportHash,
         ...common,
