@@ -113,16 +113,25 @@ async function defaultLoadBudget(
     prisma.lifecycleLog.findFirst({
       where: { balanceUsd: { not: null } },
       orderBy: { createdAt: 'desc' },
-      select: { balanceUsd: true, billingStatus: true },
+      select: { balanceUsd: true, billingStatus: true, createdAt: true },
     }),
   ]);
   const spendableUsd =
     snap?.balanceUsd != null ? snap.balanceUsd - env.metabolismReserveUsd : env.deepdiveDailyCapUsd;
+
+  // M5c: if the lifecycle runner has not written a snapshot recently, the
+  // provider figure is stale and the safety loop is blind (e.g. the Orbio MCP
+  // session lapsed). Route conservatively: refuse inference rather than spend
+  // against a balance nobody is watching. Three missed polls is the threshold.
+  const staleAfterMs = env.metabolismStatusPollSec * 1000 * 3;
+  const snapAt = snap?.createdAt?.getTime() ?? 0;
+  const stale = now.getTime() - snapAt > staleAfterMs;
+
   return {
     todaySpendUsd,
     providerSpendTodayUsd: providerAgg._sum.providerDeltaUsd ?? 0,
     spendableUsd,
-    billingStatus: snap?.billingStatus ?? null,
+    billingStatus: stale ? 'stale' : (snap?.billingStatus ?? null),
   };
 }
 

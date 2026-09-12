@@ -88,10 +88,13 @@ export function deepdiveRunGate(i: DeepdiveRunGateInputs): DeepdiveRunGate {
   const spentTodayUsd = Math.max(i.todaySpendUsd, i.providerSpendTodayUsd ?? 0);
   const remainingTodayUsd = round2(Math.max(0, i.dailyCapUsd - spentTodayUsd));
   const maxRunCostUsd = round2(Math.max(0, Math.min(i.capPerRunUsd, remainingTodayUsd, i.spendableUsd)));
-  if (i.billingStatus === 'phantom' || i.billingStatus === 'anomaly') {
+  if (i.billingStatus === 'phantom' || i.billingStatus === 'anomaly' || i.billingStatus === 'stale') {
     return {
       allowed: false,
-      reason: `billing ${i.billingStatus} — inference paused until the lifecycle runner clears it`,
+      reason:
+        i.billingStatus === 'stale'
+          ? 'billing stale — the lifecycle runner has not reported a balance recently (Orbio session lapsed?); refusing to spend unwatched'
+          : `billing ${i.billingStatus} — inference paused until the lifecycle runner clears it`,
       remainingTodayUsd,
       maxRunCostUsd: 0,
     };
