@@ -36,8 +36,11 @@ const DEFAULT_CALLBACK_PORT = 8976;
 
 /** Thrown by {@link connectOrbio} when there is no usable token on disk. */
 export class OrbioNotAuthedError extends Error {
-  constructor(message = 'Orbio MCP is not authorized on this machine — run `pnpm orbio:auth` once.') {
-    super(message);
+  constructor(
+    message = 'Orbio MCP is not authorized on this machine — run `pnpm orbio:auth` once.',
+    options?: { cause?: unknown },
+  ) {
+    super(message, options);
     this.name = 'OrbioNotAuthedError';
   }
 }
@@ -61,6 +64,8 @@ export interface OrbioAuthProviderOptions {
    * instead of silently stalling.
    */
   onAuthorize?: (authorizationUrl: URL) => void | Promise<void>;
+  /** hand the SDK the refresh_token (default false — see `tokens()`) */
+  useRefreshToken?: boolean;
 }
 
 /**
@@ -93,7 +98,18 @@ export class OrbioAuthProvider implements OAuthClientProvider {
   }
 
   tokens(): OAuthTokens | undefined {
-    return readOAuthBlob(this.opts.storePath, this.opts.encryptionKey).tokens;
+    const t = readOAuthBlob(this.opts.storePath, this.opts.encryptionKey).tokens;
+    if (!t) return undefined;
+    // 2026-09-12: Orbio's refresh_token grant is rejected (invalid_grant). The
+    // SDK only refreshes after a 401, and on a refresh failure it WIPES the
+    // stored tokens and demands a browser — which destroyed a freshly issued
+    // token within a minute when a worker tick raced the interactive sign-in.
+    // Without a refresh_token the SDK skips straight to "needs authorization",
+    // leaves the access token in place, and the next tick simply uses it. Set
+    // ORBIO_OAUTH_USE_REFRESH=1 once Orbio's refresh works.
+    if (this.opts.useRefreshToken) return t;
+    const { refresh_token: _dropped, ...rest } = t;
+    return rest as OAuthTokens;
   }
 
   saveTokens(tokens: OAuthTokens): void {
@@ -101,11 +117,22 @@ export class OrbioAuthProvider implements OAuthClientProvider {
   }
 
   saveCodeVerifier(codeVerifier: string): void {
+    // A non-interactive process (the worker) can never finish an authorize —
+    // it throws OrbioInteractiveAuthRequired right after this — so persisting
+    // its verifier only overwrites the one `pnpm orbio:auth` is waiting to use,
+    // breaking the user's code exchange if a tick lands mid-sign-in. Keep it in
+    // memory for the SDK's own bookkeeping; write to disk only when interactive.
+    this.memoryVerifier = codeVerifier;
+    if (!this.opts.onAuthorize) return;
     updateOAuthBlob(this.opts.storePath, this.opts.encryptionKey, { codeVerifier });
   }
 
+  private memoryVerifier: string | undefined;
+
   codeVerifier(): string {
-    const v = readOAuthBlob(this.opts.storePath, this.opts.encryptionKey).codeVerifier;
+    const v = this.opts.onAuthorize
+      ? readOAuthBlob(this.opts.storePath, this.opts.encryptionKey).codeVerifier
+      : this.memoryVerifier;
     if (!v) throw new OrbioNotAuthedError('No PKCE code verifier on disk — restart `pnpm orbio:auth`.');
     return v;
   }
@@ -136,6 +163,7 @@ export function orbioAuthProviderFromEnv(
     storePath: tokenStorePath(env),
     callbackPort: Number(env.ORBIO_OAUTH_CALLBACK_PORT ?? DEFAULT_CALLBACK_PORT),
     onAuthorize: extra.onAuthorize,
+    useRefreshToken: /^(1|true|yes)$/i.test(env.ORBIO_OAUTH_USE_REFRESH ?? ''),
   });
 }
 
@@ -173,7 +201,16 @@ export async function connectOrbio(opts: {
     await client.connect(transport);
   } catch (err) {
     if (err instanceof UnauthorizedError || err instanceof OrbioInteractiveAuthRequired) {
-      throw new OrbioNotAuthedError();
+      // Say WHY, so the lifecycle log can tell "no token on disk" from "the
+      // server rejected the token" — they need different responses.
+      const hadToken = Boolean(authProvider.tokens ? await authProvider.tokens() : undefined);
+      const why = hadToken
+        ? 'stored token was rejected by the server (401) and refresh is disabled'
+        : 'no token on disk';
+      throw new OrbioNotAuthedError(
+        `Orbio MCP is not authorized on this machine (${why}) — run \`pnpm orbio:auth\` once.`,
+        { cause: err },
+      );
     }
     throw err;
   }

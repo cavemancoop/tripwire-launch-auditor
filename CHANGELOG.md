@@ -1061,3 +1061,34 @@ The serialized balance-delta probe was considered and rejected — right for
 ### Verify — GREEN
 `pnpm verify`: typecheck (6 pkgs) + 277 worker tests (+21: pricing 6, reconcile
 + gate 11, state 1, cost 7 rewritten, lifecycle 4 flipped) + 8 api. Migration applied.
+
+### M5c follow-up — the re-auth kept dying (2026-09-12, ~04:20 UTC)
+
+`pnpm orbio:auth` succeeded (its own verify connect passed) and the worker still
+reported `not authorized` every tick; the store held a registered client and a
+fresh PKCE verifier but **no tokens**, rewritten every 60s. Mechanism, from the
+SDK source: the transport calls `auth()` only after a **401**; `auth()` then sees
+a stored `refresh_token`, tries `refreshAuthorization`, Orbio answers
+`invalid_grant`, and the SDK calls `invalidateCredentials('tokens')` — wiping
+the token — before starting an authorize it cannot finish non-interactively.
+A worker tick whose in-flight request pre-dated the sign-in got a 401, then
+found and destroyed the user's fresh token. Same mechanism as the ~2.5h
+overnight lapse; only the trigger differed.
+
+Root cause: **Orbio's refresh_token grant is rejected.** Holding a refresh token
+makes every 401 destructive.
+
+- `OrbioAuthProvider.tokens()` withholds `refresh_token` from the SDK unless
+  `ORBIO_OAUTH_USE_REFRESH=1`. A 401 now means "re-auth needed"; the access
+  token stays on disk and a subsequent tick simply uses it, so a race with an
+  in-progress sign-in self-heals.
+- `saveCodeVerifier()` persists only when interactive (`onAuthorize` set); the
+  worker keeps its verifier in memory and no longer overwrites the one
+  `pnpm orbio:auth` is waiting to exchange.
+- `connectOrbio` says *why*: "no token on disk" vs "stored token was rejected
+  by the server (401)" — different failures need different responses.
+- `orbio:auth` opens the URL with `rundll32`, not `cmd /c start` (`&` split).
+- 7 tests (`orbio-auth-provider.test.ts`).
+
+Still true: without a working refresh, the session is bounded by the access
+token's lifetime. That bound is the number to publish, not something to hide.
