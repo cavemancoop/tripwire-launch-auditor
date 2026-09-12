@@ -161,6 +161,12 @@ export async function runDeepdiveAgent(
   const usage = await run.getUsage().catch(() => ({}) as Record<string, unknown>);
   const u = pickUsage(usage);
   const usageCostUsd = u.costUsd;
+  if (u.costUsd == null && u.promptTokens == null && u.completionTokens == null) {
+    // M5c diagnostic: the Orbio gateway's usage shape is not one of the known
+    // spellings. Log the keys (never the values) so the next live run tells us.
+    // eslint-disable-next-line no-console
+    console.warn(`[deepdive] usage object had no cost or token counts; keys: [${Object.keys(usage).join(', ')}]`);
+  }
 
   let parsed;
   try {
