@@ -2,11 +2,18 @@
  * M7 — periodic benchmark snapshot. `GET /v1/benchmark` is served by the API
  * process, which has no scoring compute of its own (deliberately — it's the
  * lightweight, publicly-facing half). The worker recomputes the benchmark
- * every tick and writes it to a shared file; the API just reads the latest
- * one. This is the fork-and-run model: one filesystem, no network hop.
+ * every tick; the API just reads the latest one.
+ *
+ * M9: also persisted to Postgres (`BenchmarkSnapshot`, a singleton row), not
+ * only the local file. Fork-and-run (spec §8.1, one machine) can share a
+ * filesystem, but on Railway api and worker are separate services with
+ * separate filesystems — Postgres is the one thing every deployment topology
+ * already shares. The file write stays (cheap, useful for local debugging);
+ * the DB write is what `GET /v1/benchmark` actually reads in every topology.
  */
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { prisma } from '@launch-auditor/db';
 import type { Benchmark } from '@launch-auditor/scoring';
 import { runScorer, type RunScorerOptions } from './benchmark';
 import type { StopSignal } from '../watcher/poller';
@@ -34,7 +41,17 @@ export interface ScorerLoopOptions {
   outFile?: string;
   /** injectable for tests — defaults to the real `runScorer` (hits Prisma) */
   scorer?: (opts: RunScorerOptions) => ReturnType<typeof runScorer>;
+  /** injectable for tests — defaults to a real Postgres upsert */
+  persist?: (snapshot: BenchmarkSnapshot) => Promise<void>;
 }
+
+const defaultPersist = async (snapshot: BenchmarkSnapshot): Promise<void> => {
+  await prisma.benchmarkSnapshot.upsert({
+    where: { key: 'latest' },
+    create: { key: 'latest', json: snapshot as never, generatedAt: new Date(snapshot.generatedAt) },
+    update: { json: snapshot as never, generatedAt: new Date(snapshot.generatedAt) },
+  });
+};
 
 /**
  * M8 — the dashboard's benchmark table wants a "retrospective" badge on
@@ -60,10 +77,11 @@ export async function runScorerLoop(
   const intervalMs = opts.intervalMs ?? 300_000; // 5 min — matches the commit cadence
   const outFile = opts.outFile ?? join(findRepoRoot(process.cwd()), 'data', 'benchmark.json');
   const scorer = opts.scorer ?? runScorer;
+  const persist = opts.persist ?? defaultPersist;
   mkdirSync(dirname(outFile), { recursive: true });
 
   // eslint-disable-next-line no-console
-  console.log(`[scorer] snapshot loop every ${intervalMs / 1000}s → ${outFile}`);
+  console.log(`[scorer] snapshot loop every ${intervalMs / 1000}s → Postgres + ${outFile}`);
   while (!signal.stopped) {
     try {
       const [both, live] = await Promise.all([scorer({}), scorer({ scope: 'live' })]);
@@ -72,10 +90,11 @@ export async function runScorerLoop(
         all: both.benchmark,
         live: live.benchmark,
       };
+      await persist(snapshot);
       mkdirSync(dirname(outFile), { recursive: true });
       writeFileSync(outFile, JSON.stringify(snapshot, null, 2));
       // eslint-disable-next-line no-console
-      console.log(`[scorer] snapshot: ${both.rowCount} rows (${live.rowCount} live) → ${outFile}`);
+      console.log(`[scorer] snapshot: ${both.rowCount} rows (${live.rowCount} live) → Postgres + ${outFile}`);
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[scorer] snapshot failed', err instanceof Error ? err.message : err);

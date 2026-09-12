@@ -6,10 +6,12 @@ import {
 } from '@launch-auditor/chain';
 import { probeGetLogsRange } from '@launch-auditor/rpc-budget';
 import type { PublicClient } from 'viem';
+import { runAlertLoop } from './alerts';
 import { startAssessWorker } from './assess';
 import { runCommitLoop } from './commit';
 import { runDeepdiveLoop, startDeepdiveWorker } from './deepdive';
 import { loadEnv, type WorkerEnv } from './env';
+import { startHealthServer } from './health-server';
 import { runLifecycleLoop } from './metabolism';
 import { runOutcomesLoop } from './outcomes';
 import { runScorerLoop } from './scorer';
@@ -63,6 +65,8 @@ async function main(): Promise<void> {
 
   await bootRpcBudget(client, env);
 
+  const healthServer = startHealthServer(env.healthPort);
+
   const worker = startFeaturesWorker(client);
   worker.on('ready', () => console.log('[worker] features queue ready'));
   worker.on('error', (err) => console.error('[worker] error', err));
@@ -73,6 +77,7 @@ async function main(): Promise<void> {
   const shutdown = async (): Promise<void> => {
     signal.stopped = true;
     await Promise.all([worker.close(), assessWorker.close()]);
+    healthServer.close();
     process.exit(0);
   };
   process.on('SIGINT', shutdown);
@@ -119,6 +124,19 @@ async function main(): Promise<void> {
     });
   } else {
     console.log('[telegram] free-feed poster disabled (TELEGRAM_BOT_TOKEN / TELEGRAM_CHANNEL_ID not set)');
+  }
+
+  if (env.telegramBotToken && env.telegramAlertsChatId) {
+    console.log('[alerts] operational alerts enabled ->', env.telegramAlertsChatId);
+    void runAlertLoop(signal, {
+      botToken: env.telegramBotToken,
+      chatId: env.telegramAlertsChatId,
+      intervalMs: env.alertsIntervalMs,
+      commitLagSec: env.alertsCommitLagSec,
+      watcherStalledSec: env.alertsWatcherStalledSec,
+    });
+  } else {
+    console.log('[alerts] operational alerts disabled (TELEGRAM_BOT_TOKEN / TELEGRAM_CHANNEL_ID not set)');
   }
 
   console.log('[watcher] starting pool-creation poller for chain', client.chain?.id ?? '(env)');

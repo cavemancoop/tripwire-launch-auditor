@@ -12,6 +12,7 @@ import { makeAssessEnqueuer, type AssessEnqueuer } from './assess-queue';
 import { budgetDisplay } from './budget-display';
 import { makeDeepdiveEnqueuer, type DeepdiveEnqueuer } from './deepdive-queue';
 import { loadApiEnv, type ApiEnv } from './env';
+import { formatPrometheus, prismaMetricsReader, type MetricsReader } from './metrics';
 import { mountMcp } from './mcp';
 import { verifyProof } from './merkle';
 
@@ -236,13 +237,22 @@ const prismaReportReader: ReportReader = async (token) => {
 };
 
 // ── GET /v1/benchmark ────────────────────────────────────────────────────
-// The worker recomputes the benchmark every 5 minutes and writes it to a
-// shared file (fork-and-run: one filesystem, no network hop). The API only
-// reads the latest snapshot — it does no scoring compute of its own.
+// The worker recomputes the benchmark every 5 minutes; the API only reads
+// the latest snapshot, never scores anything itself. M9: read from Postgres
+// (shared by every deployment topology, single-machine fork-and-run or
+// separate Railway services) rather than the local file the worker also
+// still writes — the file was only ever a shared filesystem's worth of
+// transport, and Railway's api/worker don't share one.
 
 export type BenchmarkReader = () => Promise<unknown | null>;
 
-const fileBenchmarkReader = (path: string): BenchmarkReader => async () => {
+export const prismaBenchmarkReader: BenchmarkReader = async () => {
+  const row = await prisma.benchmarkSnapshot.findUnique({ where: { key: 'latest' } });
+  return row?.json ?? null;
+};
+
+/** Kept for local/offline use (e.g. reading a `scorer:run --out` file directly). */
+export const fileBenchmarkReader = (path: string): BenchmarkReader => async () => {
   if (!existsSync(path)) return null;
   try {
     return JSON.parse(readFileSync(path, 'utf8'));
@@ -331,6 +341,7 @@ export interface BuildServerOptions {
   reportReader?: ReportReader;
   benchmarkReader?: BenchmarkReader;
   proofReader?: ProofReader;
+  metricsReader?: MetricsReader;
   /** injectable for tests — defaults to a BullMQ producer on the `deepdive` queue */
   enqueueDeepdive?: DeepdiveEnqueuer;
   /** injectable for tests — defaults to a BullMQ producer on the `assess` queue */
@@ -346,8 +357,9 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
   const readEstimator = opts.estimatorReader ?? prismaEstimatorReader;
   const readLaunchFeed = opts.launchFeedReader ?? prismaLaunchFeedReader;
   const readReport = opts.reportReader ?? prismaReportReader;
-  const readBenchmark = opts.benchmarkReader ?? fileBenchmarkReader(env.benchmarkFile);
+  const readBenchmark = opts.benchmarkReader ?? prismaBenchmarkReader;
   const readProof = opts.proofReader ?? prismaProofReader(env);
+  const readMetrics = opts.metricsReader ?? prismaMetricsReader;
 
   let enqueueDeepdive = opts.enqueueDeepdive;
   const getEnqueueDeepdive = (): DeepdiveEnqueuer => (enqueueDeepdive ??= makeDeepdiveEnqueuer());
@@ -369,6 +381,15 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
     ok: true,
     service: 'launch-auditor-api',
   }));
+
+  // M9 — Prometheus text exposition; also the source for the Telegram
+  // alert loop's four checks (apps/worker/src/alerts.ts queries Postgres
+  // directly, so this route and that loop can never disagree by construction).
+  app.get('/metrics', async (_req, reply) => {
+    const m = await readMetrics();
+    reply.header('content-type', 'text/plain; version=0.0.4; charset=utf-8');
+    return formatPrometheus(m);
+  });
 
   // spec §9 — free: the live feed. Every non-retrospective launch with its
   // latest det_v0 forecast and commit-proof pointer.

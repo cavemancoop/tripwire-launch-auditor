@@ -524,3 +524,20 @@ model WatcherCursor {
   @@unique([chainId, stream])
   @@map("watcher_cursors")
 }
+
+// ──────────────────────── Benchmark snapshot (M9) ───────────────────────
+// The worker recomputes the benchmark every 5 minutes and the API only ever
+// reads the latest one — fine on one machine sharing a filesystem
+// (fork-and-run, spec §8.1), but api and worker are separate Railway
+// services with separate filesystems. Postgres is the one thing every
+// deployment topology already shares, so it's the transport here, not a
+// volume. `key` is always "latest" (a singleton row) for now — one row is
+// all the API has ever needed.
+model BenchmarkSnapshot {
+  key         String   @id @default("latest")
+  json        Json
+  generatedAt DateTime
+  updatedAt   DateTime @updatedAt
+
+  @@map("benchmark_snapshots")
+}

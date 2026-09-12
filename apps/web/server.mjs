@@ -11,7 +11,10 @@ import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const PUBLIC_DIR = join(fileURLToPath(new URL('.', import.meta.url)), 'public');
-const PORT = Number(process.env.WEB_PORT || 3002);
+// Railway (and most PaaS) inject $PORT and expect the service to bind to it;
+// WEB_PORT is the local-dev override so it doesn't collide with the api/worker
+// processes' own $PORT when all three run on one machine (`pnpm start`).
+const PORT = Number(process.env.PORT || process.env.WEB_PORT || 3002);
 const HOST = process.env.HOST || '0.0.0.0';
 
 const TYPES = {

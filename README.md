@@ -239,6 +239,85 @@ The free feed is a worker loop (`apps/worker/src/telegram/poster.ts`): every
 never double-posts. Unset either env var and the poster logs once that it's
 disabled and does nothing — it never spams a channel nobody configured.
 
+## Deploy (M9, Railway)
+
+Three services (api, worker, web) plus Postgres and Redis add-ons, all in one
+Railway project. `railway.json` at the repo root describes all three
+services' build config as code — if your Railway version doesn't pick that up
+automatically, the manual steps below create the same thing by hand.
+
+### 1. Add the data stores
+In the Railway project: **+ New → Database → PostgreSQL**, then **+ New →
+Database → Redis**. Railway generates `DATABASE_URL` / `REDIS_URL` variables
+on those two services — reference them from api/worker as
+`${{Postgres.DATABASE_URL}}` / `${{Redis.REDIS_URL}}` (Railway's variable
+reference syntax) rather than copy-pasting the literal connection string, so
+they never drift if Railway rotates credentials.
+
+### 2. Create the three app services
+This repo is a pnpm monorepo — one GitHub repo, three Railway services, each
+built from its own Dockerfile with the **whole repo** as build context
+(needed because every app depends on `packages/*` via the workspace
+protocol). For each of `api`, `worker`, `web`:
+- **+ New → GitHub Repo** → this repo.
+- Service **Settings → Source**: leave **Root Directory** blank (repo root —
+  the build context every Dockerfile needs), set **Dockerfile Path** to
+  `apps/<name>/Dockerfile`, and confirm **Builder** is Dockerfile (not
+  Nixpacks/Railpack — auto-detect will fail on a 3-app monorepo, which is
+  exactly the "Railpack could not determine how to build the app" error this
+  project hit before the Dockerfiles existed).
+- **Settings → Networking**: only `api` and `web` need a public domain
+  (**Generate Domain**). `worker` needs no public networking — Railway's own
+  crash/restart supervision is enough for a background service; give it a
+  **private** domain only if you want to curl its `/health` from inside the
+  project.
+
+### 3. Environment variables
+Every service needs `DATABASE_URL` and `REDIS_URL` (variable references, see
+above). Beyond that:
+
+| Service | Needs | Where it comes from |
+|---|---|---|
+| worker | `RH_RPC_URL`, `CHAIN_ID` | your RPC provider |
+| worker | `AGENT_EIP712_PRIVATE_KEY`, `GAS_WALLET_PRIVATE_KEY` | the agent's own signing/gas keys (spec §6) |
+| worker | `COMMIT_REGISTRY_ADDRESS` | `forge script` deploy output |
+| worker | `TOKEN_ENCRYPTION_KEY` | `openssl rand -base64 32` |
+| worker | `OPENROUTER_MODEL_DEEPDIVE` | pinned exact slug — see `.env.example` for the current one and why |
+| worker | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHANNEL_ID` | `@BotFather` + the channel you add the bot to |
+| worker | `TELEGRAM_ALERTS_CHANNEL_ID` (optional) | a separate ops channel; unset falls back to the free-feed channel |
+| worker | `WORKER_PORT` (optional) | the worker's `/health` listener; defaults to 3010. **Not** `PORT` — this repo's `.env` already sets `PORT=3000` for the api, and both processes read the same file locally, so the worker deliberately doesn't fall back to a bare `$PORT` |
+| api | `RH_RPC_URL`, `CHAIN_ID`, `COMMIT_REGISTRY_ADDRESS` | same values as worker, read-only here (proof verification) |
+| api | `DESIGN_PARTNER_API_KEYS` (optional) | comma-separated, your own choice |
+| api | `PORT` | Railway injects this automatically |
+| web | `PORT` | Railway injects this automatically; `server.mjs` reads `PORT` first, then the local-dev-only `WEB_PORT` (default 3002) |
+
+Everything else in `.env.example` has a working default and doesn't need to
+be set for a first deploy. See `.env.example` itself for what each one does
+and, where relevant, why (e.g. the OAuth refresh finding, the RPC comparison
+table).
+
+After the first deploy: run `pnpm db:migrate` once against the production
+`DATABASE_URL` (from your own machine, with `DATABASE_URL` in your shell
+pointed at Railway's Postgres) to apply the schema, or wire it as a Railway
+deploy-time command — the migrations directory is already in the repo.
+
+### 4. Health, metrics, alerts
+- `GET /health` — on api and worker.
+- `GET /metrics` — on api; Prometheus text exposition (`launch_auditor_*`
+  gauges: watcher staleness, commit age, metabolism state, IDS/phantom flag,
+  24h launch/report counts). Point a Prometheus scrape config or Railway's
+  own metrics import at it.
+- Telegram alerts (`apps/worker/src/alerts.ts`): STARVED, IDS trip
+  (`idsMismatch` or a phantom-spend epoch), commit lag > 10 min, watcher
+  stalled > 5 min. Edge-triggered — one message when a check goes bad, one
+  recovery message when it clears, silence in between.
+
+### 5. Verify the deploy
+Per the build guide's own check: the production URL serves the dashboard;
+commits keep landing (`GET /v1/lifecycle` and the chain's own commit registry
+agree); then kill your **local** `pnpm start` instance and confirm the
+Railway server is the only one still committing (no double-commits, no gap).
+
 ## Verify
 
 ```bash
@@ -250,4 +329,4 @@ vitest suites, and prints a green summary. No Docker, no network, no paid APIs.
 
 ## Milestones
 
-Tracked in [`CHANGELOG.md`](./CHANGELOG.md). Current: **M8 — Dashboard + free feed**.
+Tracked in [`CHANGELOG.md`](./CHANGELOG.md). Current: **M9 — Railway deploy**.

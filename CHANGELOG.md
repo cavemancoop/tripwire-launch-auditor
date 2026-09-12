@@ -1232,3 +1232,83 @@ five other read-only tools (`blockscout`-equivalent address/tx history,
 `cluster_expand`, `price_series`, `holder_snapshot`, `contract_code`) are
 unaffected. Restoring web search is a roadmap item pending an Orbio-side fix
 or a provider/model combination confirmed to support it.
+
+## M9 — Railway deploy (2026-09-12)
+
+Dockerfiles, health/metrics endpoints, and Telegram ops alerts (build-guide
+M9). Also: the repo's GitHub remote (`cavemancoop/tripwire-launch-auditor`)
+held only a pre-code spec upload — force-pushed local `main` over it so
+Railway has something real to build (user-confirmed, private repo).
+
+### Added
+- `apps/{api,worker,web}/Dockerfile` — each built with the **repo root** as
+  context (Root Directory blank in Railway, Dockerfile Path
+  `apps/<name>/Dockerfile`): every app depends on `packages/*` via the pnpm
+  workspace protocol and needs the whole monorepo to install. No separate
+  compile stage — every app runs via `tsx` directly, so devDependencies
+  (tsx, typescript) are needed at runtime and the image isn't pruned to
+  `--prod`.
+- `.dockerignore` — excludes `node_modules`/`.git`/`data` from the build
+  context. Without it, `COPY . .` would have overwritten the image's
+  correctly-installed-for-linux `node_modules` with whatever's on the host
+  (caught this one before it shipped: a smoke-tested container ran the
+  Windows-built `@esbuild/win32-x64` binary and failed on alpine).
+- `railway.json` — multi-service config-as-code (api/worker/web, each its own
+  Dockerfile + restart policy). If a given Railway version doesn't pick up a
+  multi-service `railway.json` automatically, the README's deploy checklist
+  gives the same thing as manual per-service dashboard steps.
+- `GET /metrics` (api) — hand-rolled Prometheus text exposition (no
+  client library; the gauge set is small and stable): watcher staleness,
+  commit age, metabolism state, IDS-or-phantom flag, 24h launch/report
+  counts. Computed fresh per request from Postgres, same pattern as every
+  other `/v1/*` route.
+- `apps/worker/src/health-server.ts` — a dependency-free `/health` listener
+  for the worker (its loops need no public port to do their job; this is
+  just something to probe).
+- `apps/worker/src/alerts.ts` — `runAlertLoop`: every tick, evaluates
+  STARVED, IDS trip (`idsMismatch` or a phantom-spend epoch), commit lag
+  (>10min since the last commit batch formed), and watcher stalled (>5min
+  since the cursor advanced), and messages Telegram only on a state
+  transition (ok→bad once, bad→ok once, silent in between) — a steady-state
+  problem doesn't spam the channel every tick forever. Reuses M8's
+  `makeTelegramSender`; posts to `TELEGRAM_ALERTS_CHANNEL_ID`, falling back
+  to the free-feed channel if unset.
+- `BenchmarkSnapshot` (Postgres, singleton row) — the scorer loop now
+  persists there, not only to the local file. Fork-and-run (one machine,
+  spec §8.1) can share a filesystem; Railway's api and worker are separate
+  services with separate filesystems and no shared volume by default.
+  Postgres is the one thing every deployment topology already shares, so
+  `GET /v1/benchmark`'s default reader is now Postgres-backed
+  (`prismaBenchmarkReader`); the file write and `fileBenchmarkReader` stay
+  for local/offline use.
+- 24 new tests: `alerts.test.ts` (13), `metrics.test.ts` (5),
+  `budget-display.test.ts` carried over, `scorer-loop.test.ts` +2 for the
+  persist path.
+
+### Fixed
+- `pnpm --filter <app> start` as a container's `CMD` aborts on every
+  container start (not just at build time): pnpm's own dependency-status
+  check wants to prompt with no TTY present
+  (`ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`). All three Dockerfiles now
+  `CMD` straight into `tsx`/`node`, bypassing pnpm's wrapper entirely — each
+  app's own env/path helpers already walk up from cwd for `.env` /
+  `pnpm-workspace.yaml`, so running from `/app` (the repo root) works
+  unchanged.
+- A second, redundant `prisma generate` after `COPY . .` hit the same
+  no-TTY abort (via `pnpm exec`'s own dependency check) — removed; the
+  client generated during the earlier `pnpm install` (schema already
+  copied in first) was already correct.
+- Local port collision: this repo's `.env` sets `PORT=3000` for the api, and
+  the worker's new health server would have defaulted to the same `$PORT` —
+  both processes load the same `.env` file locally. The worker's listener
+  now reads `WORKER_PORT` (default 3010) and never falls back to bare
+  `PORT`. `apps/web/server.mjs` now reads `PORT` first (Railway's
+  convention) with `WEB_PORT` as the local-dev-only fallback.
+
+### Verify — GREEN
+`pnpm verify`: typecheck (7/8 — apps/web has no TS) + 306 worker tests (+11:
+alerts 13, scorer-loop persist +2, net of file reorganization) + 41 api
+tests (+15: metrics 5, budget-display 6 carried, benchmark-reader coverage
+unchanged, CORS/health 2, lifecycle-budget 2). All three Docker images built
+and smoke-tested locally (`docker run` + a real `/health` curl) before this
+was trusted.

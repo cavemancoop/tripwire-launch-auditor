@@ -50,6 +50,7 @@ describe('runScorerLoop', () => {
     outFile = join(tmpdir(), `benchmark-loop-test-${Date.now()}.json`);
     const signal: StopSignal = { stopped: false };
     const calls: Array<string | undefined> = [];
+    const persisted: BenchmarkSnapshot[] = [];
 
     await runScorerLoop(signal, {
       outFile,
@@ -60,6 +61,7 @@ describe('runScorerLoop', () => {
         const n = opts.scope === 'live' ? 80 : 120;
         return { benchmark: fakeBenchmark(n), rowCount: n };
       },
+      persist: async (s) => void persisted.push(s),
     });
 
     expect(calls).toEqual([undefined, 'live']);
@@ -69,6 +71,30 @@ describe('runScorerLoop', () => {
     expect(snapshot.all.sections[0]!.byOutcome['INSIDER_EXIT@24h']![0]!.n).toBe(120);
     expect(snapshot.live.sections[0]!.byOutcome['INSIDER_EXIT@24h']![0]!.n).toBe(80);
     expect(typeof snapshot.generatedAt).toBe('string');
+  });
+
+  it('persists the same snapshot to the injected store (M9: Postgres, not only the file)', async () => {
+    outFile = join(tmpdir(), `benchmark-loop-persist-test-${Date.now()}.json`);
+    const signal: StopSignal = { stopped: false };
+    const persisted: BenchmarkSnapshot[] = [];
+
+    await runScorerLoop(signal, {
+      outFile,
+      intervalMs: 1,
+      scorer: async (opts) => {
+        signal.stopped = true;
+        const n = opts.scope === 'live' ? 5 : 9;
+        return { benchmark: fakeBenchmark(n), rowCount: n };
+      },
+      persist: async (s) => void persisted.push(s),
+    });
+
+    expect(persisted).toHaveLength(1);
+    expect(persisted[0]!.all.sections[0]!.byOutcome['INSIDER_EXIT@24h']![0]!.n).toBe(9);
+    expect(persisted[0]!.live.sections[0]!.byOutcome['INSIDER_EXIT@24h']![0]!.n).toBe(5);
+
+    const fileSnapshot = JSON.parse(readFileSync(outFile, 'utf8')) as BenchmarkSnapshot;
+    expect(fileSnapshot).toEqual(persisted[0]);
   });
 
   it('creates the output directory if it does not exist yet', async () => {
@@ -83,6 +109,7 @@ describe('runScorerLoop', () => {
         signal.stopped = true;
         return { benchmark: fakeBenchmark(1), rowCount: 1 };
       },
+      persist: async () => {},
     });
 
     expect(existsSync(outFile)).toBe(true);

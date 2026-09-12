@@ -62,6 +62,15 @@ export interface WorkerEnv {
   telegramBotToken?: string;
   telegramChatId?: string;
   telegramPosterIntervalMs: number;
+  /** M9 ops alerts: falls back to telegramChatId so one channel is enough */
+  telegramAlertsChatId?: string;
+  alertsIntervalMs: number;
+  alertsCommitLagSec: number;
+  alertsWatcherStalledSec: number;
+  /** M9: the worker's own /health listener. Not read from bare $PORT — this
+   *  project's .env already sets PORT=3000 for the api, and both processes
+   *  load the same .env locally, so a bare $PORT fallback would collide. */
+  healthPort: number;
 }
 
 let dotenvLoaded = false;
@@ -147,6 +156,12 @@ export function loadEnv(): WorkerEnv {
     telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || undefined,
     telegramChatId: process.env.TELEGRAM_CHANNEL_ID || undefined,
     telegramPosterIntervalMs: Number(process.env.TELEGRAM_POSTER_INTERVAL_MS || 30_000),
+    telegramAlertsChatId:
+      process.env.TELEGRAM_ALERTS_CHANNEL_ID || process.env.TELEGRAM_CHANNEL_ID || undefined,
+    alertsIntervalMs: Number(process.env.ALERTS_INTERVAL_MS || 60_000),
+    alertsCommitLagSec: Number(process.env.ALERTS_COMMIT_LAG_SEC || 600),
+    alertsWatcherStalledSec: Number(process.env.ALERTS_WATCHER_STALLED_SEC || 300),
+    healthPort: Number(process.env.WORKER_PORT || 3010),
   };
 }
 
