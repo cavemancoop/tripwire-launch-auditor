@@ -27,8 +27,12 @@ const CLIENT_INFO = { name: 'launch-auditor', version: '0.0.0' } as const;
 function openInBrowser(url: string): void {
   try {
     if (process.platform === 'win32') {
-      // `start` is a cmd builtin; "" is the (empty) window title, then the URL.
-      spawn('cmd', ['/c', 'start', '', url], { stdio: 'ignore', detached: true }).unref();
+      // NOT `cmd /c start "" <url>`: Node leaves a URL unquoted (no spaces), so
+      // cmd treats every `&` in the query string as a command separator — the
+      // browser received `...?response_type=code` and Orbio replied "missing
+      // client_id" (2026-09-12). rundll32 takes the URL as one argument with no
+      // shell parsing.
+      spawn('rundll32', ['url.dll,FileProtocolHandler', url], { stdio: 'ignore', detached: true }).unref();
     } else if (process.platform === 'darwin') {
       spawn('open', [url], { stdio: 'ignore', detached: true }).unref();
     } else {
