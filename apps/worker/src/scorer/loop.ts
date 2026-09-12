@@ -5,10 +5,28 @@
  * every tick and writes it to a shared file; the API just reads the latest
  * one. This is the fork-and-run model: one filesystem, no network hop.
  */
-import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { existsSync, mkdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { runScorer } from './benchmark';
 import type { StopSignal } from '../watcher/poller';
+
+/**
+ * Walk up from `startDir` for the workspace root. The worker and the API run
+ * as two processes with two different cwds (`pnpm --filter X start` sets cwd
+ * to that package's directory) — a bare relative path like `data/benchmark.json`
+ * silently resolves to two different files, and the API never sees what the
+ * worker wrote. Anchor both to the same repo root instead.
+ */
+function findRepoRoot(startDir: string): string {
+  let dir = startDir;
+  for (let i = 0; i < 8; i += 1) {
+    if (existsSync(join(dir, 'pnpm-workspace.yaml'))) return dir;
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return startDir;
+}
 
 export interface ScorerLoopOptions {
   intervalMs?: number;
@@ -20,7 +38,7 @@ export async function runScorerLoop(
   opts: ScorerLoopOptions = {},
 ): Promise<void> {
   const intervalMs = opts.intervalMs ?? 300_000; // 5 min — matches the commit cadence
-  const outFile = opts.outFile ?? 'data/benchmark.json';
+  const outFile = opts.outFile ?? join(findRepoRoot(process.cwd()), 'data', 'benchmark.json');
   mkdirSync(dirname(outFile), { recursive: true });
 
   // eslint-disable-next-line no-console

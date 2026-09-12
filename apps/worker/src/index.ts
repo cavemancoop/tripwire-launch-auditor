@@ -85,7 +85,10 @@ async function main(): Promise<void> {
   }
 
   void runOutcomesLoop(client, signal);
-  void runScorerLoop(signal, { outFile: process.env.BENCHMARK_FILE || 'data/benchmark.json' });
+  // BENCHMARK_FILE, if set, must be an absolute path (or shared-relative-to-cwd
+  // path both processes agree on) — leave it unset and runScorerLoop anchors to
+  // the repo root, which is what the API's default also anchors to.
+  void runScorerLoop(signal, { outFile: process.env.BENCHMARK_FILE || undefined });
 
   if (env.agentPrivateKey && process.env.TOKEN_ENCRYPTION_KEY) {
     console.log('[metabolism] lifecycle loop enabled');
