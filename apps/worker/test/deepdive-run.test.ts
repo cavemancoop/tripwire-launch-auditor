@@ -126,6 +126,31 @@ describe('runDeepdive', () => {
     expect(runAgent).not.toHaveBeenCalled();
   });
 
+  // 2026-09-12: a dead model slug (no provider) made every call fail, and the
+  // pipeline still built + signed + persisted 168 all-zero "did not complete"
+  // reports as if they were real forecasts, before any commit or spend check.
+  it('a failed model run (stoppedBy: error) is never built, signed, or persisted', async () => {
+    const failedResult = (packet: TargetPacket): DeepDiveResult => ({
+      ...AGENT_RESULT(packet),
+      output: { p_insider_exit_24h: 0, p_drawdown_80_7d: 0, p_sell_impaired_24h: 0, evidence: [{ claim: 'model run did not complete', tx_or_url: null }], confidence: 0 },
+      warnings: ['model run failed: 404 model_not_available'],
+      generationIds: [],
+      usageCostUsd: null,
+      stoppedBy: 'error',
+    });
+    const persist = vi.fn();
+    const recordSpend = vi.fn();
+    const r = await runDeepdive(
+      { launchId: 'launch-1', trigger: 'qualified' },
+      deps({ runAgent: async ({ packet }) => failedResult(packet), persist, recordSpend }),
+    );
+    expect(r.ran).toBe(false);
+    expect(r.reason).toMatch(/model run failed/);
+    expect(r.reportHash).toBeUndefined();
+    expect(persist).not.toHaveBeenCalled();
+    expect(recordSpend).not.toHaveBeenCalled();
+  });
+
   it('skips a launch already scored by llm_deepdive_v0', async () => {
     const r = await runDeepdive(
       { launchId: 'launch-1', trigger: 'qualified' },

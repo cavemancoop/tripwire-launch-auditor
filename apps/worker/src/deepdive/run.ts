@@ -207,6 +207,18 @@ export async function runDeepdive(
     maxCostUsd: Math.min(gate.maxRunCostUsd, env.deepdiveCapPerRunUsd),
   });
 
+  // 2026-09-12: the model never ran (e.g. the pinned slug has no provider —
+  // `sakana/fugu-max` 404'd on every call). Every prior run still built, signed,
+  // and persisted+committed a report of all-zero probabilities with "model run
+  // did not complete" as its only evidence — 168 of them, now permanently
+  // on-chain. That is not a lie (the report says exactly what happened), but it
+  // is a placeholder wearing a forecast's signature. A run that never produced a
+  // measurement is not a scored pass: no report at all, same as every other
+  // early-exit in this function (missing launch, budget gate, already scored).
+  if (result.stoppedBy === 'error') {
+    return { ran: false, reason: `model run failed: ${result.warnings.join('; ') || 'unknown error'}` };
+  }
+
   const draft = await assembleDeepdiveReportSigned({
     chainId: launch.chainId,
     tokenAddress: launch.tokenAddress,
