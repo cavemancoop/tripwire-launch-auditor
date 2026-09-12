@@ -1,4 +1,5 @@
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { scoreBenchmark, type Benchmark } from '@launch-auditor/scoring';
 import { collectScoreRows, type CollectOptions } from './collect';
 
@@ -16,7 +17,10 @@ export async function runScorer(opts: RunScorerOptions = {}): Promise<{
 }> {
   const rows = await collectScoreRows({ scope: opts.scope });
   const benchmark = scoreBenchmark(rows, { thresholds: opts.thresholds });
-  if (opts.out) writeFileSync(opts.out, JSON.stringify(benchmark, null, 2));
+  if (opts.out) {
+    mkdirSync(dirname(opts.out), { recursive: true });
+    writeFileSync(opts.out, JSON.stringify(benchmark, null, 2));
+  }
   return { benchmark, rowCount: rows.length };
 }
 
