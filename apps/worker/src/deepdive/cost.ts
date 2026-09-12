@@ -27,8 +27,12 @@ export interface RecordDeepdiveSpendDeps {
 export interface RecordDeepdiveSpendResult {
   totalCostUsd: number;
   rows: Array<{ generationId: string; costUsd: number; id: string; deduped: boolean }>;
-  /** generations whose cost lookup failed — spend NOT recorded for these */
+  /** generations whose cost lookup failed */
   failed: string[];
+  /** first lookup error, for logging — the caller must not swallow this */
+  failureReason?: string;
+  /** true when the row(s) came from the streamed-usage estimate, not `GET /generation` */
+  estimated?: boolean;
 }
 
 export async function recordDeepdiveSpend(
@@ -52,8 +56,9 @@ export async function recordDeepdiveSpend(
     let costUsd: number;
     try {
       costUsd = id === 'usage-estimate' ? (input.result.usageCostUsd ?? 0) : await lookup(id);
-    } catch {
+    } catch (err) {
       out.failed.push(id);
+      out.failureReason ??= err instanceof Error ? err.message : String(err);
       continue;
     }
     const { id: rowId, deduped } = await recordSpend(
@@ -69,6 +74,29 @@ export async function recordDeepdiveSpend(
     out.rows.push({ generationId: id, costUsd, id: rowId, deduped });
     if (!deduped) out.totalCostUsd += costUsd;
   }
+
+  // Every per-generation lookup failed (the Orbio gateway does not proxy
+  // OpenRouter's `GET /generation` — it 404s), but the run still spent real
+  // credits. Record the streamed-usage estimate as a single row rather than
+  // leaving the ledger empty: an empty ledger reads as $0 spend to the IDS
+  // reconciler, which would trip REVOKING and halt the agent. Flagged as an
+  // estimate so the dashboard can say so.
+  if (out.rows.length === 0 && out.failed.length > 0 && input.result.usageCostUsd != null) {
+    const { id: rowId, deduped } = await recordSpend(
+      {
+        costUsd: input.result.usageCostUsd,
+        model: input.result.modelSlug,
+        keyHashPrefix: input.keyHashPrefix ?? null,
+        reportId: input.reportId ?? null,
+        generationId: null,
+      },
+      deps.store,
+    );
+    out.rows.push({ generationId: 'usage-estimate', costUsd: input.result.usageCostUsd, id: rowId, deduped });
+    out.estimated = true;
+    if (!deduped) out.totalCostUsd += input.result.usageCostUsd;
+  }
+
   out.totalCostUsd = Math.round(out.totalCostUsd * 1e6) / 1e6;
   return out;
 }

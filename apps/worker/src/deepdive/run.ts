@@ -200,6 +200,15 @@ export async function runDeepdive(
   const recordSpend = deps.recordSpend ?? recordDeepdiveSpend;
   const keyHashPrefix = deps.keyHashPrefix ?? defaultKeyHashPrefix(env);
   const spend = await recordSpend({ result, keyHashPrefix, reportId }, { env });
+  if (spend.failed.length > 0) {
+    // never silent: an unrecorded cost reads as $0 to the IDS reconciler
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[deepdive] cost lookup failed for ${spend.failed.length} generation(s)` +
+        (spend.estimated ? ' — recorded the streamed-usage estimate instead' : ' — NO spend recorded') +
+        (spend.failureReason ? `: ${spend.failureReason}` : ''),
+    );
+  }
 
   return {
     ran: true,

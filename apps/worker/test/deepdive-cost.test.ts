@@ -31,6 +31,46 @@ const result = (over: Partial<{ generationIds: string[]; usageCostUsd: number | 
 });
 
 describe('recordDeepdiveSpend', () => {
+  // The Orbio gateway 404s OpenRouter's `GET /generation`, so every per-generation
+  // lookup throws. An empty ledger reads as $0 spend to the IDS reconciler, which
+  // trips REVOKING and halts the agent — so fall back to the streamed estimate.
+  it('falls back to the usage estimate when every cost lookup fails', async () => {
+    const store = fakeStore();
+    const out = await recordDeepdiveSpend(
+      { result: result({ usageCostUsd: 0.031 }), keyHashPrefix: 'kp1', reportId: 'r1' },
+      {
+        store,
+        lookupCost: async (id) => {
+          throw new Error(`generation lookup ${id}: HTTP 404`);
+        },
+      },
+    );
+    expect(out.failed).toEqual(['gen-a', 'gen-b']);
+    expect(out.failureReason).toMatch(/404/);
+    expect(out.estimated).toBe(true);
+    expect(out.totalCostUsd).toBeCloseTo(0.031, 6);
+    expect(store.rows).toHaveLength(1);
+    expect(store.rows[0]).toMatchObject({ costUsd: 0.031, model: 'x/y', keyHashPrefix: 'kp1', generationId: null });
+  });
+
+  it('records nothing when lookups fail and there is no usage estimate to fall back on', async () => {
+    const store = fakeStore();
+    const out = await recordDeepdiveSpend(
+      // built inline: the `result()` helper's `??` would coerce a null estimate
+      { result: { generationIds: ['gen-a', 'gen-b'], modelSlug: 'x/y', usageCostUsd: null } },
+      {
+        store,
+        lookupCost: async () => {
+          throw new Error('HTTP 404');
+        },
+      },
+    );
+    expect(out.failed).toHaveLength(2);
+    expect(out.estimated).toBeUndefined();
+    expect(out.totalCostUsd).toBe(0);
+    expect(store.rows).toHaveLength(0);
+  });
+
   it('records one MetabolismSpend row per generation, costed via lookup', async () => {
     const store = fakeStore();
     const costs: Record<string, number> = { 'gen-a': 0.012, 'gen-b': 0.008 };
