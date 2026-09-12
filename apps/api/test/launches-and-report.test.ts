@@ -100,6 +100,9 @@ describe('POST /v1/assess/:token', () => {
         designPartnerApiKeys: ['secret-key'],
         benchmarkFile: 'data/benchmark.json',
         priceDeepdiveUsdg: 0.1,
+        deepdiveDailyCapUsd: 5,
+        deepdiveCapPerRunUsd: 0.2,
+        metabolismReserveUsd: 3,
       },
     });
     const res = await app.inject({

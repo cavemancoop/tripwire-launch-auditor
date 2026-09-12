@@ -311,6 +311,11 @@ model Report {
   commit        Commit? @relation(fields: [commitId], references: [id])
   merkleLeafHash String?
 
+  // M8 — free-feed poster (spec build-guide M8): set once this report's
+  // qualified-launch summary + proof link has been posted to Telegram, so a
+  // worker restart never double-posts.
+  telegramPostedAt DateTime?
+
   @@index([chainId, tokenAddress, reportTime])
   @@index([launchId, forecaster])
   @@index([forecaster, trigger, createdAt])

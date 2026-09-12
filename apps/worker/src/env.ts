@@ -58,6 +58,10 @@ export interface WorkerEnv {
   deepdiveDailyCapUsd: number;
   /** max tool-execution turns per deep-dive run */
   deepdiveMaxSteps: number;
+  /** M8 free feed: unset disables the poster entirely (no channel to spam) */
+  telegramBotToken?: string;
+  telegramChatId?: string;
+  telegramPosterIntervalMs: number;
 }
 
 let dotenvLoaded = false;
@@ -140,6 +144,9 @@ export function loadEnv(): WorkerEnv {
     deepdiveCapPerRunUsd: Number(process.env.DEEPDIVE_CAP_PER_RUN_USD || 0.2),
     deepdiveDailyCapUsd: Number(process.env.DEEPDIVE_DAILY_CAP_USD || 5),
     deepdiveMaxSteps: Number(process.env.DEEPDIVE_MAX_STEPS || 12),
+    telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || undefined,
+    telegramChatId: process.env.TELEGRAM_CHANNEL_ID || undefined,
+    telegramPosterIntervalMs: Number(process.env.TELEGRAM_POSTER_INTERVAL_MS || 30_000),
   };
 }
 

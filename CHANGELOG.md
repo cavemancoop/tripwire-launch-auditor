@@ -1099,3 +1099,90 @@ makes the *first* one destructive for whichever process loses.
 
 Still true: without a working refresh, the session is bounded by the access
 token's lifetime. That bound is the number to publish, not something to hide.
+
+## M7 — API endpoints, MCP server, fork-and-run (2026-09-12)
+
+Implements spec §9 and §8.1. x402 payment gating deferred again (still no time
+left after the free endpoints) — API-key echo only, nothing gated yet.
+
+### Added
+- `apps/api` routes: `GET /v1/launches`, `GET /v1/report/:token`,
+  `POST /v1/assess/:token` (enqueues a one-shot on-demand det_v0/heuristic_v1
+  report — the spec's recurring "daily re-scores for 7 days" is v0.3 Watch,
+  not this), `POST /v1/deepdive/:token`, `GET /v1/benchmark`,
+  `GET /v1/proof/:hash` (Merkle-verified locally, best-effort on-chain
+  confirmation via `BatchCommitted` — an RPC hiccup is `onChainConfirmed: null`,
+  never `false`), `GET /v1/lifecycle` (unchanged from M5b-2/M5c, now alongside
+  the rest of the surface).
+- `POST /mcp` — stateless `StreamableHTTPServerTransport` + `McpServer`
+  exposing `get_report`, `get_benchmark`, `request_deepdive`: the same reads
+  and enqueues, no HTTP client needed.
+- `apps/worker/src/assess.ts` + a BullMQ `assess` queue/worker, mirroring the
+  deep-dive producer/consumer split (API enqueues, worker owns chain access).
+- `scripts/start.mjs` — `pnpm start` spawns worker + api as children, forwards
+  prefixed stdio, brings both down together on SIGINT or either child's exit.
+  No new dependency.
+- `apps/api/src/merkle.ts` — `verifyProof`/`hashPair` duplicated from
+  `apps/worker/src/commit/merkle.ts` (apps can't import each other's `src/`;
+  ~10 stable lines, not worth a shared package).
+- README: fork-and-run (3 steps) + the full endpoint table.
+
+### Fixed post-merge (same day)
+- `.gitignore`'s `data/` pattern had a trailing same-line `#` comment, which
+  git does not treat as a comment — the literal pattern never matched anything.
+- The worker (`scorer/loop.ts`) and API (`env.ts`) both defaulted
+  `benchmarkFile` to the bare relative `data/benchmark.json`; `pnpm --filter X
+  start` sets cwd to that package's own directory, so the two processes wrote
+  and read two different files and `GET /v1/benchmark` could never see what the
+  worker had written. Both now anchor to the repo root via a duplicated
+  `findRepoRoot()` (walks up for `pnpm-workspace.yaml`).
+- `runScorer()` (`scorer/benchmark.ts`) called `writeFileSync` with no
+  preceding `mkdirSync`, unlike the loop version — the one-shot `scorer:run`
+  CLI script ENOENT'd on a repo that had never had a long-running loop create
+  `data/` first. Added the same `mkdirSync(dirname(...), { recursive: true })`.
+
+## M8 — Dashboard and free feed (2026-09-12)
+
+Build-guide M8: a static dashboard + a Telegram poster, free feed for launches
+past the API. No new claims beyond spec §0.
+
+### Added
+- `apps/web` — no build step, no framework: a dependency-free static file
+  server (`node:http`) serving plain HTML/CSS/JS. Every number renders from a
+  raw API field or a labelled derivation; nothing is invented when data is
+  thin (renders "n/a" / an explicit note instead). Panels, in spec §0.1's
+  order: Metabolism (active key remaining, credits accrued/hr — derived from
+  the lifecycle log's `balanceUsd` samples, spend/report, rotations/
+  revocations, billing status, today's budget, chain-verified span); two P&L
+  boxes (standalone cash cost vs. Orbio-subsidized, trailing 24h — the spec
+  §0.1 red-team question answered in dollars); live launches; benchmark
+  (sample sizes, insufficient-sample and "+N retro" badges, beat claims); key
+  lifecycle timeline.
+- `GET /v1/lifecycle` gains a `budget` block: `apps/api/src/budget-display.ts`
+  duplicates the worker's live deep-dive gate formula (same treatment as
+  `merkle.ts`) so the dashboard shows the real gate, not a guess — labelled
+  where its window (trailing 24h) differs from the gate's own (since 00:00
+  UTC).
+- CORS: wildcard `Access-Control-Allow-Origin` on every response (every
+  endpoint here is public read or free-during-contest write) so the dashboard,
+  served from its own port, can call the api client-side.
+- The benchmark snapshot loop now runs the scorer twice per tick (`scope:
+  'both'` and `'live'`) and writes `{ generatedAt, all, live }`. The gap in a
+  cell's `n` between the two is exactly its retrospective (backfill)
+  contribution — a "+N retro" badge with no scorer-package changes. The
+  one-shot `scorer:run` CLI is unaffected (still writes a raw `Benchmark`).
+- `apps/worker/src/telegram/poster.ts` — every `TELEGRAM_POSTER_INTERVAL_MS`,
+  posts each qualified-lane, committed, not-yet-posted `det_v0` report's
+  summary + Blockscout proof link to `TELEGRAM_CHANNEL_ID`, then stamps
+  `Report.telegramPostedAt` (new column) so a restart never double-posts. A
+  send failure is logged and left unmarked (retried next sweep); it never
+  blocks the rest of the batch. Unset bot token / channel id → logs disabled
+  once, does nothing.
+
+### Verify — GREEN
+`pnpm verify`: typecheck (7 of 8 packages — apps/web has no TS) + 292 worker
+tests (+7: 5 telegram-poster, 2 scorer-loop) + 36 api tests (+10: 6
+budget-display, 2 CORS, 2 lifecycle-budget). Manually verified end-to-end
+against a live `pnpm start` instance in a real browser: all five panels render
+real data, sticky-header scrollable tables, benchmark retro badges match the
+worker's actual all-vs-live cell counts.

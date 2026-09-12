@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Launch Auditor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark">◈</span>
+    <div>
+      <h1>Launch Auditor</h1>
+      <p class="tagline">Precommitted exit-risk oracle &middot; Robinhood Chain (4663)</p>
+    </div>
+  </div>
+  <div class="api-config">
+    <label for="api-base">api</label>
+    <input id="api-base" type="text" spellcheck="false" autocomplete="off" />
+    <button id="api-reload" type="button">reload</button>
+    <span id="api-status" class="status-dot" title="api reachability"></span>
+  </div>
+</header>
+
+<main>
+
+  <section class="panel" id="panel-metabolism">
+    <h2><span class="panel-index">01</span> Metabolism</h2>
+    <p class="panel-sub">The agent's own Orbio key lifecycle &mdash; spec &sect;0.1: zero-billing compute, credit-driven throughput, unattended continuity.</p>
+    <div class="metric-grid" id="metabolism-metrics"></div>
+    <div class="subgrid">
+      <div class="card" id="budget-card">
+        <h3>Today's deep-dive budget</h3>
+        <div id="budget-body">&mdash;</div>
+      </div>
+      <div class="card" id="continuity-card">
+        <h3>Unattended continuity</h3>
+        <div id="continuity-body">&mdash;</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel" id="panel-pnl">
+    <h2><span class="panel-index">02</span> P&amp;L &mdash; trailing 24h</h2>
+    <p class="panel-sub">The Orbio-specific test (spec &sect;0.1): would this run the same on a plain OpenRouter account with no token?</p>
+    <div class="pnl-grid">
+      <div class="card pnl-card" id="pnl-standalone">
+        <h3>Standalone (cash cost)</h3>
+        <div class="pnl-body">&mdash;</div>
+      </div>
+      <div class="card pnl-card" id="pnl-orbio">
+        <h3>Orbio-subsidized (credits used)</h3>
+        <div class="pnl-body">&mdash;</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel" id="panel-launches">
+    <h2><span class="panel-index">03</span> Live launches</h2>
+    <p class="panel-sub">Latest non-retrospective launches with the <code>det_v0</code> forecast and its commit proof.</p>
+    <div class="table-wrap">
+      <table id="launches-table">
+        <thead>
+          <tr>
+            <th>token</th><th>source</th><th>lane</th><th>launched</th>
+            <th>P(insider exit, 24h)</th><th>P(drawdown&ge;80%, 24h)</th><th>P(still trading, 24h)</th>
+            <th>proof</th>
+          </tr>
+        </thead>
+        <tbody id="launches-body"><tr><td colspan="8" class="empty">loading&hellip;</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel" id="panel-benchmark">
+    <h2><span class="panel-index">04</span> Benchmark</h2>
+    <p class="panel-sub">AUROC / Brier Skill vs. baselines, per outcome &middot; horizon &middot; forecaster. Minimum <span id="min-metrics">100</span> resolved to show a metric, <span id="min-claims">200</span> (with &ge;30 positives) to claim a beat. "+N retro" = backfill launches folded into the all-inclusive column beyond what live traffic alone has resolved.</p>
+    <div class="table-wrap" id="benchmark-wrap"><p class="empty">loading&hellip;</p></div>
+  </section>
+
+  <section class="panel" id="panel-lifecycle">
+    <h2><span class="panel-index">05</span> Key lifecycle</h2>
+    <p class="panel-sub">The signed <code>lifecycle_log</code> chain &mdash; every row's <code>bodyHash</code> folds the previous row's, so tampering is detectable, not just promised.</p>
+    <div class="chain-status" id="chain-status">&mdash;</div>
+    <div class="table-wrap">
+      <table id="lifecycle-table">
+        <thead><tr><th>at</th><th>transition</th><th>reason</th><th>balance</th><th>key remaining</th><th>billing</th></tr></thead>
+        <tbody id="lifecycle-body"><tr><td colspan="6" class="empty">loading&hellip;</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <p>Committed before outcome &middot; reproducible scorer. Nothing stronger claimed.</p>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

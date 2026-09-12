@@ -9,6 +9,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { createPublicClient, http, parseAbiItem, type Hex } from 'viem';
 import { checkDesignPartner } from './auth';
 import { makeAssessEnqueuer, type AssessEnqueuer } from './assess-queue';
+import { budgetDisplay } from './budget-display';
 import { makeDeepdiveEnqueuer, type DeepdiveEnqueuer } from './deepdive-queue';
 import { loadApiEnv, type ApiEnv } from './env';
 import { mountMcp } from './mcp';
@@ -353,6 +354,17 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
   let enqueueAssess = opts.enqueueAssess;
   const getEnqueueAssess = (): AssessEnqueuer => (enqueueAssess ??= makeAssessEnqueuer());
 
+  // M8 — the dashboard (apps/web) is served from its own port and reads these
+  // endpoints client-side. Everything here is public read data (or free,
+  // rate-unlimited writes during the contest — spec §9), so a wildcard is the
+  // honest CORS policy: no cookies, no credentials, nothing origin-scoped.
+  app.addHook('onRequest', async (req, reply) => {
+    reply.header('Access-Control-Allow-Origin', '*');
+    reply.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+    reply.header('Access-Control-Allow-Headers', 'Content-Type,X-Api-Key');
+    if (req.method === 'OPTIONS') reply.code(204).send();
+  });
+
   app.get('/health', async () => ({
     ok: true,
     service: 'launch-auditor-api',
@@ -464,6 +476,16 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
     const [entries, estimator] = await Promise.all([readLifecycle(limit), readEstimator()]);
     const check = verifyLifecycleRows(entries);
 
+    const latest = entries[entries.length - 1];
+    const budget = budgetDisplay({
+      dailyCapUsd: env.deepdiveDailyCapUsd,
+      capPerRunUsd: env.deepdiveCapPerRunUsd,
+      spentTrailing24hUsd: Math.max(estimator.providerSpend24hUsd, estimator.estimatedSpend24hUsd),
+      keyRemainingUsd: latest?.keyRemainingUsd ?? latest?.balanceUsd ?? 0,
+      reserveUsd: env.metabolismReserveUsd,
+      billingStatus: latest?.billingStatus ?? estimator.latest?.billingStatus ?? null,
+    });
+
     return {
       count: entries.length,
       limit,
@@ -473,6 +495,7 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
       brokenAt: check.brokenAt,
       entries,
       estimator,
+      budget,
       verification: {
         body: 'keccak256(RFC8785({at,prevState,newState,reason,isSnapshot,keyHashPrefix,balanceUsd,keyRemainingUsd,reserveUsd,ledgerSpendUsd,providerSpendUsd,idsMismatch,prevHash}))',
         signature: 'agent key EIP-191 personal_sign of bodyHash (raw 32 bytes)',

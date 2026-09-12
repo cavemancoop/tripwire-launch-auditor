@@ -35,6 +35,13 @@ export interface ApiEnv {
   benchmarkFile: string;
   revenueAddress?: `0x${string}`;
   priceDeepdiveUsdg: number;
+  /** M8 dashboard — display-only mirror of the worker's live deep-dive budget
+   *  gate (apps/worker/src/metabolism/budget.ts), duplicated rather than
+   *  imported across the app boundary (same treatment as merkle.ts). Reads
+   *  the same env vars so it never drifts from what actually governs spend. */
+  deepdiveDailyCapUsd: number;
+  deepdiveCapPerRunUsd: number;
+  metabolismReserveUsd: number;
 }
 
 export function loadApiEnv(): ApiEnv {
@@ -52,5 +59,8 @@ export function loadApiEnv(): ApiEnv {
       process.env.BENCHMARK_FILE || join(findRepoRoot(process.cwd()), 'data', 'benchmark.json'),
     revenueAddress: (process.env.REVENUE_ADDRESS || undefined) as `0x${string}` | undefined,
     priceDeepdiveUsdg: Number(process.env.PRICE_DEEPDIVE_USDG || 0.1),
+    deepdiveDailyCapUsd: Number(process.env.DEEPDIVE_DAILY_CAP_USD || 5),
+    deepdiveCapPerRunUsd: Number(process.env.DEEPDIVE_CAP_PER_RUN_USD || 0.2),
+    metabolismReserveUsd: Number(process.env.RESERVE_USD || 3),
   };
 }

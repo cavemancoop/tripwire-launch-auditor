@@ -13,6 +13,7 @@ import { spawn } from 'node:child_process';
 const procs = [
   { name: 'worker', cmd: 'pnpm', args: ['--filter', '@launch-auditor/worker', 'start'] },
   { name: 'api', cmd: 'pnpm', args: ['--filter', '@launch-auditor/api', 'start'] },
+  { name: 'web', cmd: 'pnpm', args: ['--filter', '@launch-auditor/web', 'start'] },
 ].map(({ name, cmd, args }) => {
   const p = spawn(cmd, args, { stdio: 'pipe', shell: process.platform === 'win32' });
   const prefix = `[${name}] `;

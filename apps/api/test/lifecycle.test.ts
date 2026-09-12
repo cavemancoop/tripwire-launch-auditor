@@ -1,6 +1,18 @@
 import { describe, expect, it, vi } from 'vitest';
 import { GENESIS_HASH, lifecycleBodyHash } from '@launch-auditor/db';
 import { buildServer, type EstimatorSummary, type LifecycleApiRow } from '../src/server';
+import type { ApiEnv } from '../src/env';
+
+const BASE_ENV: ApiEnv = {
+  rpcUrl: '',
+  chainId: 4663,
+  designPartnerApiKeys: [],
+  benchmarkFile: '/dev/null/unused.json',
+  priceDeepdiveUsdg: 0.1,
+  deepdiveDailyCapUsd: 5,
+  deepdiveCapPerRunUsd: 0.2,
+  metabolismReserveUsd: 3,
+};
 
 // every test below stubs this — the default hits Prisma, and these tests are
 // about the hash chain / limit clamping, not the M5c estimator block.
@@ -104,6 +116,53 @@ describe('GET /v1/lifecycle', () => {
     const app = buildServer({ lifecycleReader: async () => [], estimatorReader: async () => estimator });
     const body = (await app.inject({ method: 'GET', url: '/v1/lifecycle' })).json();
     expect(body.estimator).toEqual(estimator);
+    await app.close();
+  });
+
+  // M8 — the dashboard's Metabolism panel reads this to show "today's budget
+  // as a function of trailing-24h accrual" without re-deriving the worker's
+  // gate formula itself.
+  it('carries a budget block mirroring the live deep-dive gate', async () => {
+    const rows = chain(1);
+    rows[0] = { ...rows[0]!, keyRemainingUsd: 4, billingStatus: 'exact' };
+    const estimator: EstimatorSummary = {
+      windows: 3,
+      providerSpend24hUsd: 1.2,
+      estimatedSpend24hUsd: 1.1,
+      requests24h: 9,
+      meanAbsDiscrepancyPct: 8.3,
+      latest: { at: '2026-09-12T04:00:00.000Z', billingStatus: 'exact', discrepancyPct: 8.3, reconciliationFactor: 1.08 },
+    };
+    const app = buildServer({
+      lifecycleReader: async () => rows,
+      estimatorReader: async () => estimator,
+      env: BASE_ENV,
+    });
+    const body = (await app.inject({ method: 'GET', url: '/v1/lifecycle' })).json();
+    expect(body.budget).toEqual({
+      dailyCapUsd: 5,
+      capPerRunUsd: 0.2,
+      spentTrailing24hUsd: 1.2,
+      remainingTodayUsd: 3.8,
+      spendableKeyUsd: 1,
+      maxRunCostUsd: 0.2,
+      bindingConstraint: 'cap_per_run',
+      gateClosedByBilling: false,
+    });
+    await app.close();
+  });
+
+  it('closes the budget gate when billing status is anomaly or phantom', async () => {
+    const rows = chain(1);
+    rows[0] = { ...rows[0]!, keyRemainingUsd: 4, billingStatus: 'phantom' };
+    const app = buildServer({
+      lifecycleReader: async () => rows,
+      estimatorReader: async () => EMPTY_ESTIMATOR,
+      env: BASE_ENV,
+    });
+    const body = (await app.inject({ method: 'GET', url: '/v1/lifecycle' })).json();
+    expect(body.budget.gateClosedByBilling).toBe(true);
+    expect(body.budget.maxRunCostUsd).toBe(0);
     await app.close();
   });
 });

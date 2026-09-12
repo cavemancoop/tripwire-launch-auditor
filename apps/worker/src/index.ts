@@ -13,6 +13,7 @@ import { loadEnv, type WorkerEnv } from './env';
 import { runLifecycleLoop } from './metabolism';
 import { runOutcomesLoop } from './outcomes';
 import { runScorerLoop } from './scorer';
+import { runTelegramPosterLoop } from './telegram/poster';
 import { runPoller, type StopSignal } from './watcher/poller';
 import { rpc } from './watcher/rpc';
 import { startFeaturesWorker } from './watcher/t10';
@@ -106,6 +107,18 @@ async function main(): Promise<void> {
     void runDeepdiveLoop(signal);
   } else {
     console.log('[deepdive] disabled (OPENROUTER_MODEL_DEEPDIVE / AGENT_EIP712_PRIVATE_KEY not set)');
+  }
+
+  if (env.telegramBotToken && env.telegramChatId) {
+    console.log('[telegram] free-feed poster enabled ->', env.telegramChatId);
+    void runTelegramPosterLoop(signal, {
+      botToken: env.telegramBotToken,
+      chatId: env.telegramChatId,
+      chainId: env.chainId,
+      intervalMs: env.telegramPosterIntervalMs,
+    });
+  } else {
+    console.log('[telegram] free-feed poster disabled (TELEGRAM_BOT_TOKEN / TELEGRAM_CHANNEL_ID not set)');
   }
 
   console.log('[watcher] starting pool-creation poller for chain', client.chain?.id ?? '(env)');

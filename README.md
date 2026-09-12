@@ -178,11 +178,14 @@ pnpm start
 ```
 
 `pnpm start` runs the watcher, the metabolism lifecycle loop, the commit loop, the
-outcome resolver, the deep-dive worker, a periodic benchmark snapshot, and the API —
-all from one command (`scripts/start.mjs`; no extra dependency, just two child
-processes sharing this terminal). From here the agent mints and manages its own
-Orbio gateway key without further human input; see [Metabolism](#metabolism--orbio-mcp-client--lifecycle-runner--spend-ledger-m5b-1--m5b-2--m5b-3)
+outcome resolver, the deep-dive worker, the free-feed Telegram poster, a periodic
+benchmark snapshot, the API, and the dashboard — all from one command
+(`scripts/start.mjs`; no extra dependency, just child processes sharing this
+terminal). From here the agent mints and manages its own Orbio gateway key without
+further human input; see [Metabolism](#metabolism--orbio-mcp-client--lifecycle-runner--spend-ledger-m5b-1--m5b-2--m5b-3)
 below for what "without further human input" is currently bounded by.
+
+Open the dashboard at `http://localhost:3002` (`WEB_PORT`) once everything is up.
 
 ## API (M7, spec §9)
 
@@ -195,7 +198,7 @@ deferred — see spec §9, "payments only if time remains"). Base URL: `http://l
 | `GET /v1/report/:token` | Every forecaster's latest forecast for a token, with evidence and proof status. |
 | `POST /v1/assess/:token` | Enqueues one on-demand report for an already-indexed token, any age. *Scope note:* the spec's "daily re-scores for 7 days" is the recurring/event-aware re-scoring layer (v0.3 Watch, spec §10.1) — not built; this triggers a single immediate report. |
 | `POST /v1/deepdive/:token` | Enqueues an on-demand `llm_deepdive_v0` run. |
-| `GET /v1/benchmark` | The public benchmark table (all forecasters, sample sizes). Served from a snapshot the worker recomputes every 5 minutes (`data/benchmark.json`) — the API does no scoring compute itself. |
+| `GET /v1/benchmark` | The public benchmark table (all forecasters, sample sizes). Served from a snapshot the worker recomputes every 5 minutes (`data/benchmark.json`) — the API does no scoring compute itself. Shape (M8): `{ generatedAt, all, live }`, both full `Benchmark` objects (`scope: 'both'` vs `'live'`); the dashboard diffs a cell's `n` between the two to badge how much of it is retrospective (backfill). |
 | `GET /v1/proof/:hash` | A report's Merkle proof, verified locally, plus a best-effort on-chain confirmation of its batch root (an RPC hiccup reports `onChainConfirmed: null`, never `false`). |
 | `GET /v1/lifecycle` | The signed key-lifecycle log, independently verifiable, plus (M5c) the metabolism's own cost-forecast error over the trailing 24h. |
 | `POST /mcp` | MCP server (Streamable HTTP, stateless): `get_report`, `get_benchmark`, `request_deepdive` — the same endpoints with no HTTP client needed. |
@@ -203,6 +206,38 @@ deferred — see spec §9, "payments only if time remains"). Base URL: `http://l
 `x-api-key` (checked against `DESIGN_PARTNER_API_KEYS`) is accepted and echoed back as
 `designPartner: true|false` on `/v1/assess` and `/v1/deepdive` — it doesn't gate
 anything yet, since nothing is priced yet.
+
+## Dashboard + free feed (M8)
+
+`apps/web` is a static dashboard — no build step, no framework, just a
+dependency-free static file server (`node:http`) serving plain HTML/CSS/JS that
+fetches the API client-side. Panels, in the order spec §0.1 prioritizes them:
+
+1. **Metabolism** — active key remaining, credits accrued/hr (derived from the
+   signed lifecycle log's `balanceUsd` samples), spend per report, rotation/
+   revocation counts, billing status, today's deep-dive budget (mirrors the
+   worker's live gate — `apps/api/src/budget-display.ts`, duplicated the same
+   way `merkle.ts` is), and the lifecycle chain's verified span.
+2. **P&L, trailing 24h** — two boxes, standalone (what the same compute would
+   have cost on a plain OpenRouter account — the spec §0.1 red-team question,
+   answered in dollars) and Orbio-subsidized (what was actually spent: $0 cash).
+3. **Live launches** — `GET /v1/launches`, with each `det_v0` forecast and a
+   direct Blockscout link to its commit proof.
+4. **Benchmark** — `GET /v1/benchmark`, sample sizes, an "insufficient sample"
+   badge, a "+N retro" badge per cell, and "beats X p=…" where a claim clears
+   the bar.
+5. **Key lifecycle** — the signed `lifecycle_log` chain, most recent first.
+
+No number here is invented: everything is either a raw API field or a labelled
+derivation (e.g. "credits accrued/hr" sums positive `balanceUsd` deltas over
+however many samples the log currently holds, and says so).
+
+The free feed is a worker loop (`apps/worker/src/telegram/poster.ts`): every
+`TELEGRAM_POSTER_INTERVAL_MS` it posts each qualified-launch `det_v0` report
+(once it has a commit, so the proof link resolves) to `TELEGRAM_CHANNEL_ID` via
+`TELEGRAM_BOT_TOKEN`, and stamps the report's `telegramPostedAt` so a restart
+never double-posts. Unset either env var and the poster logs once that it's
+disabled and does nothing — it never spams a channel nobody configured.
 
 ## Verify
 
@@ -215,4 +250,4 @@ vitest suites, and prints a green summary. No Docker, no network, no paid APIs.
 
 ## Milestones
 
-Tracked in [`CHANGELOG.md`](./CHANGELOG.md). Current: **M0 — Scaffold**.
+Tracked in [`CHANGELOG.md`](./CHANGELOG.md). Current: **M8 — Dashboard + free feed**.
