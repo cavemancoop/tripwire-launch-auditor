@@ -94,3 +94,82 @@ chosen and why into `CHANGELOG.md` or here; do not open a question for it.
 silently kills whichever key the agent is currently using. The agent provisions
 its own key on start; leave it alone. `ORBIO_API_KEY` in `.env` is a fallback
 seed only and goes stale the moment the agent mints.
+
+---
+
+## M5c — billing basis, epoch reconciliation, and what actually revokes (2026-09-12)
+
+**The near-failure.** Five live deep-dives, five validator-passed reports, zero
+ledger rows: the Orbio gateway 404s OpenRouter's `GET /generation` and returns
+OpenAI-shaped usage with no cost field. The IDS reconciler compared an empty
+ledger with the provider's growing spend and would have revoked the agent's own
+key at the $0.01 default tolerance — during the overnight unattended run.
+
+**The design error** (external review, adopted in full): one `spend` number was
+doing three jobs. They are now three things:
+
+| job | source | field |
+|---|---|---|
+| what Orbio actually charged | `orbio_get_balance.spent.usd`, polled every tick | `MetabolismEpoch.providerDeltaUsd` |
+| which report caused it | tokens × pinned price, then reconciled per epoch | `MetabolismSpend.costUsd` + `costBasis` |
+| is the agent safe to run | three independent controls, below | `LifecycleLog.billingStatus` |
+
+**No cost figure exists without its provenance.** `costBasis` ∈
+`provider_reported | provider_generation | token_estimate | provider_reconciled_estimate | unavailable`.
+An unpriced model or missing token counts records `unavailable` with cost 0 —
+never a plausible-looking number. `pricingVersion` is stored on every estimate.
+
+**Epoch reconciliation.** Each 60s lifecycle tick is an epoch: the provider's
+spend delta over the window vs the sum of local estimates recorded in it. The
+ratio (`reconciliationFactor`) is applied back to those rows, which become
+`provider_reconciled_estimate`. The signed discrepancy is **the agent's own
+cost-forecast error**, exposed on `GET /v1/lifecycle` as `estimator` — the
+metabolism is a forecaster graded against reality, under the same thesis as
+everything else in the project.
+
+**Three controls, and what each does:**
+1. **Hard provider budget** — the daily cap is checked against
+   `max(local estimate, Σ provider deltas today)`. Gate closes; key untouched.
+2. **Estimator anomaly** — |discrepancy| > `METABOLISM_ANOMALY_PCT` (50%) for
+   `METABOLISM_ANOMALY_EPOCHS` (3) consecutive windows → `billingStatus =
+   anomaly` → inference paused + logged. Never revokes. A bad estimate is not a
+   bad key.
+3. **`PHANTOM_SPEND`** — provider spend rose while the agent made zero calls
+   (above `METABOLISM_PHANTOM_TOLERANCE_USD`). This is the only condition that
+   means someone else holds the key. Revoke → NO_KEY → halt until
+   `pnpm orbio:auth`. Named as its own lifecycle event.
+
+`IDS_MISMATCH` is retired from the runner (kept in `state.ts` so historical rows
+replay). `METABOLISM_IDS_TOLERANCE_USD` is back at 0.01 and advisory. The $100
+stopgap is gone.
+
+**M6 acceptance criterion, rewritten.** "Cost appears in the ledger" tested an
+implementation detail the gateway does not expose. The criterion is now:
+*after controlled inference, authoritative provider spend increases; local
+aggregate spend reconciles to the provider total within the anomaly band; and
+every displayed per-report cost declares its attribution basis.*
+
+**Why not the serialized balance-delta probe** (mutex one deep-dive at a time,
+read the meter before and after): it gives exact per-request cost at 10–15
+runs/day and is the wrong shape for a query-driven product at dozens-to-hundreds
+of evaluations/day. Reconcile windows, not requests.
+
+### Roadmap — designed, not built this week
+
+- **Progressive analysis tiers.** Cheap deterministic checks → cheap model
+  triage → deep dive only if "is there enough here to justify investigating?"
+  (not "is this token good"). Preserves finding things before they are obvious;
+  makes 15/day and 5,000/day the same architecture.
+- **Deduplicated launch state.** Cache key `token_address + analysis_version +
+  evidence_timestamp`. Eighty queries about one token over three hours is one
+  deep dive plus cheap refreshes; a material event (creator sells, LP moves,
+  volume regime change) invalidates the relevant part and re-runs. The unit of
+  intelligence becomes the evolving launch, not the chat request — likely the
+  largest economic win available.
+- **Local velocity control.** Estimated $/min and requests/min as a fast
+  circuit-breaker ahead of the provider's accounting.
+- **Upstream ask to Orbio.** They hold model, tokens, cost and timing per
+  request server-side. Either response headers (`x-orbio-request-id`,
+  `x-orbio-cost-usd`, `x-orbio-input-tokens`, `x-orbio-output-tokens`) or an
+  `orbio_get_usage(since)` MCP method would make `provider_reported` the default
+  basis and retire estimation entirely.

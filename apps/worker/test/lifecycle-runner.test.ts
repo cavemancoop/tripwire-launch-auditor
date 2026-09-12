@@ -106,16 +106,35 @@ describe('decideLifecycle — adapted §8 machine (2026-09-09 decisions)', () =>
     expect(d).toMatchObject({ kind: 'transition', from: 'ACTIVE', to: 'NO_KEY', event: 'REVOKED' });
   });
 
-  it('IDS mismatch preempts everything, even a hygiene-due key', () => {
-    const d = decideLifecycle(read({ keyAgeDays: 30, ids: IDS_MISMATCH }), CFG);
-    expect(d).toMatchObject({ kind: 'revoke', from: 'ACTIVE', reason: IDS_MISMATCH.reason });
+  // M5c: a ledger/provider gap is the estimator being wrong, not a compromised
+  // key. It must never revoke — that was the 2026-09-12 near-failure.
+  it('IDS mismatch no longer revokes — the key stays and the tick proceeds normally', () => {
+    const d = decideLifecycle(read({ ids: IDS_MISMATCH }), CFG);
+    expect(d.kind).toBe('steady');
+    expect(d).toMatchObject({ state: 'ACTIVE' });
   });
 
-  it('IDS mismatch does NOT act from NO_KEY / STARVED / REVOKING', () => {
-    expect(decideLifecycle(read({ state: 'STARVED', balanceUsd: 1, ids: IDS_MISMATCH }), CFG).kind).toBe('steady');
+  it('IDS mismatch does not even pre-empt a hygiene rotation', () => {
+    const d = decideLifecycle(read({ keyAgeDays: 30, ids: IDS_MISMATCH }), CFG);
+    expect(d.kind).toBe('rotate');
+  });
+
+  it('PHANTOM_SPEND revokes from any keyed state, pre-empting a hygiene-due key', () => {
+    const d = decideLifecycle(read({ keyAgeDays: 30, phantomSpend: true }), CFG);
+    expect(d).toMatchObject({ kind: 'revoke', from: 'ACTIVE' });
+    expect((d as { reason: string }).reason).toMatch(/phantom/);
+    expect(decideLifecycle(read({ state: 'DRAINING', balanceUsd: 5, phantomSpend: true }), CFG).kind).toBe('revoke');
+    expect(decideLifecycle(read({ state: 'STARVED', balanceUsd: 1, phantomSpend: true }), CFG).kind).toBe('revoke');
+  });
+
+  it('PHANTOM_SPEND does NOT act from NO_KEY / REVOKING (nothing to revoke)', () => {
     expect(
-      decideLifecycle(read({ state: 'NO_KEY', hasKey: false, holdSecret: false, ids: IDS_MISMATCH }), CFG).kind,
+      decideLifecycle(read({ state: 'NO_KEY', hasKey: false, holdSecret: false, phantomSpend: true }), CFG).kind,
     ).toBe('transition');
+    expect(decideLifecycle(read({ state: 'REVOKING', phantomSpend: true }), CFG)).toMatchObject({
+      kind: 'transition',
+      to: 'NO_KEY',
+    });
   });
 
   it('STARVED + balance recovers, key still valid → ACTIVE without minting', () => {
@@ -182,8 +201,8 @@ describe('every emitted (from,event,to) is a real edge of state.ts', () => {
     expect(nextState('ROTATING', 'KEY_CLAIMED')?.state).toBe('ACTIVE');
   });
 
-  it('revoke expands to *--IDS_MISMATCH-->REVOKING--REVOKED-->NO_KEY', () => {
-    expect(nextState('ACTIVE', 'IDS_MISMATCH')?.state).toBe('REVOKING');
+  it('revoke expands to *--PHANTOM_SPEND-->REVOKING--REVOKED-->NO_KEY', () => {
+    expect(nextState('ACTIVE', 'PHANTOM_SPEND')?.state).toBe('REVOKING');
     expect(nextState('REVOKING', 'REVOKED')?.state).toBe('NO_KEY');
   });
 });

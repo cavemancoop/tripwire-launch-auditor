@@ -23,7 +23,8 @@ export type LifecycleEvent =
   | 'HYGIENE_DUE' // key age >= hygieneRotateDays — rotate on schedule
   | 'DRAINED' // key remaining <= reserve
   | 'ROTATED' // new key claimed and the old one revoked
-  | 'IDS_MISMATCH' // local spend ledger disagrees with orbio_get_key_status
+  | 'IDS_MISMATCH' // retired by M5c: a ledger/provider gap is an estimator error, not a compromise (kept for old rows)
+  | 'PHANTOM_SPEND' // M5c: provider spend rose while the agent made no calls — the one compromise signal
   | 'REVOKED' // the key has been revoked at the provider
   | 'NO_CREDITS' // no accrued credits to claim / rotate into
   | 'CREDITS_RETURNED'; // credits accrued again after STARVED
@@ -39,7 +40,12 @@ export function nextState(
   current: LifecycleState,
   event: LifecycleEvent,
 ): Transition | null {
-  // IDS mismatch always wins, from any state that holds a key
+  // A compromise signal always wins, from any state that holds a key.
+  // PHANTOM_SPEND is the live one; IDS_MISMATCH is retained so historical rows
+  // still replay through the machine.
+  if (event === 'PHANTOM_SPEND') {
+    return current === 'NO_KEY' ? null : R('REVOKING', 'phantom spend: provider charged with zero local requests');
+  }
   if (event === 'IDS_MISMATCH') {
     return current === 'NO_KEY' ? null : R('REVOKING', 'ids: local ledger vs provider status mismatch');
   }

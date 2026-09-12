@@ -65,10 +65,15 @@ export function runsAffordable(budgetUsd: number, capPerRunUsd: number): number 
 export interface DeepdiveRunGateInputs {
   capPerRunUsd: number;
   dailyCapUsd: number;
-  /** Σ MetabolismSpend.costUsd since 00:00 UTC */
+  /** Σ MetabolismSpend.costUsd since 00:00 UTC (local, estimated) */
   todaySpendUsd: number;
+  /** M5c: Σ MetabolismEpoch.providerDeltaUsd since 00:00 UTC (authoritative).
+   *  The daily cap is checked against the larger of the two. */
+  providerSpendTodayUsd?: number;
   /** orbio_get_balance.balance.usd − RESERVE_USD */
   spendableUsd: number;
+  /** M5c: the latest lifecycle billing state — `anomaly` / `phantom` close the gate */
+  billingStatus?: string | null;
 }
 
 export interface DeepdiveRunGate {
@@ -79,13 +84,23 @@ export interface DeepdiveRunGate {
 }
 
 export function deepdiveRunGate(i: DeepdiveRunGateInputs): DeepdiveRunGate {
-  const remainingTodayUsd = round2(Math.max(0, i.dailyCapUsd - i.todaySpendUsd));
+  // the daily cap is a hard budget: trust whichever figure is larger
+  const spentTodayUsd = Math.max(i.todaySpendUsd, i.providerSpendTodayUsd ?? 0);
+  const remainingTodayUsd = round2(Math.max(0, i.dailyCapUsd - spentTodayUsd));
   const maxRunCostUsd = round2(Math.max(0, Math.min(i.capPerRunUsd, remainingTodayUsd, i.spendableUsd)));
+  if (i.billingStatus === 'phantom' || i.billingStatus === 'anomaly') {
+    return {
+      allowed: false,
+      reason: `billing ${i.billingStatus} — inference paused until the lifecycle runner clears it`,
+      remainingTodayUsd,
+      maxRunCostUsd: 0,
+    };
+  }
   if (i.spendableUsd <= 0) {
     return { allowed: false, reason: `balance is at or below the reserve (spendable $${round2(i.spendableUsd)})`, remainingTodayUsd, maxRunCostUsd };
   }
   if (remainingTodayUsd <= 0) {
-    return { allowed: false, reason: `daily cap $${round2(i.dailyCapUsd)} reached (spent $${round2(i.todaySpendUsd)})`, remainingTodayUsd, maxRunCostUsd };
+    return { allowed: false, reason: `daily cap $${round2(i.dailyCapUsd)} reached (spent $${round2(spentTodayUsd)})`, remainingTodayUsd, maxRunCostUsd };
   }
   if (maxRunCostUsd <= 0) {
     return { allowed: false, reason: 'nothing affordable this run', remainingTodayUsd, maxRunCostUsd };

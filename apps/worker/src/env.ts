@@ -38,6 +38,12 @@ export interface WorkerEnv {
   metabolismIdsToleranceUsd: number;
   /** IDS settlement grace: absorbs ~one in-flight deep-dive not yet in the ledger */
   metabolismIdsGraceUsd: number;
+  /** M5c: |provider − estimate| / estimate above this % is an epoch anomaly (pause, not revoke) */
+  metabolismAnomalyPct: number;
+  /** M5c: consecutive anomalous epochs before inference is paused */
+  metabolismAnomalyEpochs: number;
+  /** M5c: provider delta below this with zero requests is rounding noise, not phantom spend */
+  metabolismPhantomToleranceUsd: number;
   /** M6 deep-dive — OpenRouter-shaped gateway base URL (Orbio) */
   orbioGatewayV1Url: string;
   /** pinned exact model slug for `llm_deepdive_v0` (no ~latest / openrouter/auto) */
@@ -120,6 +126,9 @@ export function loadEnv(): WorkerEnv {
     metabolismHygieneRotateDays: Number(process.env.METABOLISM_HYGIENE_ROTATE_DAYS || 7),
     metabolismStatusPollSec: Number(process.env.METABOLISM_STATUS_POLL_SEC || 60),
     metabolismIdsToleranceUsd: Number(process.env.METABOLISM_IDS_TOLERANCE_USD || 0.01),
+    metabolismAnomalyPct: Number(process.env.METABOLISM_ANOMALY_PCT || 50),
+    metabolismAnomalyEpochs: Number(process.env.METABOLISM_ANOMALY_EPOCHS || 3),
+    metabolismPhantomToleranceUsd: Number(process.env.METABOLISM_PHANTOM_TOLERANCE_USD || 0.005),
     metabolismIdsGraceUsd: Number(
       process.env.METABOLISM_IDS_GRACE_USD ||
         Number(process.env.DEEPDIVE_CAP_PER_RUN_USD || 0.2) + 0.05,

@@ -30,11 +30,19 @@ describe('nextState (spec §8 state machine)', () => {
   it('hygiene rotation from ACTIVE', () => {
     expect(nextState('ACTIVE', 'HYGIENE_DUE')?.state).toBe('ROTATING');
   });
-  it('IDS mismatch -> REVOKING from any keyed state, then NO_KEY', () => {
+  it('IDS mismatch -> REVOKING from any keyed state, then NO_KEY (retired edge, kept for old rows)', () => {
     expect(nextState('ACTIVE', 'IDS_MISMATCH')?.state).toBe('REVOKING');
     expect(nextState('DRAINING', 'IDS_MISMATCH')?.state).toBe('REVOKING');
     expect(nextState('NO_KEY', 'IDS_MISMATCH')).toBeNull();
     expect(nextState('REVOKING', 'REVOKED')?.state).toBe('NO_KEY');
+  });
+  it('PHANTOM_SPEND (M5c) -> REVOKING from any keyed state — the live compromise signal', () => {
+    expect(nextState('ACTIVE', 'PHANTOM_SPEND')?.state).toBe('REVOKING');
+    expect(nextState('DRAINING', 'PHANTOM_SPEND')?.state).toBe('REVOKING');
+    expect(nextState('ROTATING', 'PHANTOM_SPEND')?.state).toBe('REVOKING');
+    expect(nextState('STARVED', 'PHANTOM_SPEND')?.state).toBe('REVOKING');
+    expect(nextState('NO_KEY', 'PHANTOM_SPEND')).toBeNull();
+    expect(nextState('ACTIVE', 'PHANTOM_SPEND')?.reason).toMatch(/phantom/);
   });
   it('STARVED when there are no credits, and recovery', () => {
     expect(nextState('DRAINING', 'NO_CREDITS')?.state).toBe('STARVED');

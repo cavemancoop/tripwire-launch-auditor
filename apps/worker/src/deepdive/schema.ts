@@ -112,10 +112,17 @@ export interface DeepDiveResult {
   warnings: string[];
   modelSlug: string;
   targetPacket: TargetPacket;
-  /** OpenRouter generation ids, one per turn — for `GET /generation?id=` costing */
+  /** OpenRouter generation ids, one per turn — for `GET /generation?id=` costing.
+   *  Empty through the Orbio gateway, which does not surface them. */
   generationIds: string[];
-  /** best-effort cost from the run's usage totals (the ledger uses generationCost) */
+  /** provider-reported cost from the usage object, when the gateway includes one
+   *  (OpenRouter does; the Orbio gateway does not). Not an estimate — see cost.ts. */
   usageCostUsd: number | null;
+  /** M5c: token counts from the usage object, so cost can be *estimated* with an
+   *  explicit basis when no provider cost is reported. Optional only so
+   *  pre-M5c fixtures compile — `runDeepdiveAgent` always sets both. */
+  promptTokens?: number | null;
+  completionTokens?: number | null;
   steps: number;
   stoppedBy: 'complete' | 'max_steps' | 'max_cost' | 'error';
 }

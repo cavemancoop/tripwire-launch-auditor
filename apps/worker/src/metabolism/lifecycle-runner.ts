@@ -14,8 +14,14 @@
  *  - `balance − RESERVE_USD ≤ 0` → STARVED directly (NO rotate: a fresh key
  *    spends the same empty balance). Recovery: balance back above reserve → ACTIVE.
  *  - ROTATING is hygiene-only (key age ≥ `hygieneRotateDays`).
- *  - local `MetabolismSpend` sum vs `orbio_get_balance.spent.usd` mismatch →
- *    REVOKING → revoke_key → NO_KEY, then HALT (await a human `pnpm orbio:auth`).
+ *  - M5c: a ledger/provider gap is NOT a compromise. Each tick is an epoch
+ *    (`reconcile.ts`): the provider's spend delta is graded against the sum of
+ *    local token-priced estimates, the rows are relabelled
+ *    `provider_reconciled_estimate`, and the discrepancy is published as the
+ *    agent's own cost-forecast error. Only PHANTOM_SPEND — provider spend with
+ *    zero local requests — revokes (→ NO_KEY, HALT until `pnpm orbio:auth`).
+ *    A sustained estimator anomaly pauses inference via `billingStatus`; it
+ *    never touches the key.
  */
 import { Prisma, prisma } from '@launch-auditor/db';
 import type { Hex } from 'viem';
@@ -34,7 +40,8 @@ import {
   type OrbioConnection,
 } from './orbio-client';
 import { reconcileIds, type IdsReconcile } from './ids-reconcile';
-import { totalSpendUsd } from './spend-ledger';
+import { reconcileEpoch, type BillingStatus } from './reconcile';
+import { applyReconciliation, totalSpendUsd, windowEstimate } from './spend-ledger';
 import { nextState, type LifecycleEvent, type LifecycleState } from './state';
 import {
   loadEncryptionKey,
@@ -68,8 +75,12 @@ export interface LifecycleReading {
   ledgerSpendUsd: number;
   /** orbio_get_balance.spent.usd (provider) — kept for the lifecycle_log row */
   providerSpendUsd: number;
-  /** M5b-3: per-key baseline reconcile of the two above */
+  /** M5b-3: per-key baseline reconcile of the two above — informational since M5c */
   ids: IdsReconcile;
+  /** M5c: this epoch saw provider spend with zero local requests — the compromise signal */
+  phantomSpend?: boolean;
+  /** M5c: effective billing state after the consecutive-anomaly threshold */
+  billingStatus?: BillingStatus;
 }
 
 export type LifecycleDecision =
@@ -93,10 +104,12 @@ export function decideLifecycle(r: LifecycleReading, cfg: LifecycleConfig): Life
   const spendable = r.balanceUsd - cfg.reserveUsd;
   const S = r.state;
 
-  // IDS mismatch (provider gateway spend outpaced the local ledger) preempts
-  // everything from any state that holds a key.
-  if (r.ids.mismatch && S !== 'NO_KEY' && S !== 'STARVED' && S !== 'REVOKING') {
-    return { kind: 'revoke', from: S, reason: r.ids.reason };
+  // M5c: PHANTOM_SPEND — the provider charged us while we made no calls — is
+  // the one signal that means someone else holds the key. It preempts everything
+  // from any state that holds a key. An IDS ledger/provider gap no longer does:
+  // that is the estimator being wrong, handled by `billingStatus`, not a revoke.
+  if (r.phantomSpend && S !== 'NO_KEY' && S !== 'REVOKING') {
+    return { kind: 'revoke', from: S, reason: 'phantom spend: provider charged with zero local requests this epoch' };
   }
 
   switch (S) {
@@ -228,6 +241,8 @@ export interface LifecycleRowInput {
   ledgerSpendUsd?: number | null;
   providerSpendUsd?: number | null;
   idsMismatch?: boolean;
+  /** M5c — stored, not folded into the signed body (keeps every older row verifiable) */
+  billingStatus?: BillingStatus | null;
 }
 
 export interface PersistedLifecycleRow {
@@ -252,6 +267,7 @@ export interface LifecyclePersistRecord {
   ledgerSpendUsd: number | null;
   providerSpendUsd: number | null;
   idsMismatch: boolean;
+  billingStatus: string | null;
   prevHash: string;
   bodyHash: string;
   signature: string;
@@ -328,6 +344,7 @@ export class LifecycleLogWriter {
       ledgerSpendUsd: input.ledgerSpendUsd ?? null,
       providerSpendUsd: input.providerSpendUsd ?? null,
       idsMismatch: input.idsMismatch ?? false,
+      billingStatus: input.billingStatus ?? null,
       prevHash: this.prevHash,
       bodyHash: entry.bodyHash,
       signature,
@@ -381,10 +398,14 @@ export async function runLifecycleLoop(
 
   const last = await prisma.lifecycleLog.findFirst({
     orderBy: { createdAt: 'desc' },
-    select: { newState: true, idsMismatch: true },
+    select: { newState: true, idsMismatch: true, billingStatus: true },
   });
   let state: LifecycleState = (last?.newState as LifecycleState) ?? 'NO_KEY';
-  let halted = last?.newState === 'NO_KEY' && last?.idsMismatch === true;
+  // halted = we revoked ourselves on a compromise signal; only a human re-auth clears it
+  let halted =
+    last?.newState === 'NO_KEY' && (last?.idsMismatch === true || last?.billingStatus === 'phantom');
+  // M5c: a single anomalous epoch is noise; N in a row pauses inference
+  let consecutiveAnomalies = 0;
 
   // eslint-disable-next-line no-console
   console.log(
@@ -439,6 +460,65 @@ export async function runLifecycleLoop(
         graceUsd: cfg.idsGraceUsd,
       });
 
+      // ── M5c epoch reconciliation ────────────────────────────────────────
+      // Grade this tick's provider delta against the local estimates recorded
+      // since the last epoch. The factor relabels those rows; the discrepancy is
+      // the estimator's error. Phantom (spend with no requests) is the only
+      // compromise signal; a sustained anomaly pauses inference, never revokes.
+      const epochAt = new Date();
+      const prevEpoch = await prisma.metabolismEpoch.findFirst({
+        orderBy: { at: 'desc' },
+        select: { at: true, providerSpendUsd: true },
+      });
+      const providerSpendPrevUsd =
+        prevEpoch?.providerSpendUsd ?? blob.spendBaseline?.providerSpentUsd ?? providerSpendUsd;
+      const win = await windowEstimate(prevEpoch?.at ?? null, epochAt);
+      const ep = reconcileEpoch({
+        providerSpendNowUsd: providerSpendUsd,
+        providerSpendPrevUsd,
+        localEstimateUsd: win.estimatedUsd,
+        requestCount: win.count,
+        anomalyPct: env.metabolismAnomalyPct,
+        phantomToleranceUsd: env.metabolismPhantomToleranceUsd,
+      });
+      consecutiveAnomalies = ep.anomaly ? consecutiveAnomalies + 1 : 0;
+      const billingStatus: BillingStatus = ep.phantom
+        ? 'phantom'
+        : consecutiveAnomalies >= env.metabolismAnomalyEpochs
+          ? 'anomaly'
+          : ep.billingStatus === 'anomaly'
+            ? 'aggregate_only' // one bad window is logged, not acted on
+            : ep.billingStatus;
+      const epochRow = await prisma.metabolismEpoch.create({
+        data: {
+          at: epochAt,
+          keyHashPrefix: blob.gatewayKeyPrefix ?? null,
+          providerSpendUsd,
+          providerDeltaUsd: ep.providerDeltaUsd,
+          localEstimateUsd: ep.localEstimateUsd,
+          requestCount: ep.requestCount,
+          reconciliationFactor: ep.reconciliationFactor,
+          discrepancyPct: ep.discrepancyPct,
+          anomaly: ep.anomaly,
+          phantom: ep.phantom,
+          billingStatus,
+        },
+        select: { id: true },
+      });
+      await applyReconciliation({
+        since: prevEpoch?.at ?? null,
+        until: epochAt,
+        epochId: epochRow.id,
+        factor: ep.reconciliationFactor,
+      });
+      if (ep.phantom || ep.anomaly) {
+        // eslint-disable-next-line no-console
+        console.warn(`[metabolism] ${ep.reason}${billingStatus === 'anomaly' ? ` — ${consecutiveAnomalies} consecutive, inference PAUSED` : ''}`);
+      } else if (ep.requestCount > 0) {
+        // eslint-disable-next-line no-console
+        console.log(`[metabolism] epoch: ${ep.reason}`);
+      }
+
       const holdSecret =
         typeof blob.gatewayKey === 'string' &&
         blob.gatewayKey.length > 0 &&
@@ -457,6 +537,8 @@ export async function runLifecycleLoop(
         ledgerSpendUsd,
         providerSpendUsd,
         ids,
+        phantomSpend: ep.phantom,
+        billingStatus,
       };
 
       const idsMismatch = ids.mismatch;
@@ -465,6 +547,7 @@ export async function runLifecycleLoop(
         reserveUsd: cfg.reserveUsd,
         ledgerSpendUsd: reading.ledgerSpendUsd,
         providerSpendUsd: reading.providerSpendUsd,
+        billingStatus,
         keyId: status.prefix ?? blob.gatewayKeyPrefix ?? null,
         keyHashPrefix: blob.gatewayKeyPrefix ?? null,
       };
@@ -567,14 +650,17 @@ export async function runLifecycleLoop(
           keyHashPrefix: p,
         });
       } else {
-        // revoke (IDS mismatch or unusable key)
-        checkAgainstStateMachine(decision.from, 'IDS_MISMATCH', 'REVOKING');
+        // revoke: PHANTOM_SPEND (the compromise signal) or an unusable key (secret
+        // not in the store — housekeeping, not a compromise). Only the former
+        // marks the row so that a restart stays halted.
+        const compromise = reading.phantomSpend === true;
+        checkAgainstStateMachine(decision.from, compromise ? 'PHANTOM_SPEND' : 'IDS_MISMATCH', 'REVOKING');
         await writer.append({
           isSnapshot: false,
           prevState: decision.from,
           newState: 'REVOKING',
           reason: decision.reason,
-          idsMismatch: true,
+          idsMismatch: compromise,
           ...common,
         });
         try {
@@ -593,8 +679,10 @@ export async function runLifecycleLoop(
           isSnapshot: false,
           prevState: 'REVOKING',
           newState: 'NO_KEY',
-          reason: 'revoked at provider — halting for manual re-auth (pnpm orbio:auth)',
-          idsMismatch: true,
+          reason: compromise
+            ? 'revoked at provider after phantom spend — halting for manual re-auth (pnpm orbio:auth)'
+            : 'revoked at provider — key was unusable; will remint next tick',
+          idsMismatch: compromise,
           ...common,
           keyId: null,
           keyHashPrefix: null,

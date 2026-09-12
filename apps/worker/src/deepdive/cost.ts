@@ -1,16 +1,27 @@
 /**
- * Turn a completed deep-dive run into `MetabolismSpend` rows (M5b-3). One row
- * per OpenRouter generation, costed from `GET /generation?id=` (the authoritative
- * figure — CLAUDE.md), tagged with the gateway key's `keyHashPrefix` so the IDS
- * reconciler can attribute it. Idempotent on `generationId`.
+ * Turn a completed deep-dive run into one `MetabolismSpend` row (M5b-3 / M5c).
+ *
+ * M5c: the row records *what kind of number* its cost is. Precedence:
+ *   1. `provider_reported`   — the gateway put a dollar cost in the usage object (OpenRouter does)
+ *   2. `provider_generation` — every `GET /generation?id=` lookup succeeded (OpenRouter does; Orbio 404s)
+ *   3. `token_estimate`      — token counts × the pinned model's published price (pricing.ts)
+ *   4. `unavailable`         — none of the above; cost 0, and the epoch reconciler marks the
+ *                              window `unavailable` rather than inventing a figure
+ * The lifecycle runner later reconciles estimates against the provider's
+ * authoritative delta and relabels them `provider_reconciled_estimate`.
  */
 import type { WorkerEnv } from '../env';
 import { recordSpend, type SpendStore } from '../metabolism/spend-ledger';
+import type { CostBasis } from '../metabolism/reconcile';
 import { generationCost, type GenerationCostDeps } from './openrouter';
+import { estimateCostUsd, PRICING_VERSION } from './pricing';
 import type { DeepDiveResult } from './schema';
 
 export interface RecordDeepdiveSpendInput {
-  result: Pick<DeepDiveResult, 'generationIds' | 'modelSlug' | 'usageCostUsd'>;
+  result: Pick<
+    DeepDiveResult,
+    'generationIds' | 'modelSlug' | 'usageCostUsd' | 'promptTokens' | 'completionTokens'
+  >;
   /** sha256(gateway key)[:12], from the Metabolism store */
   keyHashPrefix?: string | null;
   reportId?: string | null;
@@ -25,78 +36,85 @@ export interface RecordDeepdiveSpendDeps {
 }
 
 export interface RecordDeepdiveSpendResult {
+  /** the figure recorded as `costUsd` */
   totalCostUsd: number;
-  rows: Array<{ generationId: string; costUsd: number; id: string; deduped: boolean }>;
-  /** generations whose cost lookup failed */
+  /** always set by `recordDeepdiveSpend`; optional so a mocked recorder can omit it */
+  costBasis?: CostBasis;
+  /** the token-priced estimate, recorded alongside whatever basis won */
+  estimatedCostUsd?: number | null;
+  rows: Array<{ id: string; deduped: boolean }>;
+  /** generation lookups that failed (informational — the run still gets a row) */
   failed: string[];
-  /** first lookup error, for logging — the caller must not swallow this */
   failureReason?: string;
-  /** true when the row(s) came from the streamed-usage estimate, not `GET /generation` */
-  estimated?: boolean;
 }
 
 export async function recordDeepdiveSpend(
   input: RecordDeepdiveSpendInput,
   deps: RecordDeepdiveSpendDeps = {},
 ): Promise<RecordDeepdiveSpendResult> {
+  const { result } = input;
   const lookup =
     deps.lookupCost ??
     (async (id: string) => (await generationCost(id, deps.env, deps.costDeps)).totalCostUsd);
 
-  const out: RecordDeepdiveSpendResult = { totalCostUsd: 0, rows: [], failed: [] };
+  const estimatedCostUsd = estimateCostUsd(result.modelSlug, result.promptTokens, result.completionTokens);
+  const failed: string[] = [];
+  let failureReason: string | undefined;
 
-  // No generation ids (e.g. a fully mocked run) — fall back to the usage estimate as one row.
-  const ids = input.result.generationIds.length
-    ? input.result.generationIds
-    : input.result.usageCostUsd != null
-      ? ['usage-estimate']
-      : [];
+  let costUsd: number;
+  let costBasis: CostBasis;
 
-  for (const id of ids) {
-    let costUsd: number;
-    try {
-      costUsd = id === 'usage-estimate' ? (input.result.usageCostUsd ?? 0) : await lookup(id);
-    } catch (err) {
-      out.failed.push(id);
-      out.failureReason ??= err instanceof Error ? err.message : String(err);
-      continue;
+  if (result.usageCostUsd != null && Number.isFinite(result.usageCostUsd)) {
+    costUsd = result.usageCostUsd;
+    costBasis = 'provider_reported';
+  } else {
+    let generationTotal: number | null = null;
+    if (result.generationIds.length > 0) {
+      let sum = 0;
+      for (const id of result.generationIds) {
+        try {
+          sum += await lookup(id);
+        } catch (err) {
+          failed.push(id);
+          failureReason ??= err instanceof Error ? err.message : String(err);
+        }
+      }
+      if (failed.length === 0) generationTotal = sum;
     }
-    const { id: rowId, deduped } = await recordSpend(
-      {
-        costUsd,
-        model: input.result.modelSlug,
-        keyHashPrefix: input.keyHashPrefix ?? null,
-        reportId: input.reportId ?? null,
-        generationId: id === 'usage-estimate' ? null : id,
-      },
-      deps.store,
-    );
-    out.rows.push({ generationId: id, costUsd, id: rowId, deduped });
-    if (!deduped) out.totalCostUsd += costUsd;
+    if (generationTotal != null) {
+      costUsd = generationTotal;
+      costBasis = 'provider_generation';
+    } else if (estimatedCostUsd != null) {
+      costUsd = estimatedCostUsd;
+      costBasis = 'token_estimate';
+    } else {
+      costUsd = 0;
+      costBasis = 'unavailable';
+    }
   }
 
-  // Every per-generation lookup failed (the Orbio gateway does not proxy
-  // OpenRouter's `GET /generation` — it 404s), but the run still spent real
-  // credits. Record the streamed-usage estimate as a single row rather than
-  // leaving the ledger empty: an empty ledger reads as $0 spend to the IDS
-  // reconciler, which would trip REVOKING and halt the agent. Flagged as an
-  // estimate so the dashboard can say so.
-  if (out.rows.length === 0 && out.failed.length > 0 && input.result.usageCostUsd != null) {
-    const { id: rowId, deduped } = await recordSpend(
-      {
-        costUsd: input.result.usageCostUsd,
-        model: input.result.modelSlug,
-        keyHashPrefix: input.keyHashPrefix ?? null,
-        reportId: input.reportId ?? null,
-        generationId: null,
-      },
-      deps.store,
-    );
-    out.rows.push({ generationId: 'usage-estimate', costUsd: input.result.usageCostUsd, id: rowId, deduped });
-    out.estimated = true;
-    if (!deduped) out.totalCostUsd += input.result.usageCostUsd;
-  }
+  const { id, deduped } = await recordSpend(
+    {
+      costUsd,
+      model: result.modelSlug,
+      keyHashPrefix: input.keyHashPrefix ?? null,
+      reportId: input.reportId ?? null,
+      generationId: result.generationIds[0] ?? null,
+      promptTokens: result.promptTokens ?? null,
+      completionTokens: result.completionTokens ?? null,
+      estimatedCostUsd,
+      pricingVersion: estimatedCostUsd != null ? PRICING_VERSION : null,
+      costBasis,
+    },
+    deps.store,
+  );
 
-  out.totalCostUsd = Math.round(out.totalCostUsd * 1e6) / 1e6;
-  return out;
+  return {
+    totalCostUsd: Math.round(costUsd * 1e6) / 1e6,
+    costBasis,
+    estimatedCostUsd,
+    rows: [{ id, deduped }],
+    failed,
+    ...(failureReason ? { failureReason } : {}),
+  };
 }

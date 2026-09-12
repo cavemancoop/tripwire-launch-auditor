@@ -984,3 +984,80 @@ benchmark table and its comparisons vs `det_v0` automatically once reports resol
 - x402 / API-key gating on `POST /v1/deepdive` (M7).
 - The `evm-token-due-diligence` skill's eleven separately-rated surfaces (spec §8.2)
   — v0 ships the three outcome probabilities + evidence ledger only.
+
+## M5c — billing basis, epoch reconciliation, PHANTOM_SPEND (2026-09-12)
+
+Fixes the 2026-09-12 near-failure and the design error under it. Five live
+deep-dives had produced five validator-passed reports and **zero ledger rows**:
+the Orbio gateway 404s OpenRouter's `GET /api/v1/generation` (verified —
+`/api/v1/models` returns 200, `/generation` returns 404 with an HTML body) and its
+usage object carries token counts but no cost. The IDS reconciler read an empty
+ledger against growing provider spend as a compromised key and, at the $0.01
+default, would have revoked the agent's own key during the overnight
+unattended run. A `$100` tolerance was applied as a stopgap; this replaces it.
+
+One `spend` number had been doing three jobs. Now (external review, adopted):
+
+| job | source |
+|---|---|
+| what Orbio actually charged | `orbio_get_balance.spent.usd` → `MetabolismEpoch.providerDeltaUsd` (authoritative) |
+| which report caused it | tokens × pinned price → `MetabolismSpend.costUsd` + `costBasis` |
+| is the agent safe to run | three controls → `LifecycleLog.billingStatus` |
+
+### Added
+- `deepdive/pricing.ts` — published per-M prices for the pinned slugs,
+  `PRICING_VERSION`, `estimateCostUsd()`; an unpriced model yields `null`, never a guess.
+- `metabolism/reconcile.ts` — `reconcileEpoch()`: provider delta over the tick
+  vs Σ local estimates → `reconciliationFactor`, signed `discrepancyPct`,
+  `phantom`, `anomaly`, `billingStatus`. Pure. `billingBlocksInference()`.
+- Schema (`m5c_billing_basis_and_epochs`): `MetabolismSpend` +`promptTokens`,
+  `completionTokens`, `estimatedCostUsd`, `pricingVersion`, `costBasis`
+  (`provider_reported | provider_generation | token_estimate |
+  provider_reconciled_estimate | unavailable`), `reconciledCostUsd`, `epochId`;
+  new `MetabolismEpoch`; `LifecycleLog.billingStatus` (stored, **not** in the
+  signed body — every older row still verifies).
+- `state.ts` — `PHANTOM_SPEND` event → REVOKING from any keyed state. The one
+  signal that means someone else holds the key. `IDS_MISMATCH` retained so old
+  rows replay; the runner no longer emits it.
+- `GET /v1/lifecycle` — `billingStatus` per row + an `estimator` block
+  (trailing-24h provider spend, estimated spend, request count, mean
+  |discrepancy|, latest window). The metabolism forecasting its own cost and
+  being graded on it, like every other forecaster in the project.
+- Env: `METABOLISM_ANOMALY_PCT` (50), `METABOLISM_ANOMALY_EPOCHS` (3),
+  `METABOLISM_PHANTOM_TOLERANCE_USD` (0.005). `METABOLISM_IDS_TOLERANCE_USD`
+  back to 0.01, advisory only.
+
+### Changed
+- `deepdive/agent.ts` — reads `prompt_tokens` / `completion_tokens` (any common
+  spelling) as well as a provider cost from the usage object.
+- `deepdive/cost.ts` — one row per run with a basis, precedence
+  `provider_reported > provider_generation > token_estimate > unavailable`.
+  A failed `/generation` lookup falls through to the estimate; it is never $0
+  and never silent.
+- `lifecycle-runner.ts` — every tick is an epoch: reconcile, persist the epoch,
+  stamp the window's rows with the factor (→ `provider_reconciled_estimate`),
+  track consecutive anomalies. **An IDS ledger/provider gap no longer revokes.**
+  `decideLifecycle` revokes only on `phantomSpend`. A housekeeping revoke
+  (secret not in the store) no longer marks the row `idsMismatch`, so a restart
+  does not halt on it.
+- `budget.ts` — the daily cap is enforced against
+  `max(local estimate, Σ provider deltas today)`; `billingStatus` of
+  `anomaly` / `phantom` closes the gate with `maxRunCostUsd: 0`. `run.ts`
+  supplies both from the latest epoch / lifecycle row.
+
+### M6 acceptance criterion — rewritten
+"Cost appears in the ledger" tested a detail the gateway does not expose. Now:
+*after controlled inference, authoritative provider spend increases; local
+aggregate spend reconciles to the provider total within the anomaly band; every
+displayed per-report cost declares its attribution basis.*
+
+### Not built (roadmap, DECISIONS.md)
+Progressive analysis tiers; deduplicated launch state keyed on
+`token + analysis_version + evidence_timestamp`; local velocity control; the
+upstream ask to Orbio for per-request cost headers or `orbio_get_usage(since)`.
+The serialized balance-delta probe was considered and rejected — right for
+10–15 runs/day, wrong shape for a query-driven product.
+
+### Verify — GREEN
+`pnpm verify`: typecheck (6 pkgs) + 277 worker tests (+21: pricing 6, reconcile
++ gate 11, state 1, cost 7 rewritten, lifecycle 4 flipped) + 8 api. Migration applied.

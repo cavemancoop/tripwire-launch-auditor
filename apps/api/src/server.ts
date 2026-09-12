@@ -14,7 +14,59 @@ export interface LifecycleApiRow extends LifecycleChainRow {
   at: string;
   signature: string | null;
   keyId: string | null;
+  /** M5c — not part of the signed body; exact | aggregate_only | unavailable | anomaly | phantom.
+   *  Optional: rows written before M5c have none. */
+  billingStatus?: string | null;
 }
+
+/** M5c — the agent's cost-forecast error, graded per epoch like any other forecast. */
+export interface EstimatorSummary {
+  windows: number;
+  /** Σ provider deltas over the trailing 24h — the authoritative bill */
+  providerSpend24hUsd: number;
+  /** Σ local token-priced estimates over the same windows */
+  estimatedSpend24hUsd: number;
+  requests24h: number;
+  /** mean |discrepancy| across windows that had requests */
+  meanAbsDiscrepancyPct: number | null;
+  latest: {
+    at: string;
+    billingStatus: string;
+    discrepancyPct: number | null;
+    reconciliationFactor: number | null;
+  } | null;
+}
+
+export type EstimatorReader = () => Promise<EstimatorSummary>;
+
+const prismaEstimatorReader: EstimatorReader = async () => {
+  const since = new Date(Date.now() - 24 * 3_600_000);
+  const rows = await prisma.metabolismEpoch.findMany({
+    where: { at: { gte: since } },
+    orderBy: { at: 'desc' },
+  });
+  const graded = rows.filter((r) => r.discrepancyPct != null);
+  const meanAbs =
+    graded.length > 0
+      ? Math.round((graded.reduce((a, r) => a + Math.abs(r.discrepancyPct!), 0) / graded.length) * 100) / 100
+      : null;
+  const latest = rows[0] ?? null;
+  return {
+    windows: rows.length,
+    providerSpend24hUsd: Math.round(rows.reduce((a, r) => a + r.providerDeltaUsd, 0) * 1e4) / 1e4,
+    estimatedSpend24hUsd: Math.round(rows.reduce((a, r) => a + r.localEstimateUsd, 0) * 1e4) / 1e4,
+    requests24h: rows.reduce((a, r) => a + r.requestCount, 0),
+    meanAbsDiscrepancyPct: meanAbs,
+    latest: latest
+      ? {
+          at: latest.at.toISOString(),
+          billingStatus: latest.billingStatus,
+          discrepancyPct: latest.discrepancyPct,
+          reconciliationFactor: latest.reconciliationFactor,
+        }
+      : null,
+  };
+};
 
 export type LifecycleReader = (limit: number) => Promise<LifecycleApiRow[]>;
 
@@ -43,6 +95,7 @@ const prismaLifecycleReader: LifecycleReader = async (limit) => {
       ledgerSpendUsd: r.ledgerSpendUsd,
       providerSpendUsd: r.providerSpendUsd,
       idsMismatch: r.idsMismatch,
+      billingStatus: r.billingStatus,
       prevHash: r.prevHash,
       bodyHash: r.bodyHash,
       signature: r.signature,

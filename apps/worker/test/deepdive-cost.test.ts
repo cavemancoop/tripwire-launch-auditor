@@ -1,14 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { recordDeepdiveSpend } from '../src/deepdive/cost';
-import type { SpendStore } from '../src/metabolism/spend-ledger';
+import { PRICING_VERSION } from '../src/deepdive/pricing';
+import type { SpendRow, SpendStore } from '../src/metabolism/spend-ledger';
 
-function fakeStore(): SpendStore & { rows: Array<Record<string, unknown>> } {
-  const rows: Array<Record<string, unknown>> = [];
+function fakeStore(): SpendStore & { rows: Array<SpendRow & { id: string }> } {
+  const rows: Array<SpendRow & { id: string }> = [];
   return {
     rows,
     async findByGenerationId(id) {
       const hit = rows.find((r) => r.generationId === id);
-      return hit ? { id: hit.id as string } : null;
+      return hit ? { id: hit.id } : null;
     },
     async insert(row) {
       const id = `s${rows.length + 1}`;
@@ -16,28 +17,75 @@ function fakeStore(): SpendStore & { rows: Array<Record<string, unknown>> } {
       return { id };
     },
     async sum() {
-      return rows.reduce((a, r) => a + (r.costUsd as number), 0);
+      return rows.reduce((a, r) => a + r.costUsd, 0);
     },
     async sumByKey() {
       return [];
     },
+    async windowEstimate() {
+      return { estimatedUsd: 0, count: 0 };
+    },
+    async applyReconciliation() {
+      return 0;
+    },
   };
 }
 
-const result = (over: Partial<{ generationIds: string[]; usageCostUsd: number | null }> = {}) => ({
-  generationIds: over.generationIds ?? ['gen-a', 'gen-b'],
-  modelSlug: 'x/y',
-  usageCostUsd: over.usageCostUsd ?? 0.02,
+type R = Parameters<typeof recordDeepdiveSpend>[0]['result'];
+const result = (over: Partial<R> = {}): R => ({
+  generationIds: [],
+  modelSlug: 'sakana/fugu-max',
+  usageCostUsd: null,
+  promptTokens: 50_000,
+  completionTokens: 5_000,
+  ...over,
 });
 
-describe('recordDeepdiveSpend', () => {
-  // The Orbio gateway 404s OpenRouter's `GET /generation`, so every per-generation
-  // lookup throws. An empty ledger reads as $0 spend to the IDS reconciler, which
-  // trips REVOKING and halts the agent — so fall back to the streamed estimate.
-  it('falls back to the usage estimate when every cost lookup fails', async () => {
+describe('recordDeepdiveSpend — every cost carries its basis (M5c)', () => {
+  it('Orbio gateway shape: no cost, no generation ids, tokens present → token_estimate', async () => {
+    const store = fakeStore();
+    const out = await recordDeepdiveSpend({ result: result(), keyHashPrefix: 'kp1', reportId: 'r1' }, { store });
+    expect(out.costBasis).toBe('token_estimate');
+    expect(out.totalCostUsd).toBeCloseTo(0.13, 6); // 50k@$2/M + 5k@$6/M
+    expect(out.estimatedCostUsd).toBeCloseTo(0.13, 6);
+    expect(out.failed).toEqual([]);
+    expect(store.rows).toHaveLength(1);
+    expect(store.rows[0]).toMatchObject({
+      costUsd: 0.13,
+      costBasis: 'token_estimate',
+      promptTokens: 50_000,
+      completionTokens: 5_000,
+      pricingVersion: PRICING_VERSION,
+      keyHashPrefix: 'kp1',
+      reportId: 'r1',
+      generationId: null,
+    });
+  });
+
+  it('a provider-reported cost wins and is labelled as such, estimate kept alongside', async () => {
+    const store = fakeStore();
+    const out = await recordDeepdiveSpend({ result: result({ usageCostUsd: 0.1182 }) }, { store });
+    expect(out.costBasis).toBe('provider_reported');
+    expect(out.totalCostUsd).toBeCloseTo(0.1182, 6);
+    expect(store.rows[0]?.estimatedCostUsd).toBeCloseTo(0.13, 6);
+  });
+
+  it('generation lookups that all succeed → provider_generation, summed', async () => {
+    const store = fakeStore();
+    const costs: Record<string, number> = { 'gen-a': 0.012, 'gen-b': 0.008 };
+    const out = await recordDeepdiveSpend(
+      { result: result({ generationIds: ['gen-a', 'gen-b'] }) },
+      { store, lookupCost: async (id) => costs[id]! },
+    );
+    expect(out.costBasis).toBe('provider_generation');
+    expect(out.totalCostUsd).toBeCloseTo(0.02, 6);
+    expect(store.rows[0]?.generationId).toBe('gen-a');
+  });
+
+  it('a failed generation lookup (the Orbio 404) falls back to the token estimate — never $0, never silent', async () => {
     const store = fakeStore();
     const out = await recordDeepdiveSpend(
-      { result: result({ usageCostUsd: 0.031 }), keyHashPrefix: 'kp1', reportId: 'r1' },
+      { result: result({ generationIds: ['gen-a'] }) },
       {
         store,
         lookupCost: async (id) => {
@@ -45,77 +93,39 @@ describe('recordDeepdiveSpend', () => {
         },
       },
     );
-    expect(out.failed).toEqual(['gen-a', 'gen-b']);
+    expect(out.failed).toEqual(['gen-a']);
     expect(out.failureReason).toMatch(/404/);
-    expect(out.estimated).toBe(true);
-    expect(out.totalCostUsd).toBeCloseTo(0.031, 6);
-    expect(store.rows).toHaveLength(1);
-    expect(store.rows[0]).toMatchObject({ costUsd: 0.031, model: 'x/y', keyHashPrefix: 'kp1', generationId: null });
+    expect(out.costBasis).toBe('token_estimate');
+    expect(out.totalCostUsd).toBeCloseTo(0.13, 6);
   });
 
-  it('records nothing when lookups fail and there is no usage estimate to fall back on', async () => {
+  it('nothing to price at all → unavailable with cost 0, not a fabricated number', async () => {
     const store = fakeStore();
     const out = await recordDeepdiveSpend(
-      // built inline: the `result()` helper's `??` would coerce a null estimate
-      { result: { generationIds: ['gen-a', 'gen-b'], modelSlug: 'x/y', usageCostUsd: null } },
-      {
-        store,
-        lookupCost: async () => {
-          throw new Error('HTTP 404');
-        },
-      },
+      { result: result({ promptTokens: null, completionTokens: null }) },
+      { store },
     );
-    expect(out.failed).toHaveLength(2);
-    expect(out.estimated).toBeUndefined();
+    expect(out.costBasis).toBe('unavailable');
     expect(out.totalCostUsd).toBe(0);
-    expect(store.rows).toHaveLength(0);
+    expect(out.estimatedCostUsd).toBeNull();
+    expect(store.rows[0]).toMatchObject({ costUsd: 0, costBasis: 'unavailable', pricingVersion: null });
   });
 
-  it('records one MetabolismSpend row per generation, costed via lookup', async () => {
+  it('an unpriced model with tokens is unavailable, not guessed', async () => {
     const store = fakeStore();
-    const costs: Record<string, number> = { 'gen-a': 0.012, 'gen-b': 0.008 };
-    const out = await recordDeepdiveSpend(
-      { result: result(), keyHashPrefix: 'kp1', reportId: 'r1' },
-      { store, lookupCost: async (id) => costs[id]! },
-    );
-    expect(out.totalCostUsd).toBeCloseTo(0.02, 6);
-    expect(out.rows.map((r) => r.costUsd)).toEqual([0.012, 0.008]);
-    expect(store.rows).toHaveLength(2);
-    expect(store.rows[0]).toMatchObject({ model: 'x/y', keyHashPrefix: 'kp1', reportId: 'r1', generationId: 'gen-a' });
+    const out = await recordDeepdiveSpend({ result: result({ modelSlug: 'x/unknown' }) }, { store });
+    expect(out.costBasis).toBe('unavailable');
+    expect(out.estimatedCostUsd).toBeNull();
   });
 
-  it('is idempotent — a re-run of the same generations adds nothing to the total', async () => {
+  it('is idempotent on a generation id', async () => {
     const store = fakeStore();
+    const args = { result: result({ generationIds: ['gen-a'] }) };
     const deps = { store, lookupCost: async () => 0.01 };
-    await recordDeepdiveSpend({ result: result() }, deps);
-    const second = await recordDeepdiveSpend({ result: result() }, deps);
-    expect(second.rows.every((r) => r.deduped)).toBe(true);
-    expect(second.totalCostUsd).toBe(0);
-    expect(store.rows).toHaveLength(2);
-  });
-
-  it('skips a generation whose cost lookup fails (no row written)', async () => {
-    const store = fakeStore();
-    const out = await recordDeepdiveSpend(
-      { result: result({ generationIds: ['ok', 'bad'] }) },
-      {
-        store,
-        lookupCost: async (id) => {
-          if (id === 'bad') throw new Error('404');
-          return 0.05;
-        },
-      },
-    );
-    expect(out.failed).toEqual(['bad']);
+    const a = await recordDeepdiveSpend(args, deps);
+    const b = await recordDeepdiveSpend(args, deps);
+    expect(a.rows[0]?.deduped).toBe(false);
+    expect(b.rows[0]?.deduped).toBe(true);
     expect(store.rows).toHaveLength(1);
-    expect(out.totalCostUsd).toBeCloseTo(0.05, 6);
-  });
-
-  it('falls back to the usage estimate when there are no generation ids', async () => {
-    const store = fakeStore();
-    const out = await recordDeepdiveSpend({ result: result({ generationIds: [], usageCostUsd: 0.04 }) }, { store });
-    expect(out.rows).toHaveLength(1);
-    expect(out.rows[0]!.costUsd).toBe(0.04);
-    expect(store.rows[0]!.generationId).toBeNull();
   });
 });

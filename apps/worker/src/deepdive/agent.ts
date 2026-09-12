@@ -77,12 +77,32 @@ const EMPTY_OUTPUT: DeepDiveOutput = {
 };
 
 const COST_KEYS = ['costUsd', 'totalCost', 'total_cost', 'cost'];
-function pickUsageCost(usage: Record<string, unknown>): number | null {
-  for (const k of COST_KEYS) {
+const PROMPT_KEYS = ['promptTokens', 'prompt_tokens', 'inputTokens', 'input_tokens'];
+const COMPLETION_KEYS = ['completionTokens', 'completion_tokens', 'outputTokens', 'output_tokens'];
+
+function pickNum(usage: Record<string, unknown>, keys: string[]): number | null {
+  for (const k of keys) {
     const v = usage[k];
     if (typeof v === 'number' && Number.isFinite(v)) return v;
   }
   return null;
+}
+
+/**
+ * Read whatever the gateway put in the usage object. OpenRouter includes a
+ * dollar cost; an OpenAI-shaped gateway (Orbio) includes only token counts.
+ * Both are recorded as-is — the ledger decides the cost basis (cost.ts).
+ */
+function pickUsage(usage: Record<string, unknown>): {
+  costUsd: number | null;
+  promptTokens: number | null;
+  completionTokens: number | null;
+} {
+  return {
+    costUsd: pickNum(usage, COST_KEYS),
+    promptTokens: pickNum(usage, PROMPT_KEYS),
+    completionTokens: pickNum(usage, COMPLETION_KEYS),
+  };
 }
 
 export async function runDeepdiveAgent(
@@ -132,12 +152,15 @@ export async function runDeepdiveAgent(
       output: EMPTY_OUTPUT,
       warnings: [`model run failed: ${e instanceof Error ? e.message : String(e)}`],
       usageCostUsd: null,
+      promptTokens: null,
+      completionTokens: null,
       stoppedBy: 'error',
     };
   }
 
   const usage = await run.getUsage().catch(() => ({}) as Record<string, unknown>);
-  const usageCostUsd = pickUsageCost(usage);
+  const u = pickUsage(usage);
+  const usageCostUsd = u.costUsd;
 
   let parsed;
   try {
@@ -154,6 +177,8 @@ export async function runDeepdiveAgent(
     output,
     warnings,
     usageCostUsd,
+    promptTokens: u.promptTokens,
+    completionTokens: u.completionTokens,
     stoppedBy:
       usageCostUsd !== null && usageCostUsd >= input.maxCostUsd
         ? 'max_cost'

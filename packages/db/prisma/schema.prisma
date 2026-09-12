@@ -410,7 +410,10 @@ model LifecycleLog {
   // IDS check inputs: our local per-call ledger vs orbio_get_key_status
   ledgerSpendUsd   Float?
   providerSpendUsd Float?
+  /// retained for the signed body; no longer drives a revoke (M5c)
   idsMismatch      Boolean @default(false)
+  /// M5c: exact | aggregate_only | unavailable | anomaly | phantom
+  billingStatus    String?
 
   // M5: tamper-evident chain — bodyHash folds prevHash; signature signs bodyHash
   prevHash  String?
@@ -428,14 +431,55 @@ model LifecycleLog {
 model MetabolismSpend {
   id           String   @id @default(cuid())
   at           DateTime @default(now())
+  /// best-available per-run figure for display — see costBasis for what it is
   costUsd      Float
   model        String
   keyHashPrefix String?
   reportId     String?
-  generationId String?  // OpenRouter generation id
+  generationId String?  // OpenRouter generation id (null through the Orbio gateway)
+
+  // M5c — one number was doing three jobs. Every cost now carries its provenance.
+  promptTokens     Int?
+  completionTokens Int?
+  /// tokens × pinned model price at pricingVersion; null when tokens or price unknown
+  estimatedCostUsd Float?
+  pricingVersion   String?
+  /// token_estimate | provider_reconciled_estimate | provider_reported | provider_generation | unavailable
+  costBasis        String   @default("unavailable")
+  /// estimatedCostUsd × the epoch's reconciliation factor — filled by the runner
+  reconciledCostUsd Float?
+  epochId          String?
 
   @@index([at])
+  @@index([epochId])
   @@map("metabolism_spend")
+}
+
+/// M5c — one row per lifecycle tick: the provider's authoritative spend delta
+/// over the window vs the sum of local token-priced estimates. The ratio grades
+/// the estimator; the discrepancy is the agent's own cost-forecast error.
+model MetabolismEpoch {
+  id                   String   @id @default(cuid())
+  at                   DateTime @default(now())
+  keyHashPrefix        String?
+  /// orbio_get_balance.spent.usd at this tick (cumulative, authoritative)
+  providerSpendUsd     Float
+  /// providerSpendUsd − previous epoch's providerSpendUsd
+  providerDeltaUsd     Float
+  /// Σ MetabolismSpend.estimatedCostUsd for runs recorded in this window
+  localEstimateUsd     Float
+  requestCount         Int
+  /// providerDeltaUsd / localEstimateUsd when both > 0
+  reconciliationFactor Float?
+  /// (provider − local) / local × 100 — the estimator's error this window
+  discrepancyPct       Float?
+  anomaly              Boolean  @default(false)
+  /// provider spend rose with zero local requests — the one compromise signal
+  phantom              Boolean  @default(false)
+  billingStatus        String
+
+  @@index([at])
+  @@map("metabolism_epoch")
 }
 
 // ──────────────────────────── Receipts ──────────────────────────────

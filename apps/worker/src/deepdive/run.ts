@@ -40,7 +40,13 @@ export interface RunDeepdiveDeps {
   buildContext?: (launch: Launch, env: WorkerEnv) => DeepdiveContext;
   client?: DeepdiveClient;
   runAgent?: typeof runDeepdiveAgent;
-  loadBudget?: (env: WorkerEnv, now: Date) => Promise<{ todaySpendUsd: number; spendableUsd: number }>;
+  loadBudget?: (env: WorkerEnv, now: Date) => Promise<{
+    todaySpendUsd: number;
+    spendableUsd: number;
+    /** M5c — optional so an injected fake can return the pre-M5c shape */
+    providerSpendTodayUsd?: number;
+    billingStatus?: string | null;
+  }>;
   persist?: typeof persistLaunchReports;
   recordSpend?: typeof recordDeepdiveSpend;
   keyHashPrefix?: string | null;
@@ -93,16 +99,31 @@ function targetFromLaunch(l: Launch): DeepdiveTarget {
 async function defaultLoadBudget(
   env: WorkerEnv,
   now: Date,
-): Promise<{ todaySpendUsd: number; spendableUsd: number }> {
-  const todaySpendUsd = await totalSpendUsd({ since: startOfUtcDay(now) });
-  const snap = await prisma.lifecycleLog.findFirst({
-    where: { balanceUsd: { not: null } },
-    orderBy: { createdAt: 'desc' },
-    select: { balanceUsd: true },
-  });
+): Promise<{
+  todaySpendUsd: number;
+  providerSpendTodayUsd: number;
+  spendableUsd: number;
+  billingStatus: string | null;
+}> {
+  const dayStart = startOfUtcDay(now);
+  const [todaySpendUsd, providerAgg, snap] = await Promise.all([
+    totalSpendUsd({ since: dayStart }),
+    // M5c: the authoritative figure — Σ provider deltas over today's epochs
+    prisma.metabolismEpoch.aggregate({ _sum: { providerDeltaUsd: true }, where: { at: { gte: dayStart } } }),
+    prisma.lifecycleLog.findFirst({
+      where: { balanceUsd: { not: null } },
+      orderBy: { createdAt: 'desc' },
+      select: { balanceUsd: true, billingStatus: true },
+    }),
+  ]);
   const spendableUsd =
     snap?.balanceUsd != null ? snap.balanceUsd - env.metabolismReserveUsd : env.deepdiveDailyCapUsd;
-  return { todaySpendUsd, spendableUsd };
+  return {
+    todaySpendUsd,
+    providerSpendTodayUsd: providerAgg._sum.providerDeltaUsd ?? 0,
+    spendableUsd,
+    billingStatus: snap?.billingStatus ?? null,
+  };
 }
 
 function defaultKeyHashPrefix(env: WorkerEnv): string | null {
@@ -146,12 +167,14 @@ export async function runDeepdive(
   }
 
   const loadBudget = deps.loadBudget ?? defaultLoadBudget;
-  const { todaySpendUsd, spendableUsd } = await loadBudget(env, now);
+  const budget = await loadBudget(env, now);
   const gate = deepdiveRunGate({
     capPerRunUsd: env.deepdiveCapPerRunUsd,
     dailyCapUsd: env.deepdiveDailyCapUsd,
-    todaySpendUsd,
-    spendableUsd,
+    todaySpendUsd: budget.todaySpendUsd,
+    providerSpendTodayUsd: budget.providerSpendTodayUsd,
+    spendableUsd: budget.spendableUsd,
+    billingStatus: budget.billingStatus,
   });
   if (!gate.allowed) return { ran: false, reason: `budget: ${gate.reason}` };
 
@@ -200,13 +223,12 @@ export async function runDeepdive(
   const recordSpend = deps.recordSpend ?? recordDeepdiveSpend;
   const keyHashPrefix = deps.keyHashPrefix ?? defaultKeyHashPrefix(env);
   const spend = await recordSpend({ result, keyHashPrefix, reportId }, { env });
-  if (spend.failed.length > 0) {
-    // never silent: an unrecorded cost reads as $0 to the IDS reconciler
+  if (spend.costBasis === 'unavailable') {
+    // never silent: the epoch reconciler will mark this window `unavailable`
     // eslint-disable-next-line no-console
     console.warn(
-      `[deepdive] cost lookup failed for ${spend.failed.length} generation(s)` +
-        (spend.estimated ? ' — recorded the streamed-usage estimate instead' : ' — NO spend recorded') +
-        (spend.failureReason ? `: ${spend.failureReason}` : ''),
+      `[deepdive] no cost basis for this run (no provider cost, no priced tokens)` +
+        (spend.failureReason ? ` — ${spend.failureReason}` : ''),
     );
   }
 
