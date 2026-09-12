@@ -1075,8 +1075,15 @@ A worker tick whose in-flight request pre-dated the sign-in got a 401, then
 found and destroyed the user's fresh token. Same mechanism as the ~2.5h
 overnight lapse; only the trigger differed.
 
-Root cause: **Orbio's refresh_token grant is rejected.** Holding a refresh token
-makes every 401 destructive.
+Root cause — corrected after measuring it directly (the first draft of this
+entry said the grant was rejected outright; it is not): **Orbio's refresh grant
+is one-shot.** First use → HTTP 200 with no replacement `refresh_token` in the
+body; any later use of the same token → 400 `invalid_grant`. The SDK's
+`refreshAuthorization` keeps the old token when no new one arrives, so the
+second refresh always fails, and the SDK treats that as fatal. That is the whole
+overnight story: 1h access token + one refresh ≈ the ~2.5h observed. Holding a
+refresh token therefore makes the *second* 401 destructive — and a re-auth race
+makes the *first* one destructive for whichever process loses.
 
 - `OrbioAuthProvider.tokens()` withholds `refresh_token` from the SDK unless
   `ORBIO_OAUTH_USE_REFRESH=1`. A 401 now means "re-auth needed"; the access

@@ -100,13 +100,16 @@ export class OrbioAuthProvider implements OAuthClientProvider {
   tokens(): OAuthTokens | undefined {
     const t = readOAuthBlob(this.opts.storePath, this.opts.encryptionKey).tokens;
     if (!t) return undefined;
-    // 2026-09-12: Orbio's refresh_token grant is rejected (invalid_grant). The
-    // SDK only refreshes after a 401, and on a refresh failure it WIPES the
-    // stored tokens and demands a browser — which destroyed a freshly issued
-    // token within a minute when a worker tick raced the interactive sign-in.
-    // Without a refresh_token the SDK skips straight to "needs authorization",
-    // leaves the access token in place, and the next tick simply uses it. Set
-    // ORBIO_OAUTH_USE_REFRESH=1 once Orbio's refresh works.
+    // 2026-09-12, measured: Orbio's refresh grant is ONE-SHOT. The first use
+    // returns 200 with no replacement refresh_token; any later use of the same
+    // token is 400 invalid_grant. The SDK only refreshes after a 401 and, on
+    // invalid_grant, WIPES the stored tokens and demands a browser — so the
+    // second refresh (~2h in) killed the overnight run, and a worker tick that
+    // raced the interactive sign-in for the one refresh killed a fresh token
+    // within a minute. Without a refresh_token the SDK never refreshes: a 401
+    // means "re-auth needed", the access token (1h) stays on disk, and a race
+    // self-heals. Cost: the unattended bound is one access lifetime, not two.
+    // ORBIO_OAUTH_USE_REFRESH=1 trades that hour back for the destructive end.
     if (this.opts.useRefreshToken) return t;
     const { refresh_token: _dropped, ...rest } = t;
     return rest as OAuthTokens;
