@@ -21,3 +21,6 @@ packages/db/src/generated/
 .idea/
 .vscode/
 *.log
+
+# Word/Office lock files (created while a document is open)
+~$*
