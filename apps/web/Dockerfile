@@ -19,7 +19,7 @@ COPY packages/rpc-budget/package.json packages/rpc-budget/package.json
 # even for this dependency-free app — the workspace install runs every
 # package's postinstall, so the schema needs to be present.
 COPY packages/db/prisma packages/db/prisma
-RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
 
 COPY apps/web apps/web

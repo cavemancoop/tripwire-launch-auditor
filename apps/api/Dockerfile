@@ -28,7 +28,7 @@ COPY packages/rpc-budget/package.json packages/rpc-budget/package.json
 # packages/db's postinstall (`prisma generate`) fires during the install below
 # for every image, whichever app it's building — it needs the schema present.
 COPY packages/db/prisma packages/db/prisma
-RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
 
 # The client generated during install above already matches this schema (the
