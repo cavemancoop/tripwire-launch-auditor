@@ -21,7 +21,7 @@ describe('parseRedisUrl', () => {
 describe('QUEUE_NAMES', () => {
   it('registers every pipeline queue', () => {
     expect(Object.values(QUEUE_NAMES).sort()).toEqual(
-      ['commits', 'deepdive', 'features', 'metabolism', 'outcomes', 'watcher'].sort(),
+      ['assess', 'commits', 'deepdive', 'features', 'metabolism', 'outcomes', 'watcher'].sort(),
     );
   });
 });

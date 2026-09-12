@@ -153,6 +153,57 @@ docker compose up -d
 pnpm db:migrate
 ```
 
+## Fork-and-run (spec §8.1)
+
+This is the property the Orbio red-team test (spec §0.1) actually checks: anyone
+holding $ORBIO can clone this repo, authorize once, and run their own instance —
+with **no card, no top-up, no payment rail**. Three steps, end to end:
+
+```bash
+# 1. clone + configure
+git clone <this repo> && cd launch-auditor
+pnpm install
+cp .env.example .env
+# fill in: RH_RPC_URL, DATABASE_URL/REDIS_URL (or use docker compose below),
+# COMMIT_REGISTRY_ADDRESS + AGENT_EIP712_PRIVATE_KEY + GAS_WALLET_PRIVATE_KEY,
+# ORBIO_MCP_URL (default is fine), TOKEN_ENCRYPTION_KEY (pnpm orbio:auth prints
+# one on first run if it's blank)
+docker compose up -d && pnpm db:migrate
+
+# 2. one-time browser sign-in — the ONLY interactive step, ever
+pnpm orbio:auth
+
+# 3. run everything
+pnpm start
+```
+
+`pnpm start` runs the watcher, the metabolism lifecycle loop, the commit loop, the
+outcome resolver, the deep-dive worker, a periodic benchmark snapshot, and the API —
+all from one command (`scripts/start.mjs`; no extra dependency, just two child
+processes sharing this terminal). From here the agent mints and manages its own
+Orbio gateway key without further human input; see [Metabolism](#metabolism--orbio-mcp-client--lifecycle-runner--spend-ledger-m5b-1--m5b-2--m5b-3)
+below for what "without further human input" is currently bounded by.
+
+## API (M7, spec §9)
+
+All free during the contest (x402 / API-key payment gating on `/v1/deepdive` is
+deferred — see spec §9, "payments only if time remains"). Base URL: `http://localhost:3000`.
+
+| Endpoint | What it does |
+|---|---|
+| `GET /v1/launches?limit=` | Live launch feed: latest non-retrospective launches with their `det_v0` forecast + commit-proof pointer. |
+| `GET /v1/report/:token` | Every forecaster's latest forecast for a token, with evidence and proof status. |
+| `POST /v1/assess/:token` | Enqueues one on-demand report for an already-indexed token, any age. *Scope note:* the spec's "daily re-scores for 7 days" is the recurring/event-aware re-scoring layer (v0.3 Watch, spec §10.1) — not built; this triggers a single immediate report. |
+| `POST /v1/deepdive/:token` | Enqueues an on-demand `llm_deepdive_v0` run. |
+| `GET /v1/benchmark` | The public benchmark table (all forecasters, sample sizes). Served from a snapshot the worker recomputes every 5 minutes (`data/benchmark.json`) — the API does no scoring compute itself. |
+| `GET /v1/proof/:hash` | A report's Merkle proof, verified locally, plus a best-effort on-chain confirmation of its batch root (an RPC hiccup reports `onChainConfirmed: null`, never `false`). |
+| `GET /v1/lifecycle` | The signed key-lifecycle log, independently verifiable, plus (M5c) the metabolism's own cost-forecast error over the trailing 24h. |
+| `POST /mcp` | MCP server (Streamable HTTP, stateless): `get_report`, `get_benchmark`, `request_deepdive` — the same endpoints with no HTTP client needed. |
+
+`x-api-key` (checked against `DESIGN_PARTNER_API_KEYS`) is accepted and echoed back as
+`designPartner: true|false` on `/v1/assess` and `/v1/deepdive` — it doesn't gate
+anything yet, since nothing is priced yet.
+
 ## Verify
 
 ```bash

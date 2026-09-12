@@ -10,7 +10,7 @@ describe('POST /v1/deepdive/:token', () => {
 
     const res = await app.inject({ method: 'POST', url: `/v1/deepdive/${TOKEN}` });
     expect(res.statusCode).toBe(202);
-    expect(res.json()).toEqual({ queued: true, token: TOKEN.toLowerCase(), jobId: 'job-1' });
+    expect(res.json()).toEqual({ queued: true, token: TOKEN.toLowerCase(), jobId: 'job-1', designPartner: false });
     expect(enqueue).toHaveBeenCalledWith({ tokenAddress: TOKEN.toLowerCase(), trigger: 'on_demand' });
     await app.close();
   });

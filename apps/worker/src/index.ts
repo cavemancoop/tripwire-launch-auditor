@@ -6,11 +6,13 @@ import {
 } from '@launch-auditor/chain';
 import { probeGetLogsRange } from '@launch-auditor/rpc-budget';
 import type { PublicClient } from 'viem';
+import { startAssessWorker } from './assess';
 import { runCommitLoop } from './commit';
 import { runDeepdiveLoop, startDeepdiveWorker } from './deepdive';
 import { loadEnv, type WorkerEnv } from './env';
 import { runLifecycleLoop } from './metabolism';
 import { runOutcomesLoop } from './outcomes';
+import { runScorerLoop } from './scorer';
 import { runPoller, type StopSignal } from './watcher/poller';
 import { rpc } from './watcher/rpc';
 import { startFeaturesWorker } from './watcher/t10';
@@ -64,9 +66,12 @@ async function main(): Promise<void> {
   worker.on('ready', () => console.log('[worker] features queue ready'));
   worker.on('error', (err) => console.error('[worker] error', err));
 
+  const assessWorker = startAssessWorker(client);
+  assessWorker.on('error', (err) => console.error('[assess] worker error', err));
+
   const shutdown = async (): Promise<void> => {
     signal.stopped = true;
-    await worker.close();
+    await Promise.all([worker.close(), assessWorker.close()]);
     process.exit(0);
   };
   process.on('SIGINT', shutdown);
@@ -80,6 +85,7 @@ async function main(): Promise<void> {
   }
 
   void runOutcomesLoop(client, signal);
+  void runScorerLoop(signal, { outFile: process.env.BENCHMARK_FILE || 'data/benchmark.json' });
 
   if (env.agentPrivateKey && process.env.TOKEN_ENCRYPTION_KEY) {
     console.log('[metabolism] lifecycle loop enabled');

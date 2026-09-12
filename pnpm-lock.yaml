@@ -74,12 +74,21 @@ importers:
       '@launch-auditor/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@modelcontextprotocol/sdk':
+        specifier: 'catalog:'
+        version: 1.30.0(zod@4.6.1)
       bullmq:
         specifier: 'catalog:'
         version: 5.81.4
       fastify:
         specifier: 'catalog:'
         version: 5.12.1
+      viem:
+        specifier: 'catalog:'
+        version: 2.56.3(typescript@5.9.3)(zod@4.6.1)
+      zod:
+        specifier: 'catalog:'
+        version: 4.6.1
     devDependencies:
       '@types/node':
         specifier: 'catalog:'

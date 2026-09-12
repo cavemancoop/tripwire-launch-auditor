@@ -8,6 +8,7 @@
   },
   "packageManager": "pnpm@11.25.0",
   "scripts": {
+    "start": "node scripts/start.mjs",
     "verify": "node scripts/verify.mjs",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",

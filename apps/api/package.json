@@ -11,8 +11,11 @@
   },
   "dependencies": {
     "@launch-auditor/db": "workspace:*",
+    "@modelcontextprotocol/sdk": "catalog:",
     "bullmq": "catalog:",
-    "fastify": "catalog:"
+    "fastify": "catalog:",
+    "viem": "catalog:",
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",

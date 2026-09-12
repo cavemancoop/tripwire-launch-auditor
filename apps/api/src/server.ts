@@ -1,3 +1,4 @@
+import { existsSync, readFileSync } from 'node:fs';
 import {
   GENESIS_HASH,
   prisma,
@@ -5,7 +6,13 @@ import {
   type LifecycleChainRow,
 } from '@launch-auditor/db';
 import Fastify, { type FastifyInstance } from 'fastify';
+import { createPublicClient, http, parseAbiItem, type Hex } from 'viem';
+import { checkDesignPartner } from './auth';
+import { makeAssessEnqueuer, type AssessEnqueuer } from './assess-queue';
 import { makeDeepdiveEnqueuer, type DeepdiveEnqueuer } from './deepdive-queue';
+import { loadApiEnv, type ApiEnv } from './env';
+import { mountMcp } from './mcp';
+import { verifyProof } from './merkle';
 
 /** One `lifecycle_log` row as served by `GET /v1/lifecycle`. */
 export interface LifecycleApiRow extends LifecycleChainRow {
@@ -104,29 +111,349 @@ const prismaLifecycleReader: LifecycleReader = async (limit) => {
 };
 
 const HEX_ADDR = /^0x[0-9a-fA-F]{40}$/;
+const HEX_HASH = /^0x[0-9a-fA-F]{64}$/;
+const clampLimit = (n: number, max: number): number => (Number.isFinite(n) ? Math.min(max, Math.max(1, Math.trunc(n))) : 50);
+
+// ── GET /v1/launches ─────────────────────────────────────────────────────
+
+export interface LaunchFeedRow {
+  token: string;
+  source: string;
+  lane: string;
+  launchAt: string | null;
+  detV0: {
+    pInsiderExit24h: number | null;
+    pDrawdown8024h: number | null;
+    pTradingAlive24h: number | null;
+    reportHash: string;
+  } | null;
+  proof: { committed: boolean; txHash?: string | null; committedAt?: string | null };
+}
+
+export type LaunchFeedReader = (limit: number) => Promise<LaunchFeedRow[]>;
+
+const prismaLaunchFeedReader: LaunchFeedReader = async (limit) => {
+  const launches = await prisma.launch.findMany({
+    where: { retrospective: false },
+    orderBy: { launchAt: 'desc' },
+    take: limit,
+  });
+  if (launches.length === 0) return [];
+
+  const tokens = launches.map((l) => l.tokenAddress);
+  const detReports = await prisma.report.findMany({
+    where: { tokenAddress: { in: tokens }, forecaster: 'det_v0' },
+    orderBy: { createdAt: 'desc' },
+    include: { commit: { select: { txHash: true, committedAt: true } } },
+  });
+  const byToken = new Map<string, (typeof detReports)[number]>();
+  for (const r of detReports) if (!byToken.has(r.tokenAddress)) byToken.set(r.tokenAddress, r);
+
+  return launches.map((l) => {
+    const r = byToken.get(l.tokenAddress);
+    return {
+      token: l.tokenAddress,
+      source: l.source,
+      lane: l.lane,
+      launchAt: l.launchAt?.toISOString() ?? null,
+      detV0: r
+        ? {
+            pInsiderExit24h: r.pInsiderExit24h,
+            pDrawdown8024h: r.pDrawdown80_24h,
+            pTradingAlive24h: r.pTradingAlive24h,
+            reportHash: r.reportHash,
+          }
+        : null,
+      proof: r?.commit
+        ? { committed: true, txHash: r.commit.txHash, committedAt: r.commit.committedAt?.toISOString() ?? null }
+        : { committed: false },
+    };
+  });
+};
+
+// ── GET /v1/report/:token ────────────────────────────────────────────────
+
+export interface TokenReportRow {
+  token: string;
+  reportTime: string;
+  forecasters: Array<{
+    forecaster: string;
+    version: string;
+    trigger: string;
+    confidence: number | null;
+    evidence: unknown;
+    probabilities: Record<string, number | null>;
+    reportHash: string;
+    validatorPassed: boolean;
+    proof: { committed: boolean; txHash?: string | null; committedAt?: string | null };
+  }>;
+}
+
+export type ReportReader = (token: string) => Promise<TokenReportRow | null>;
+
+const prismaReportReader: ReportReader = async (token) => {
+  const reports = await prisma.report.findMany({
+    where: { tokenAddress: token },
+    orderBy: { createdAt: 'desc' },
+    take: 50, // every forecaster's forecast for the most recent one or two report times
+    include: { commit: { select: { txHash: true, committedAt: true } } },
+  });
+  if (reports.length === 0) return null;
+
+  const latestTime = reports[0]!.reportTime.getTime();
+  const atLatest = reports.filter((r) => r.reportTime.getTime() === latestTime);
+
+  return {
+    token,
+    reportTime: reports[0]!.reportTime.toISOString(),
+    forecasters: atLatest.map((r) => ({
+      forecaster: r.forecaster,
+      version: r.forecasterVersion,
+      trigger: r.trigger,
+      confidence: r.confidence,
+      evidence: r.evidence,
+      probabilities: {
+        insiderExit6h: r.pInsiderExit6h,
+        insiderExit24h: r.pInsiderExit24h,
+        insiderExit72h: r.pInsiderExit72h,
+        sellImpaired1h: r.pSellImpaired1h,
+        sellImpaired24h: r.pSellImpaired24h,
+        liqImpaired24h: r.pLiqImpaired24h,
+        liqImpaired7d: r.pLiqImpaired7d,
+        drawdown8024h: r.pDrawdown80_24h,
+        drawdown807d: r.pDrawdown80_7d,
+        tradingAlive24h: r.pTradingAlive24h,
+        tradingAlive7d: r.pTradingAlive7d,
+      },
+      reportHash: r.reportHash,
+      validatorPassed: r.validatorPassed,
+      proof: r.commit
+        ? { committed: true, txHash: r.commit.txHash, committedAt: r.commit.committedAt?.toISOString() ?? null }
+        : { committed: false },
+    })),
+  };
+};
+
+// ── GET /v1/benchmark ────────────────────────────────────────────────────
+// The worker recomputes the benchmark every 5 minutes and writes it to a
+// shared file (fork-and-run: one filesystem, no network hop). The API only
+// reads the latest snapshot — it does no scoring compute of its own.
+
+export type BenchmarkReader = () => Promise<unknown | null>;
+
+const fileBenchmarkReader = (path: string): BenchmarkReader => async () => {
+  if (!existsSync(path)) return null;
+  try {
+    return JSON.parse(readFileSync(path, 'utf8'));
+  } catch {
+    return null;
+  }
+};
+
+// ── GET /v1/proof/:hash ──────────────────────────────────────────────────
+
+interface StoredLeaf {
+  reportHash: string;
+  index: number;
+  proof: string[];
+}
+
+export interface ProofRow {
+  reportHash: string;
+  committed: boolean;
+  proofAvailable?: boolean;
+  proofValid?: boolean;
+  merkleRoot?: string;
+  leafIndex?: number;
+  proof?: string[];
+  txHash?: string | null;
+  blockNumber?: number | null;
+  /** true/false = confirmed on-chain; null = RPC couldn't confirm right now (never reported as false) */
+  onChainConfirmed?: boolean | null;
+}
+
+export type ProofReader = (hash: string) => Promise<ProofRow | null>;
+
+const BATCH_COMMITTED_EVENT = parseAbiItem(
+  'event BatchCommitted(uint256 indexed batchId, bytes32 merkleRoot, uint256 leafCount, uint256 timestamp)',
+);
+
+const prismaProofReader = (env: ApiEnv): ProofReader => async (hash) => {
+  const report = await prisma.report.findUnique({ where: { reportHash: hash }, include: { commit: true } });
+  if (!report) return null;
+  if (!report.commit) return { reportHash: hash, committed: false };
+
+  const commit = report.commit;
+  const leaves = (commit.leaves as unknown as StoredLeaf[]) ?? [];
+  const leaf = leaves.find((l) => l.reportHash.toLowerCase() === hash);
+  if (!leaf) return { reportHash: hash, committed: true, proofAvailable: false };
+
+  const proofValid = verifyProof(hash as Hex, leaf.proof as Hex[], commit.merkleRoot as Hex);
+
+  let onChainConfirmed: boolean | null = null;
+  if (env.commitRegistryAddress && commit.blockNumber != null && env.rpcUrl) {
+    try {
+      const client = createPublicClient({ transport: http(env.rpcUrl) });
+      const logs = await client.getLogs({
+        address: env.commitRegistryAddress,
+        event: BATCH_COMMITTED_EVENT,
+        fromBlock: commit.blockNumber,
+        toBlock: commit.blockNumber,
+      });
+      onChainConfirmed = logs.some(
+        (l) => (l.args.merkleRoot as string | undefined)?.toLowerCase() === commit.merkleRoot.toLowerCase(),
+      );
+    } catch {
+      onChainConfirmed = null; // an RPC hiccup is "unknown", never reported as "not confirmed"
+    }
+  }
+
+  return {
+    reportHash: hash,
+    committed: true,
+    proofAvailable: true,
+    proofValid,
+    merkleRoot: commit.merkleRoot,
+    leafIndex: leaf.index,
+    proof: leaf.proof,
+    txHash: commit.txHash,
+    blockNumber: commit.blockNumber != null ? Number(commit.blockNumber) : null,
+    onChainConfirmed,
+  };
+};
 
 export interface BuildServerOptions {
   /** injectable for tests — defaults to a Prisma-backed reader */
   lifecycleReader?: LifecycleReader;
+  estimatorReader?: EstimatorReader;
+  launchFeedReader?: LaunchFeedReader;
+  reportReader?: ReportReader;
+  benchmarkReader?: BenchmarkReader;
+  proofReader?: ProofReader;
   /** injectable for tests — defaults to a BullMQ producer on the `deepdive` queue */
   enqueueDeepdive?: DeepdiveEnqueuer;
+  /** injectable for tests — defaults to a BullMQ producer on the `assess` queue */
+  enqueueAssess?: AssessEnqueuer;
+  env?: ApiEnv;
 }
 
 export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
   const app = Fastify({ logger: false });
+  const env = opts.env ?? loadApiEnv();
+
   const readLifecycle = opts.lifecycleReader ?? prismaLifecycleReader;
+  const readEstimator = opts.estimatorReader ?? prismaEstimatorReader;
+  const readLaunchFeed = opts.launchFeedReader ?? prismaLaunchFeedReader;
+  const readReport = opts.reportReader ?? prismaReportReader;
+  const readBenchmark = opts.benchmarkReader ?? fileBenchmarkReader(env.benchmarkFile);
+  const readProof = opts.proofReader ?? prismaProofReader(env);
+
   let enqueueDeepdive = opts.enqueueDeepdive;
-  const getEnqueue = (): DeepdiveEnqueuer => (enqueueDeepdive ??= makeDeepdiveEnqueuer());
+  const getEnqueueDeepdive = (): DeepdiveEnqueuer => (enqueueDeepdive ??= makeDeepdiveEnqueuer());
+  let enqueueAssess = opts.enqueueAssess;
+  const getEnqueueAssess = (): AssessEnqueuer => (enqueueAssess ??= makeAssessEnqueuer());
 
   app.get('/health', async () => ({
     ok: true,
     service: 'launch-auditor-api',
   }));
 
-  // spec §9 — free: the signed key-lifecycle log (spec §8). Each entry is
-  // independently verifiable: `bodyHash` = keccak256(RFC-8785(body)),
-  // `signature` = the agent key's EIP-191 personal_sign of `bodyHash`, and
-  // `prevHash` folds the previous entry's `bodyHash` into a tamper-evident chain.
+  // spec §9 — free: the live feed. Every non-retrospective launch with its
+  // latest det_v0 forecast and commit-proof pointer.
+  app.get('/v1/launches', async (req) => {
+    const q = req.query as { limit?: string };
+    const limit = clampLimit(Number(q.limit ?? 50), 200);
+    const launches = await readLaunchFeed(limit);
+    return { count: launches.length, launches };
+  });
+
+  // spec §9 — free tier during the contest: every forecaster's latest
+  // forecast for this token, with evidence and proof status.
+  app.get('/v1/report/:token', async (req, reply) => {
+    const { token } = req.params as { token: string };
+    if (!HEX_ADDR.test(token)) {
+      return reply.code(400).send({ error: 'token must be a 20-byte hex address' });
+    }
+    const row = await readReport(token.toLowerCase());
+    if (!row) return reply.code(404).send({ error: 'no report for this token yet' });
+    return row;
+  });
+
+  // spec §9 — free during the contest: on-demand report for a token of any
+  // age. Enqueued to the worker (same pattern as /v1/deepdive), which owns
+  // chain access and report signing. NOTE (scope): this produces one
+  // immediate report; "daily re-scores for 7 days" is the recurring,
+  // event-aware re-scoring layer (v0.3 Watch, spec §10.1) and is not built.
+  app.post('/v1/assess/:token', async (req, reply) => {
+    const { token } = req.params as { token: string };
+    if (!HEX_ADDR.test(token)) {
+      return reply.code(400).send({ error: 'token must be a 20-byte hex address' });
+    }
+    const auth = checkDesignPartner(req.headers['x-api-key'] as string | undefined, env.designPartnerApiKeys);
+    try {
+      const { id } = await getEnqueueAssess()({ tokenAddress: token.toLowerCase() });
+      return reply.code(202).send({
+        queued: true,
+        token: token.toLowerCase(),
+        jobId: id ?? null,
+        designPartner: auth.designPartner,
+        note: 'one immediate on-demand report; recurring re-scores are roadmap (v0.3 Watch), not built yet',
+      });
+    } catch (err) {
+      req.log.error(err);
+      return reply.code(503).send({ error: 'could not enqueue the assessment' });
+    }
+  });
+
+  // spec §9 — `POST /v1/deepdive/{token}`: enqueue an on-demand
+  // `llm_deepdive_v0` run. Free during the contest; x402 gating is deferred
+  // (spec §9: payments only if time remains after the free endpoints).
+  app.post('/v1/deepdive/:token', async (req, reply) => {
+    const { token } = req.params as { token: string };
+    if (!HEX_ADDR.test(token)) {
+      return reply.code(400).send({ error: 'token must be a 20-byte hex address' });
+    }
+    const auth = checkDesignPartner(req.headers['x-api-key'] as string | undefined, env.designPartnerApiKeys);
+    try {
+      const { id } = await getEnqueueDeepdive()({ tokenAddress: token.toLowerCase(), trigger: 'on_demand' });
+      return reply
+        .code(202)
+        .send({ queued: true, token: token.toLowerCase(), jobId: id ?? null, designPartner: auth.designPartner });
+    } catch (err) {
+      req.log.error(err);
+      return reply.code(503).send({ error: 'could not enqueue the deep-dive' });
+    }
+  });
+
+  // spec §9 — free: metrics table, all forecasters, sample sizes.
+  app.get('/v1/benchmark', async (_req, reply) => {
+    const b = await readBenchmark();
+    if (!b) {
+      return reply
+        .code(503)
+        .send({ error: 'benchmark not yet computed — the worker writes a snapshot every 5 minutes' });
+    }
+    return b;
+  });
+
+  // spec §9 — free: an independently verifiable Merkle proof for a report
+  // hash, plus (best-effort) confirmation that its batch root is on-chain.
+  app.get('/v1/proof/:hash', async (req, reply) => {
+    const { hash } = req.params as { hash: string };
+    if (!HEX_HASH.test(hash)) {
+      return reply.code(400).send({ error: 'hash must be a 32-byte hex value' });
+    }
+    const row = await readProof(hash.toLowerCase());
+    if (!row) return reply.code(404).send({ error: 'unknown report hash' });
+    return row;
+  });
+
+  // spec §9 — free: the signed key-lifecycle log (spec §8), plus (M5c) the
+  // metabolism's own cost-forecast error over the trailing 24h — graded like
+  // any other forecaster. Each entry is independently verifiable:
+  // `bodyHash` = keccak256(RFC-8785(body)), `signature` = the agent key's
+  // EIP-191 personal_sign of `bodyHash`, `prevHash` folds the previous
+  // entry's `bodyHash` into a tamper-evident chain.
   app.get('/v1/lifecycle', async (req) => {
     const q = req.query as { limit?: string };
     const parsed = Number(q.limit ?? DEFAULT_LIMIT);
@@ -134,7 +461,7 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
       ? Math.min(MAX_LIMIT, Math.max(1, Math.trunc(parsed)))
       : DEFAULT_LIMIT;
 
-    const entries = await readLifecycle(limit);
+    const [entries, estimator] = await Promise.all([readLifecycle(limit), readEstimator()]);
     const check = verifyLifecycleRows(entries);
 
     return {
@@ -145,6 +472,7 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
       startsAtGenesis: check.startsAtGenesis,
       brokenAt: check.brokenAt,
       entries,
+      estimator,
       verification: {
         body: 'keccak256(RFC8785({at,prevState,newState,reason,isSnapshot,keyHashPrefix,balanceUsd,keyRemainingUsd,reserveUsd,ledgerSpendUsd,providerSpendUsd,idsMismatch,prevHash}))',
         signature: 'agent key EIP-191 personal_sign of bodyHash (raw 32 bytes)',
@@ -153,21 +481,13 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
     };
   });
 
-  // spec §9 — `POST /v1/deepdive/{token}`: enqueue an on-demand `llm_deepdive_v0`
-  // run. Free during the contest; x402 / API-key gating is M7. The worker's
-  // `startDeepdiveWorker` resolves the token to a launch and scores it.
-  app.post('/v1/deepdive/:token', async (req, reply) => {
-    const { token } = req.params as { token: string };
-    if (!HEX_ADDR.test(token)) {
-      return reply.code(400).send({ error: 'token must be a 20-byte hex address' });
-    }
-    try {
-      const { id } = await getEnqueue()({ tokenAddress: token.toLowerCase(), trigger: 'on_demand' });
-      return reply.code(202).send({ queued: true, token: token.toLowerCase(), jobId: id ?? null });
-    } catch (err) {
-      req.log.error(err);
-      return reply.code(503).send({ error: 'could not enqueue the deep-dive' });
-    }
+  // spec §9 — MCP server: get_report, get_benchmark, request_deepdive so an
+  // agent buyer needs no HTTP client code.
+  mountMcp(app, {
+    readReport,
+    readBenchmark,
+    enqueueDeepdive: getEnqueueDeepdive,
+    enqueueAssess: getEnqueueAssess,
   });
 
   return app;

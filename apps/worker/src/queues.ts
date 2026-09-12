@@ -9,6 +9,7 @@ export const QUEUE_NAMES = {
   commits: 'commits', // M3: Merkle root batching + on-chain post
   deepdive: 'deepdive', // M6: llm_deepdive_v0
   metabolism: 'metabolism', // M5: Orbio key lifecycle
+  assess: 'assess', // M7: POST /v1/assess/{token} — on-demand det_v0/heuristic_v1 report
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
