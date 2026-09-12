@@ -1186,3 +1186,49 @@ budget-display, 2 CORS, 2 lifecycle-budget). Manually verified end-to-end
 against a live `pnpm start` instance in a real browser: all five panels render
 real data, sticky-header scrollable tables, benchmark retro badges match the
 worker's actual all-vs-live cell counts.
+
+## M6 follow-up — the web_search server tool breaks the Orbio gateway call (2026-09-12)
+
+After the user re-ran `pnpm orbio:auth`, the lifecycle runner's balance polling
+recovered immediately (billing status left `stale`), but the qualified-lane
+sweep still produced `0 scored · 5 skipped` with no per-item reason logged.
+Probed directly (`runDeepdive` on one eligible launch, then a raw
+`callModel` call bypassing our code entirely): every real deep-dive run threw
+
+```
+ResponseValidationError: Response validation failed
+  cause: ZodError: path ["error","code"] — expected number, received string
+```
+
+Root cause, isolated by adding one piece back at a time: a plain structured-
+output call to `deepseek/deepseek-v4.1-flash` on the Orbio gateway succeeds;
+the identical call with `DEEPDIVE_SERVER_TOOLS` (`web_search_2025_08_26`)
+added reproduces the failure every time. The gateway is returning an error
+envelope for that tool (unsupported for this model, most likely) with a
+string `error.code`; the pinned `@openrouter/sdk`'s own response schema
+expects a number there and throws before we ever see Orbio's real error text.
+This is a gateway/SDK shape mismatch, not a bug in our code, our schema, or
+the model choice — and it explains the earlier silent `0 scored, N skipped`
+sweeps with no per-item log (there wasn't one; `sweepDeepdiveEligible` only
+logs the reason when a budget check trips the early-exit path).
+
+- `apps/worker/src/deepdive/agent.ts` — `runDeepdiveAgent`'s live `tools`
+  array no longer includes `DEEPDIVE_SERVER_TOOLS`. The constant itself is
+  untouched (`tools.ts`, still asserted at length 1 by its test) so restoring
+  it is a one-line change once Orbio's gateway supports this tool for the
+  pinned model.
+- Verified end-to-end: `runDeepdive` on the same previously-failing launch now
+  returns `ran: true, stoppedBy: 'complete', validatorPassed: true`, a real
+  signed report, and a `MetabolismSpend` row with
+  `costBasis: 'provider_reconciled_estimate'`, real prompt/completion tokens,
+  and `costUsd: 0.001452` — the first real (non-placeholder) `llm_deepdive_v0`
+  report and the first real recorded spend this project has produced.
+- `pnpm verify`: 292 worker tests unchanged (no test exercised the server
+  tool's presence in the live set), typecheck clean.
+
+Scope note: dropping the server tool means the deep-dive currently runs
+without OpenRouter's web search — one evidence source, not all of them; the
+five other read-only tools (`blockscout`-equivalent address/tx history,
+`cluster_expand`, `price_series`, `holder_snapshot`, `contract_code`) are
+unaffected. Restoring web search is a roadmap item pending an Orbio-side fix
+or a provider/model combination confirmed to support it.

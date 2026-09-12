@@ -17,7 +17,7 @@ import {
   type DeepDiveOutput,
   type DeepDiveResult,
 } from './schema';
-import { buildDeepdiveTools, DEEPDIVE_SERVER_TOOLS, type DeepdiveContext } from './tools';
+import { buildDeepdiveTools, type DeepdiveContext } from './tools';
 
 export interface DeepdiveAgentInput {
   client: DeepdiveClient;
@@ -117,7 +117,19 @@ export async function runDeepdiveAgent(
     limitations.push(...out.limitations);
   };
 
-  const tools = [...buildDeepdiveTools(input.ctx, onResult), ...DEEPDIVE_SERVER_TOOLS];
+  // 2026-09-12, measured: adding DEEPDIVE_SERVER_TOOLS (web_search) to a
+  // structured-output call against the Orbio gateway makes the *gateway*
+  // return an error envelope whose `error.code` is a string; the pinned
+  // @openrouter/sdk's own response schema expects a number there and throws
+  // `ResponseValidationError: Response validation failed` before we ever see
+  // Orbio's real error — every deep-dive run failed this way (stoppedBy:
+  // 'error', correctly building/persisting nothing). Reproduced directly
+  // against the SDK: identical structured-output call with no tools, or with
+  // only client-side tools, succeeds; adding just this one server tool
+  // reproduces the failure every time. Left out of the live tool set until
+  // Orbio's gateway supports it for this model — DEEPDIVE_SERVER_TOOLS itself
+  // is kept (not deleted) so it's a one-line change to restore.
+  const tools = [...buildDeepdiveTools(input.ctx, onResult)];
   const generationIds: string[] = [];
   let steps = 0;
 
