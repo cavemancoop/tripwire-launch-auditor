@@ -35,4 +35,13 @@ ENV NODE_ENV=production
 EXPOSE 3010
 # See apps/api/Dockerfile: not `pnpm --filter ... start` — its own dependency
 # check aborts with no TTY on every container start, not just at build time.
-CMD ["node_modules/.bin/tsx", "apps/worker/src/index.ts"]
+#
+# Also applies pending migrations before starting: the worker is the one
+# process that's actually inside Railway's private network, so it's the
+# right place to run `prisma migrate deploy` — reaching Postgres from a
+# laptop needs a public endpoint this project doesn't expose. `migrate
+# deploy` only applies pending migrations and is a no-op otherwise, so this
+# is safe on every restart, not just the first one. `exec` before the final
+# command so it replaces the shell (PID 1) and still receives SIGTERM
+# directly for a clean shutdown.
+CMD ["sh", "-c", "node_modules/.bin/prisma migrate deploy --schema packages/db/prisma/schema.prisma && exec node_modules/.bin/tsx apps/worker/src/index.ts"]
