@@ -45,6 +45,18 @@ export interface PoolCandidate {
 
 type LogClient = Parameters<typeof getLogsChunked>[0];
 
+/** Chain head, or null if the RPC won't say — a clamp we can't compute is
+ *  better skipped than guessed, and the unclamped call still works on RPCs
+ *  that tolerate past-head windows. */
+async function readHeadBlock(client: LogClient): Promise<bigint | null> {
+  try {
+    const hex = (await client.request({ method: 'eth_blockNumber' } as never)) as unknown as string;
+    return BigInt(hex);
+  } catch {
+    return null;
+  }
+}
+
 function knownQuotes(chainId: number): Set<string> {
   const q = getChainConfig(chainId).quoteAssets;
   return new Set([NATIVE, q.usdg.toLowerCase(), q.weth.toLowerCase(), ...q.list.map((a) => a.toLowerCase())]);
@@ -181,9 +193,24 @@ export async function pickPrimaryV4Pool(
     activityFrom: bigint;
     activityTo: bigint;
     maxRange: number;
+    /** current chain head; fetched when omitted. Callers that already know it
+     *  should pass it rather than pay another round-trip. */
+    headBlock?: bigint;
   },
 ): Promise<PrimaryPoolPick> {
-  const cands = await findTokenV4Pools(client, args.chainId, args.token, args.scanFrom, args.scanTo, args.maxRange);
+  // Both windows run *forward* from the launch block (+2h for Initialize,
+  // +10m for activity), so on a fresh launch they reach past the chain head —
+  // on chain 4663 (0.1s blocks) the Initialize scan is 72k blocks, i.e. ~7 of
+  // its 8 chunks sit entirely in the future. Some RPCs clamp that silently
+  // (blockmachine); Chainstack rejects it outright with "invalid block range
+  // params", which aborted the whole check and left every launch on whatever
+  // pool the watcher first latched onto. Clamp to head so the query only ever
+  // asks for blocks that exist.
+  const head = args.headBlock ?? (await readHeadBlock(client));
+  const scanTo = head !== null && args.scanTo > head ? head : args.scanTo;
+  const activityTo = head !== null && args.activityTo > head ? head : args.activityTo;
+
+  const cands = await findTokenV4Pools(client, args.chainId, args.token, args.scanFrom, scanTo, args.maxRange);
   if (cands.length === 0) {
     return { chosen: null, changed: false, reason: 'no v4 Initialize found for token in window', candidates: [] };
   }
@@ -193,7 +220,7 @@ export async function pickPrimaryV4Pool(
   if (contenders.length >= 2) {
     await Promise.all(
       contenders.slice(0, 4).map(async (c) => {
-        c.activity = await poolActivity(client, args.chainId, c.poolId, args.activityFrom, args.activityTo, args.maxRange);
+        c.activity = await poolActivity(client, args.chainId, c.poolId, args.activityFrom, activityTo, args.maxRange);
       }),
     );
     ranked = rankCandidates(cands);

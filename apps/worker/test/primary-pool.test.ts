@@ -96,4 +96,64 @@ describe('pickPrimaryV4Pool', () => {
     expect(pick.chosen?.poolId).toBe(`0x${'b'.repeat(64)}`);
     expect(pick.chosen?.quote).toBe(USDG);
   });
+
+  // The scan window runs *forward* from the launch block (+2h of 0.1s blocks =
+  // 72k), so on a fresh launch most of it is in the future. Chainstack rejects
+  // a window that starts past the head with "invalid block range params",
+  // which aborted the whole check and left launches on the decoy pool.
+  it('never asks for blocks past the chain head', async () => {
+    const asked: Array<{ from: bigint; to: bigint }> = [];
+    const client = {
+      request: vi.fn(async ({ method, params }: { method: string; params: any[] }) => {
+        if (method === 'eth_blockNumber') return '0x2710'; // head = 10_000
+        const p = params[0];
+        asked.push({ from: BigInt(p.fromBlock), to: BigInt(p.toBlock) });
+        return p.topics.length >= 4 ? [] : [initLog(`0x${'b'.repeat(64)}`, TOKEN, USDG, 3000)];
+      }),
+    };
+
+    await pickPrimaryV4Pool(client as never, {
+      chainId: 4663,
+      token: TOKEN,
+      currentPoolId: null,
+      scanFrom: 9_000n,
+      scanTo: 9_000n + 72_000n, // 2h forward — way past head
+      activityFrom: 9_000n,
+      activityTo: 9_000n + 6_000n, // 10m forward — also past head
+      maxRange: 9999,
+    });
+
+    expect(asked.length).toBeGreaterThan(0);
+    for (const q of asked) {
+      expect(q.to).toBeLessThanOrEqual(10_000n);
+      expect(q.from).toBeLessThanOrEqual(10_000n);
+    }
+  });
+
+  it('uses a caller-supplied head instead of asking for one', async () => {
+    const methods: string[] = [];
+    const client = {
+      request: vi.fn(async ({ method, params }: { method: string; params: any[] }) => {
+        methods.push(method);
+        if (method === 'eth_blockNumber') return '0x2710';
+        const p = params[0];
+        expect(BigInt(p.toBlock)).toBeLessThanOrEqual(5_000n);
+        return p.topics.length >= 4 ? [] : [];
+      }),
+    };
+
+    await pickPrimaryV4Pool(client as never, {
+      chainId: 4663,
+      token: TOKEN,
+      currentPoolId: null,
+      scanFrom: 0n,
+      scanTo: 72_000n,
+      activityFrom: 0n,
+      activityTo: 6_000n,
+      maxRange: 9999,
+      headBlock: 5_000n,
+    });
+
+    expect(methods).not.toContain('eth_blockNumber');
+  });
 });

@@ -53,7 +53,12 @@ export async function runT10ForLaunch(
   const cfg = getChainConfig(launch.chainId);
   const blocksIn10m = BigInt(Math.round((10 * 60) / cfg.approxBlockSeconds));
   const fromBlock = launch.launchBlock;
-  const toBlock = launch.launchBlock + blocksIn10m;
+  // Clamp every forward window to the head: these run from the launch block
+  // forward, so on a fresh launch they otherwise ask for blocks that don't
+  // exist yet (see primary-pool.ts — Chainstack hard-errors on that).
+  const headBlock = await client.getBlockNumber().catch(() => null);
+  const wantedTo = launch.launchBlock + blocksIn10m;
+  const toBlock = headBlock !== null && wantedTo > headBlock ? headBlock : wantedTo;
   const token = launch.tokenAddress as Hex;
   const creator = launch.creatorAddress;
   const maxRange = getGetLogsMaxRange(launch.chainId);
@@ -74,6 +79,7 @@ export async function runT10ForLaunch(
         activityFrom: fromBlock,
         activityTo: toBlock,
         maxRange,
+        headBlock: headBlock ?? undefined,
       });
       if (pick.chosen && pick.changed) {
         launch.poolKind = 'v4';
