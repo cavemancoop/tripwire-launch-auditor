@@ -74,3 +74,28 @@ describe('budgetDisplay — staleness is reported, not enforced', () => {
     }
   });
 });
+
+describe('budgetDisplay — an unread balance is not an empty one', () => {
+  // The worker falls back to the daily cap when no lifecycle snapshot exists
+  // and keeps running. Reporting 0 here printed "next run allows up to $0.00 /
+  // binding constraint: zero" on the panel while deep-dives were being scored
+  // at $0.20 each — the dashboard contradicting the system it describes.
+  it('falls back to the daily cap rather than claiming zero', () => {
+    const b = budgetDisplay({ ...BASE, keyRemainingUsd: null });
+    expect(b.balanceUnknown).toBe(true);
+    expect(b.maxRunCostUsd).toBeGreaterThan(0);
+    expect(b.bindingConstraint).not.toBe('zero');
+  });
+
+  it('a known balance is unaffected', () => {
+    const b = budgetDisplay({ ...BASE, keyRemainingUsd: 10 });
+    expect(b.balanceUnknown).toBe(false);
+    expect(b.spendableKeyUsd).toBe(7); // 10 - 3 reserve
+  });
+
+  it('an unread balance still respects the daily cap', () => {
+    const b = budgetDisplay({ ...BASE, keyRemainingUsd: null, spentTrailing24hUsd: 5 });
+    expect(b.remainingTodayUsd).toBe(0);
+    expect(b.maxRunCostUsd).toBe(0);
+  });
+});

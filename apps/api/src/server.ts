@@ -44,6 +44,16 @@ export interface EstimatorSummary {
     discrepancyPct: number | null;
     reconciliationFactor: number | null;
   } | null;
+  /**
+   * Where these figures came from, never left implicit:
+   *  - `epoch_reconciled` — provider spend reconciled against local estimates
+   *    each lifecycle tick. Needs a live Orbio MCP session.
+   *  - `local_ledger` — the session is down, so there are no epochs; these are
+   *    our own per-request token-priced estimates straight from MetabolismSpend.
+   *    Real spend, but unconfirmed against the provider's bill.
+   *  - `none` — nothing recorded in the window.
+   */
+  basis: 'epoch_reconciled' | 'local_ledger' | 'none';
 }
 
 export type EstimatorReader = () => Promise<EstimatorSummary>;
@@ -60,6 +70,42 @@ const prismaEstimatorReader: EstimatorReader = async () => {
       ? Math.round((graded.reduce((a, r) => a + Math.abs(r.discrepancyPct!), 0) / graded.length) * 100) / 100
       : null;
   const latest = rows[0] ?? null;
+
+  // Epochs are written by the lifecycle runner, which needs a live Orbio MCP
+  // session. Without one there are no epochs — but deep-dives still run and
+  // still record their own cost, so reporting zero here would be a visible
+  // lie on the panel while the ledger fills up behind it. Fall back to the
+  // ledger and say that's what we did.
+  if (rows.length === 0) {
+    const spend = await prisma.metabolismSpend.aggregate({
+      where: { at: { gte: since } },
+      _sum: { costUsd: true, estimatedCostUsd: true },
+      _count: { _all: true },
+    });
+    const count = spend._count._all;
+    if (count === 0) {
+      return {
+        windows: 0,
+        providerSpend24hUsd: 0,
+        estimatedSpend24hUsd: 0,
+        requests24h: 0,
+        meanAbsDiscrepancyPct: null,
+        latest: null,
+        basis: 'none',
+      };
+    }
+    const local = spend._sum.estimatedCostUsd ?? spend._sum.costUsd ?? 0;
+    return {
+      windows: 0,
+      providerSpend24hUsd: 0, // unconfirmed: nobody has read the provider's bill
+      estimatedSpend24hUsd: Math.round(local * 1e4) / 1e4,
+      requests24h: count,
+      meanAbsDiscrepancyPct: null,
+      latest: null,
+      basis: 'local_ledger',
+    };
+  }
+
   return {
     windows: rows.length,
     providerSpend24hUsd: Math.round(rows.reduce((a, r) => a + r.providerDeltaUsd, 0) * 1e4) / 1e4,
@@ -74,6 +120,7 @@ const prismaEstimatorReader: EstimatorReader = async () => {
           reconciliationFactor: latest.reconciliationFactor,
         }
       : null,
+    basis: 'epoch_reconciled',
   };
 };
 
@@ -502,7 +549,11 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
       dailyCapUsd: env.deepdiveDailyCapUsd,
       capPerRunUsd: env.deepdiveCapPerRunUsd,
       spentTrailing24hUsd: Math.max(estimator.providerSpend24hUsd, estimator.estimatedSpend24hUsd),
-      keyRemainingUsd: latest?.keyRemainingUsd ?? latest?.balanceUsd ?? 0,
+      // null, not 0, when no balance has ever been read: the worker falls back
+      // to the daily cap in that case and keeps running, so reporting 0 here
+      // printed "next run allows up to $0.00 / binding constraint: zero" on the
+      // panel while deep-dives were actually being scored at $0.20 a time.
+      keyRemainingUsd: latest?.keyRemainingUsd ?? latest?.balanceUsd ?? null,
       reserveUsd: env.metabolismReserveUsd,
       billingStatus: latest?.billingStatus ?? estimator.latest?.billingStatus ?? null,
     });

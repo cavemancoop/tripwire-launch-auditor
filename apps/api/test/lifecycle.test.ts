@@ -23,6 +23,7 @@ const EMPTY_ESTIMATOR: EstimatorSummary = {
   requests24h: 0,
   meanAbsDiscrepancyPct: null,
   latest: null,
+  basis: 'none',
 };
 
 /** Build a valid hash-chained run of `n` rows, oldest → newest. */
@@ -112,6 +113,7 @@ describe('GET /v1/lifecycle', () => {
       requests24h: 37,
       meanAbsDiscrepancyPct: 4.4,
       latest: { at: '2026-09-12T04:00:00.000Z', billingStatus: 'aggregate_only', discrepancyPct: 4.4, reconciliationFactor: 1.04 },
+      basis: 'epoch_reconciled',
     };
     const app = buildServer({ lifecycleReader: async () => [], estimatorReader: async () => estimator });
     const body = (await app.inject({ method: 'GET', url: '/v1/lifecycle' })).json();
@@ -132,6 +134,7 @@ describe('GET /v1/lifecycle', () => {
       requests24h: 9,
       meanAbsDiscrepancyPct: 8.3,
       latest: { at: '2026-09-12T04:00:00.000Z', billingStatus: 'exact', discrepancyPct: 8.3, reconciliationFactor: 1.08 },
+      basis: 'epoch_reconciled',
     };
     const app = buildServer({
       lifecycleReader: async () => rows,
@@ -149,6 +152,7 @@ describe('GET /v1/lifecycle', () => {
       bindingConstraint: 'cap_per_run',
       gateClosedByBilling: false,
       balanceStale: false,
+      balanceUnknown: false,
     });
     await app.close();
   });

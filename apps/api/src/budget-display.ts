@@ -15,8 +15,11 @@ export interface BudgetDisplayInputs {
   capPerRunUsd: number;
   /** larger of local-estimate and provider-delta spend over the trailing 24h */
   spentTrailing24hUsd: number;
-  /** key remaining, or the account balance when no key is active yet */
-  keyRemainingUsd: number;
+  /** key remaining, or the account balance when no key is active yet.
+   *  `null` = never read (no lifecycle snapshot) — mirror the worker, which
+   *  falls back to the daily cap and keeps running rather than treating an
+   *  unread balance as an empty one. */
+  keyRemainingUsd: number | null;
   reserveUsd: number;
   billingStatus?: string | null;
 }
@@ -33,6 +36,8 @@ export interface BudgetDisplay {
   gateClosedByBilling: boolean;
   /** the balance behind these numbers has not been re-read from Orbio recently */
   balanceStale: boolean;
+  /** no balance has ever been read — the figures fall back to the daily cap */
+  balanceUnknown: boolean;
 }
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
@@ -45,7 +50,12 @@ export function budgetDisplay(i: BudgetDisplayInputs): BudgetDisplay {
   const gateClosedByBilling = i.billingStatus === 'anomaly' || i.billingStatus === 'phantom';
   const balanceStale = i.billingStatus === 'stale';
   const remainingTodayUsd = round2(Math.max(0, i.dailyCapUsd - i.spentTrailing24hUsd));
-  const spendableKeyUsd = round2(Math.max(0, i.keyRemainingUsd - i.reserveUsd));
+  // Matches apps/worker/src/deepdive/run.ts's defaultLoadBudget: with no
+  // balance reading the worker treats the daily cap as the spendable figure.
+  const known = i.keyRemainingUsd;
+  const balanceUnknown = known === null;
+  const spendableKeyUsd =
+    known === null ? remainingTodayUsd : round2(Math.max(0, known - i.reserveUsd));
 
   const candidates: Array<[BudgetDisplay['bindingConstraint'], number]> = [
     ['cap_per_run', Math.max(0, i.capPerRunUsd)],
@@ -69,5 +79,6 @@ export function budgetDisplay(i: BudgetDisplayInputs): BudgetDisplay {
     bindingConstraint,
     gateClosedByBilling,
     balanceStale,
+    balanceUnknown,
   };
 }
