@@ -16,6 +16,7 @@
     "scorer:run": "tsx src/scripts/scorer-run.ts",
     "backfill": "tsx src/scripts/backfill.ts",
     "orbio:auth": "tsx src/scripts/orbio-auth.ts",
+    "orbio:push-key": "tsx src/scripts/orbio-push-key.ts",
     "orbio:probe": "tsx src/scripts/orbio-probe.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests"

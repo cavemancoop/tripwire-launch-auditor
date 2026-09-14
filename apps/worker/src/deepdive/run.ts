@@ -298,6 +298,10 @@ export async function sweepDeepdiveEligible(
   });
   out.eligible = launches.length;
 
+  // Why a sweep skipped is as important as that it did. Twice now a silent
+  // `skipped` count has hidden a real outage for days — a dead model slug, then
+  // a missing gateway key — because only budget reasons were ever logged.
+  const skipReasons = new Map<string, number>();
   for (const l of launches) {
     try {
       const r = await runDeepdive({ launchId: l.id, trigger: 'qualified' }, deps);
@@ -305,6 +309,7 @@ export async function sweepDeepdiveEligible(
         out.ran += 1;
       } else {
         out.skipped += 1;
+        skipReasons.set(r.reason, (skipReasons.get(r.reason) ?? 0) + 1);
         if (r.reason.startsWith('budget:')) {
           // eslint-disable-next-line no-console
           console.log(`[deepdive] stopping sweep — ${r.reason}`);
@@ -316,6 +321,14 @@ export async function sweepDeepdiveEligible(
       // eslint-disable-next-line no-console
       console.error(`[deepdive] ${l.id} failed:`, err instanceof Error ? err.message : err);
     }
+  }
+  if (skipReasons.size > 0) {
+    const summary = [...skipReasons.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([reason, n]) => `${n}x ${reason}`)
+      .join(' · ');
+    // eslint-disable-next-line no-console
+    console.log(`[deepdive] skips: ${summary}`);
   }
   return out;
 }
