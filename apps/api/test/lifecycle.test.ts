@@ -148,6 +148,7 @@ describe('GET /v1/lifecycle', () => {
       maxRunCostUsd: 0.2,
       bindingConstraint: 'cap_per_run',
       gateClosedByBilling: false,
+      balanceStale: false,
     });
     await app.close();
   });

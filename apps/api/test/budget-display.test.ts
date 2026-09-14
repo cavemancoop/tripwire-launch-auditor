@@ -53,3 +53,24 @@ describe('budgetDisplay', () => {
     }
   });
 });
+
+describe('budgetDisplay — staleness is reported, not enforced', () => {
+  // Mirrors the worker gate: a lapsed Orbio session means nobody has re-read
+  // the balance, not that anything is wrong. The gateway key bills fine
+  // without a live session, so spending continues under the caps.
+  it('does not close the gate for a stale balance, but flags it', () => {
+    const b = budgetDisplay({ ...BASE, billingStatus: 'stale' });
+    expect(b.gateClosedByBilling).toBe(false);
+    expect(b.balanceStale).toBe(true);
+    expect(b.maxRunCostUsd).toBeGreaterThan(0);
+  });
+
+  it('still closes the gate for the compromise signals', () => {
+    for (const s of ['anomaly', 'phantom']) {
+      const b = budgetDisplay({ ...BASE, billingStatus: s });
+      expect(b.gateClosedByBilling).toBe(true);
+      expect(b.maxRunCostUsd).toBe(0);
+      expect(b.balanceStale).toBe(false);
+    }
+  });
+});

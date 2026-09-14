@@ -31,12 +31,19 @@ export interface BudgetDisplay {
   /** whichever of the three candidates the min() actually picked */
   bindingConstraint: 'cap_per_run' | 'daily_cap' | 'spendable_key' | 'zero';
   gateClosedByBilling: boolean;
+  /** the balance behind these numbers has not been re-read from Orbio recently */
+  balanceStale: boolean;
 }
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 
 export function budgetDisplay(i: BudgetDisplayInputs): BudgetDisplay {
+  // Mirrors deepdiveRunGate: only the compromise signals close the gate.
+  // `stale` means the Orbio session lapsed so nobody has re-read the balance —
+  // spending continues (the gateway key bills fine without a live session) and
+  // the staleness is reported as a fact instead.
   const gateClosedByBilling = i.billingStatus === 'anomaly' || i.billingStatus === 'phantom';
+  const balanceStale = i.billingStatus === 'stale';
   const remainingTodayUsd = round2(Math.max(0, i.dailyCapUsd - i.spentTrailing24hUsd));
   const spendableKeyUsd = round2(Math.max(0, i.keyRemainingUsd - i.reserveUsd));
 
@@ -61,5 +68,6 @@ export function budgetDisplay(i: BudgetDisplayInputs): BudgetDisplay {
     maxRunCostUsd,
     bindingConstraint,
     gateClosedByBilling,
+    balanceStale,
   };
 }

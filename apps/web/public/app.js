@@ -6,8 +6,31 @@
 const EXPLORER_BASE = 'https://robinhoodchain.blockscout.com';
 const LS_KEY = 'launch-auditor:api-base';
 
+/**
+ * Outcomes we measure and publish but do not treat as forecastable. The sell
+ * simulation uses a fixed $100 notional against pools whose median depth at
+ * T+10m is ~$1,040, so it is ~10% of the pool: the price moves hard on an
+ * entirely honest token, and ~90% of launches come back "impaired". The number
+ * is a real measurement of liquidity depth, not evidence of deception, and no
+ * notional fixes that — 2% of a thin pool still moves the price. So it renders
+ * without a claim badge, whatever the arithmetic gate says.
+ */
+const DESCRIPTIVE_OUTCOMES = {
+  'SELL_IMPAIRED@1h':
+    'Fixed $100 sell against pools of ~$1k median depth — measures liquidity depth, not deception. Not treated as a forecastable claim.',
+  'SELL_IMPAIRED@24h':
+    'Fixed $100 sell against pools of ~$1k median depth — measures liquidity depth, not deception. Not treated as a forecastable claim.',
+};
+
+// Filled from /config.json at boot (the web service's API_BASE_URL). Guessing
+// `own-hostname:3000` only ever worked when one machine ran everything; on a
+// per-service-hostname host it's always wrong, and it made every visitor paste
+// the URL by hand before the dashboard showed anything. A saved override still
+// wins, so pointing a browser at a different instance stays a one-field change.
+let servedApiBase = '';
+
 function defaultApiBase() {
-  return `${location.protocol}//${location.hostname}:3000`;
+  return servedApiBase || `${location.protocol}//${location.hostname}:3000`;
 }
 
 function getApiBase() {
@@ -15,6 +38,19 @@ function getApiBase() {
     return localStorage.getItem(LS_KEY) || defaultApiBase();
   } catch {
     return defaultApiBase();
+  }
+}
+
+async function loadServedConfig() {
+  try {
+    const res = await fetch('config.json', { cache: 'no-store' });
+    if (!res.ok) return;
+    const cfg = await res.json();
+    if (cfg && typeof cfg.apiBase === 'string' && cfg.apiBase) {
+      servedApiBase = cfg.apiBase.replace(/\/$/, '');
+    }
+  } catch {
+    /* no served config — fall back to the guess, same as before */
   }
 }
 
@@ -76,6 +112,18 @@ function creditsAccruedPerHour(entries) {
   return { perHour: accrued / hours, hours };
 }
 
+/** How long ago the last balance reading landed — printed rather than hidden. */
+function balanceAgeLabel(lifecycle) {
+  const entries = lifecycle?.entries ?? [];
+  const last = entries[entries.length - 1];
+  if (!last?.at) return 'never';
+  const mins = (Date.now() - Date.parse(last.at)) / 60000;
+  if (!Number.isFinite(mins) || mins < 0) return 'unknown';
+  if (mins < 60) return `${Math.round(mins)}m ago`;
+  if (mins < 1440) return `${(mins / 60).toFixed(1)}h ago`;
+  return `${(mins / 1440).toFixed(1)}d ago`;
+}
+
 function renderMetabolism(lifecycle) {
   const { entries, estimator, budget } = lifecycle;
   const latest = entries[entries.length - 1];
@@ -102,6 +150,7 @@ function renderMetabolism(lifecycle) {
     <div class="kv"><span class="k">next run allows up to</span><span class="v">${usd(b.maxRunCostUsd)}</span></div>
     <div class="kv"><span class="k">binding constraint</span><span class="v">${b.bindingConstraint}</span></div>
     ${b.gateClosedByBilling ? '<p class="note" style="color:var(--bad)">Gate closed — billing status is anomaly or phantom.</p>' : ''}
+    ${b.balanceStale ? `<p class="note" style="color:var(--warn)">Balance last confirmed ${balanceAgeLabel(lifecycle)} — the Orbio MCP session bounds key management, not spending, so research continues under the daily cap and the local ledger.</p>` : ''}
   `;
 
   const check = { verified: lifecycle.verified, startsAtGenesis: lifecycle.startsAtGenesis, brokenAt: lifecycle.brokenAt };
@@ -201,14 +250,15 @@ function renderBenchmark(snapshot) {
       const liveCount = liveN.get(cellKey(outcome, c.forecaster)) ?? 0;
       const retro = Math.max(0, c.n - liveCount);
       const claim = c.comparisons?.find((x) => x.claimAllowed);
+      const descriptive = DESCRIPTIVE_OUTCOMES[outcome];
       rows.push(`<tr>
-        <td>${outcome}</td>
+        <td>${outcome}${descriptive ? ' <span class="badge dim" title="' + descriptive + '">descriptive</span>' : ''}</td>
         <td>${c.forecaster}</td>
         <td>${c.n}${retro > 0 ? ` <span class="badge dim">+${retro} retro</span>` : ''}${c.insufficientSample ? ' <span class="badge warn">insufficient</span>' : ''}</td>
         <td>${c.positives}</td>
         <td>${c.auroc === null ? 'n/a' : c.auroc.toFixed(3)}</td>
         <td>${c.brierSkill === null ? 'n/a' : c.brierSkill.toFixed(3)}</td>
-        <td>${claim ? `<span class="badge good">beats ${claim.vs} p=${claim.p}</span>` : ''}</td>
+        <td>${descriptive ? '' : claim ? `<span class="badge good">beats ${claim.vs} p=${claim.p}</span>` : ''}</td>
       </tr>`);
     }
   }
@@ -286,6 +336,11 @@ function initApiConfig() {
   });
 }
 
-initApiConfig();
-loadAll();
-setInterval(loadAll, 30_000);
+async function boot() {
+  await loadServedConfig(); // before initApiConfig, so the box shows the real default
+  initApiConfig();
+  await loadAll();
+  setInterval(loadAll, 30_000);
+}
+
+boot();

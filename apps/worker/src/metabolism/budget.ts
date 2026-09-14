@@ -81,6 +81,9 @@ export interface DeepdiveRunGate {
   reason: string;
   remainingTodayUsd: number;
   maxRunCostUsd: number;
+  /** the balance this decision used has not been re-read from Orbio recently —
+   *  the run is still allowed, but the figure behind it is old. Display it. */
+  balanceStale: boolean;
 }
 
 export function deepdiveRunGate(i: DeepdiveRunGateInputs): DeepdiveRunGate {
@@ -88,27 +91,48 @@ export function deepdiveRunGate(i: DeepdiveRunGateInputs): DeepdiveRunGate {
   const spentTodayUsd = Math.max(i.todaySpendUsd, i.providerSpendTodayUsd ?? 0);
   const remainingTodayUsd = round2(Math.max(0, i.dailyCapUsd - spentTodayUsd));
   const maxRunCostUsd = round2(Math.max(0, Math.min(i.capPerRunUsd, remainingTodayUsd, i.spendableUsd)));
-  if (i.billingStatus === 'phantom' || i.billingStatus === 'anomaly' || i.billingStatus === 'stale') {
+  const balanceStale = i.billingStatus === 'stale';
+  // `phantom` and `anomaly` are compromise signals — the provider charged for
+  // work we didn't do, or the bill and our estimate disagree beyond the band.
+  // Those still stop inference.
+  //
+  // `stale` is not a compromise signal: it only means the Orbio MCP session
+  // lapsed, so nobody has re-read the balance recently. Measured 2026-09-14:
+  // a gateway key keeps billing inference normally with a two-day-dead OAuth
+  // session, so the session bounds *key management*, not spending. Blocking on
+  // it meant `llm_deepdive_v0` never ran in production at all — the forecaster
+  // the whole benchmark exists to grade. The real guards are the ones below:
+  // the daily cap, the per-run cap, and our own spend ledger, none of which
+  // need Orbio to be reachable. A genuinely empty balance fails safe at the
+  // gateway. Staleness is surfaced instead (`balanceStale`) so the dashboard
+  // can print how old the figure is rather than silently trusting it.
+  if (i.billingStatus === 'phantom' || i.billingStatus === 'anomaly') {
     return {
       allowed: false,
-      reason:
-        i.billingStatus === 'stale'
-          ? 'billing stale — the lifecycle runner has not reported a balance recently (Orbio session lapsed?); refusing to spend unwatched'
-          : `billing ${i.billingStatus} — inference paused until the lifecycle runner clears it`,
+      reason: `billing ${i.billingStatus} — inference paused until the lifecycle runner clears it`,
       remainingTodayUsd,
       maxRunCostUsd: 0,
+      balanceStale,
     };
   }
   if (i.spendableUsd <= 0) {
-    return { allowed: false, reason: `balance is at or below the reserve (spendable $${round2(i.spendableUsd)})`, remainingTodayUsd, maxRunCostUsd };
+    return { allowed: false, reason: `balance is at or below the reserve (spendable $${round2(i.spendableUsd)})`, remainingTodayUsd, maxRunCostUsd, balanceStale };
   }
   if (remainingTodayUsd <= 0) {
-    return { allowed: false, reason: `daily cap $${round2(i.dailyCapUsd)} reached (spent $${round2(spentTodayUsd)})`, remainingTodayUsd, maxRunCostUsd };
+    return { allowed: false, reason: `daily cap $${round2(i.dailyCapUsd)} reached (spent $${round2(spentTodayUsd)})`, remainingTodayUsd, maxRunCostUsd, balanceStale };
   }
   if (maxRunCostUsd <= 0) {
-    return { allowed: false, reason: 'nothing affordable this run', remainingTodayUsd, maxRunCostUsd };
+    return { allowed: false, reason: 'nothing affordable this run', remainingTodayUsd, maxRunCostUsd, balanceStale };
   }
-  return { allowed: true, reason: `ok — up to $${maxRunCostUsd} this run`, remainingTodayUsd, maxRunCostUsd };
+  return {
+    allowed: true,
+    reason: balanceStale
+      ? `ok — up to $${maxRunCostUsd} this run (balance figure is stale; capped by the daily limit and the local ledger)`
+      : `ok — up to $${maxRunCostUsd} this run`,
+    remainingTodayUsd,
+    maxRunCostUsd,
+    balanceStale,
+  };
 }
 
 /** Days since the last manual credential action (spec §8 headline metric). */

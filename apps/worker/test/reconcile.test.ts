@@ -100,6 +100,29 @@ describe('deepdiveRunGate — M5c billing controls', () => {
     }
   });
 
+  // A lapsed Orbio session is not a compromise signal. Measured 2026-09-14: a
+  // gateway key still bills inference with a two-day-dead OAuth session, so the
+  // session bounds key management, not spending. Blocking on it meant
+  // llm_deepdive_v0 never ran in production at all.
+  it('stale billing keeps the gate open but flags the balance as unconfirmed', () => {
+    const g = deepdiveRunGate({ ...IN, billingStatus: 'stale' });
+    expect(g.allowed).toBe(true);
+    expect(g.balanceStale).toBe(true);
+    expect(g.maxRunCostUsd).toBeGreaterThan(0);
+    expect(g.reason).toMatch(/stale/);
+  });
+
+  it('a stale balance is still bounded by the daily cap and the local ledger', () => {
+    const g = deepdiveRunGate({ ...IN, billingStatus: 'stale', todaySpendUsd: 5 });
+    expect(g.allowed).toBe(false);
+    expect(g.reason).toMatch(/daily cap/);
+    expect(g.balanceStale).toBe(true);
+  });
+
+  it('phantom still closes the gate even when the balance is also stale', () => {
+    expect(deepdiveRunGate({ ...IN, billingStatus: 'phantom' }).allowed).toBe(false);
+  });
+
   it('the daily cap is enforced against the LARGER of local estimate and provider spend', () => {
     // local ledger thinks $1 spent, the provider says $5 — the provider wins
     const g = deepdiveRunGate({ ...IN, todaySpendUsd: 1, providerSpendTodayUsd: 5 });

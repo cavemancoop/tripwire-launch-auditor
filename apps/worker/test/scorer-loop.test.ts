@@ -11,6 +11,7 @@ const fakeBenchmark = (n: number): Benchmark => ({
   thresholds: [0.5],
   minForMetrics: 100,
   minForClaims: 200,
+  minPositivesForClaims: 30,
   sections: [
     {
       splitBy: 'all',

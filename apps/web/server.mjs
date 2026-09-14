@@ -24,8 +24,23 @@ const TYPES = {
   '.json': 'application/json; charset=utf-8',
 };
 
+// The dashboard used to guess the api's address as `own-hostname:3000`, which
+// only holds when everything runs on one machine. On Railway each service gets
+// its own hostname, so the guess was always wrong and every visitor had to
+// paste the URL in by hand before seeing any data. Serve it instead: set
+// API_BASE_URL on this service and the page reads it at load.
+const API_BASE_URL = process.env.API_BASE_URL || '';
+
 const server = createServer((req, res) => {
   const url = new URL(req.url ?? '/', 'http://localhost');
+
+  if (url.pathname === '/config.json') {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store');
+    res.end(JSON.stringify({ apiBase: API_BASE_URL }));
+    return;
+  }
+
   let rel = normalize(url.pathname === '/' ? '/index.html' : url.pathname);
   if (rel.startsWith('..')) rel = '/index.html'; // no path traversal out of public/
 

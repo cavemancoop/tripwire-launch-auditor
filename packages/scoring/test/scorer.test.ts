@@ -54,3 +54,45 @@ describe('scoreBenchmark', () => {
     expect(cmp.claimAllowed).toBe(true);
   });
 });
+
+/** n rows, but only `positives` of them are true — a rare-event cell. */
+function rareRows(n: number, positives: number): ScoreRow[] {
+  const out: ScoreRow[] = [];
+  for (let i = 0; i < n; i++) {
+    const label = i < positives;
+    const obsId = `tok${i}@t`;
+    // det_v0 discriminates well; base_rate is near-constant
+    const detProb = label ? 0.8 - (i % 5) * 0.01 : 0.2 + (i % 5) * 0.01;
+    out.push({ obsId, forecaster: 'det_v0', outcomeKey: 'INSIDER_EXIT@6h', trigger: 'launch', source: 'raw', prob: detProb, label });
+    out.push({ obsId, forecaster: 'base_rate', outcomeKey: 'INSIDER_EXIT@6h', trigger: 'launch', source: 'raw', prob: 0.5 + ((i % 4) - 1.5) * 0.01, label });
+  }
+  return out;
+}
+
+const detCell = (b: ReturnType<typeof scoreBenchmark>) =>
+  b.sections.find((s) => s.splitBy === 'all')!.byOutcome['INSIDER_EXIT@6h']!.find((c) => c.forecaster === 'det_v0')!;
+
+describe('claim gate — positives rule', () => {
+  // A cell can clear 200 observations and still be almost all one class. AUROC
+  // on a dozen positives is noise; production hit exactly this (n=336,
+  // positives=12) and the gate let it through before the rule was enforced.
+  it('refuses a claim when the sample is big but the positives are few', () => {
+    const c = detCell(scoreBenchmark(rareRows(400, 12)));
+    expect(c.n).toBe(400);
+    expect(c.positives).toBe(12);
+    const vsBase = c.comparisons.find((x) => x.vs === 'base_rate')!;
+    expect(vsBase.claimAllowed).toBe(false);
+    expect(vsBase.note).toMatch(/insufficient positives \(12 < 30\)/);
+  });
+
+  it('allows a claim once both the sample and the positives clear their bars', () => {
+    const c = detCell(scoreBenchmark(rareRows(400, 120)));
+    expect(c.positives).toBe(120);
+    const vsBase = c.comparisons.find((x) => x.vs === 'base_rate')!;
+    expect(vsBase.claimAllowed).toBe(true);
+  });
+
+  it('publishes the positives rule alongside the sample rules', () => {
+    expect(scoreBenchmark(rareRows(10, 2)).minPositivesForClaims).toBe(30);
+  });
+});
