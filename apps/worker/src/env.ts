@@ -62,6 +62,8 @@ export interface WorkerEnv {
   telegramBotToken?: string;
   telegramChatId?: string;
   telegramPosterIntervalMs: number;
+  /** public API base used in feed posts, so each links its own verifiable proof */
+  publicApiBaseUrl?: string;
   /** M9 ops alerts: falls back to telegramChatId so one channel is enough */
   telegramAlertsChatId?: string;
   alertsIntervalMs: number;
@@ -156,6 +158,7 @@ export function loadEnv(): WorkerEnv {
     telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || undefined,
     telegramChatId: process.env.TELEGRAM_CHANNEL_ID || undefined,
     telegramPosterIntervalMs: Number(process.env.TELEGRAM_POSTER_INTERVAL_MS || 30_000),
+    publicApiBaseUrl: process.env.PUBLIC_API_BASE_URL || undefined,
     telegramAlertsChatId:
       process.env.TELEGRAM_ALERTS_CHANNEL_ID || process.env.TELEGRAM_CHANNEL_ID || undefined,
     alertsIntervalMs: Number(process.env.ALERTS_INTERVAL_MS || 60_000),

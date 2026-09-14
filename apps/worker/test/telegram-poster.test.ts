@@ -26,6 +26,22 @@ describe('formatTelegramMessage', () => {
     expect(msg).toContain(ROW.reportHash);
   });
 
+  // Merkle batching means many launches share one commit tx — linking only
+  // that made consecutive posts all point at the same hash, which reads as a
+  // bug to anyone who doesn't know the design.
+  it('leads with the per-report verify link and labels the tx as a batch anchor', () => {
+    const msg = formatTelegramMessage(ROW, 4663, 'https://api.example.test/');
+    expect(msg).toContain(`https://api.example.test/v1/proof/${ROW.reportHash}`);
+    expect(msg).toContain('Batch anchor');
+    expect(msg).not.toContain('api.example.test//v1'); // trailing slash trimmed
+  });
+
+  it('omits the verify link when no api base is configured', () => {
+    const msg = formatTelegramMessage(ROW, 4663);
+    expect(msg).not.toContain('v1/proof');
+    expect(msg).toContain(ROW.reportHash);
+  });
+
   it('says proof is pending when there is no tx hash yet', () => {
     const msg = formatTelegramMessage({ ...ROW, txHash: null }, 4663);
     expect(msg).toContain('pending next commit batch');

@@ -53,17 +53,37 @@ const prismaMarkPosted: MarkPosted = async (id) => {
 
 const pct = (v: number | null): string => (v == null ? 'n/a' : `${Math.round(v * 100)}%`);
 
-export function formatTelegramMessage(row: TelegramCandidateRow, chainId: number): string {
+/**
+ * Commits are Merkle-batched (spec §6): one root per batch of report hashes
+ * every 5 minutes, so every launch in a batch shares one transaction. Correct,
+ * but linking only the tx made consecutive posts all point at the same hash —
+ * which reads like a bug to anyone who doesn't know the design. Lead with the
+ * per-report verify link, which proves *this* forecast against that root, and
+ * label the tx as the batch anchor it is.
+ */
+export function formatTelegramMessage(
+  row: TelegramCandidateRow,
+  chainId: number,
+  apiBase?: string,
+): string {
   const explorer = getChainConfig(chainId).explorer;
-  return [
+  const lines = [
     `New qualified launch: ${row.tokenAddress}`,
     `P(insider exit, 24h): ${pct(row.pInsiderExit24h)}`,
     `P(drawdown ≥80%, 24h): ${pct(row.pDrawdown80_24h)}`,
     `P(still trading, 24h): ${pct(row.pTradingAlive24h)}`,
-    row.txHash ? `Proof: ${explorer}/tx/${row.txHash}` : 'Proof: pending next commit batch',
-    `Report hash: ${row.reportHash}`,
-    'committed before outcome · reproducible scorer',
-  ].join('\n');
+  ];
+  if (apiBase) {
+    lines.push(`Verify this forecast: ${apiBase.replace(/\/$/, '')}/v1/proof/${row.reportHash}`);
+  }
+  lines.push(
+    row.txHash
+      ? `Batch anchor (many reports, one Merkle root): ${explorer}/tx/${row.txHash}`
+      : 'Proof: pending next commit batch',
+  );
+  lines.push(`Report hash: ${row.reportHash}`);
+  lines.push('committed before outcome · reproducible scorer');
+  return lines.join('\n');
 }
 
 export function makeTelegramSender(botToken: string, chatId: string): TelegramSender {
@@ -82,6 +102,8 @@ export function makeTelegramSender(botToken: string, chatId: string): TelegramSe
 
 export interface PosterDeps {
   chainId: number;
+  /** public API base, so each post can link its own verifiable proof */
+  apiBase?: string;
   send: TelegramSender;
   readCandidates?: CandidateReader;
   markPosted?: MarkPosted;
@@ -109,7 +131,7 @@ export async function postQualifiedLaunches(deps: PosterDeps): Promise<PosterSwe
   let failed = 0;
   for (const row of rows) {
     try {
-      await deps.send(formatTelegramMessage(row, deps.chainId));
+      await deps.send(formatTelegramMessage(row, deps.chainId, deps.apiBase));
       await markPosted(row.id);
       posted += 1;
     } catch (err) {
@@ -125,6 +147,7 @@ export interface TelegramPosterLoopOptions {
   botToken: string;
   chatId: string;
   chainId: number;
+  apiBase?: string;
   intervalMs?: number;
   limit?: number;
 }
@@ -139,7 +162,7 @@ export async function runTelegramPosterLoop(
   console.log(`[telegram] free-feed poster every ${intervalMs / 1000}s -> chat ${opts.chatId}`);
   while (!signal.stopped) {
     try {
-      const r = await postQualifiedLaunches({ chainId: opts.chainId, send, limit: opts.limit });
+      const r = await postQualifiedLaunches({ chainId: opts.chainId, send, limit: opts.limit, apiBase: opts.apiBase });
       if (r.candidates > 0) {
         // eslint-disable-next-line no-console
         console.log(`[telegram] swept ${r.candidates}: ${r.posted} posted · ${r.failed} failed`);

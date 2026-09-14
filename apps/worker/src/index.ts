@@ -120,6 +120,7 @@ async function main(): Promise<void> {
       botToken: env.telegramBotToken,
       chatId: env.telegramChatId,
       chainId: env.chainId,
+      apiBase: env.publicApiBaseUrl,
       intervalMs: env.telegramPosterIntervalMs,
     });
   } else {

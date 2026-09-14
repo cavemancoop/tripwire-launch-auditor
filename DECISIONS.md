@@ -173,3 +173,43 @@ of evaluations/day. Reconcile windows, not requests.
   `x-orbio-cost-usd`, `x-orbio-input-tokens`, `x-orbio-output-tokens`) or an
   `orbio_get_usage(since)` MCP method would make `provider_reported` the default
   basis and retire estimation entirely.
+
+## M9 follow-up — the staleness gate now spends, and why (2026-09-14)
+
+**Decision.** A lapsed Orbio MCP session no longer stops inference. Previously
+`billingStatus: 'stale'` closed the deep-dive gate entirely — "refusing to spend
+unwatched." It now allows the run, falls back to the last known balance (or the
+daily cap when none has ever been read), and reports the staleness instead.
+`phantom` and `anomaly` still close the gate; those are compromise signals, not
+absence of news.
+
+**Why.** Measured 2026-09-14: a gateway key keeps billing inference normally
+with an OAuth session that expired two days earlier. The session bounds *key
+management* — create, revoke, read balance through the MCP — not spending. The
+old policy conflated the two, and the cost was total: `llm_deepdive_v0`, the
+forecaster the entire benchmark exists to grade, had never run in production at
+all. The guards that actually bound spend don't need Orbio reachable: the $5
+daily cap, the $0.20 per-run cap, our own per-request ledger, and a gateway that
+fails safe on an empty balance.
+
+**What this costs.** We may spend up to the daily cap against a balance figure
+that is hours old, or that has never been read. Bounded and visible: the panel
+prints `balance last confirmed Nh ago` (`balanceStale`) or says it has never
+been read (`balanceUnknown`), and the spend figures carry a `basis`
+(`epoch_reconciled` | `local_ledger` | `none`) so a local estimate is never
+presented as a provider-confirmed number.
+
+**Not derivable from a flag.** This is a deliberate loosening of an M5c safety
+rule, not an implementation detail — recorded here so it is read as a decision
+rather than inferred from a field on the dashboard.
+
+**Consequence for spec §0.1 property 2.** Balance reads still require the
+session: probed exhaustively on 2026-09-14, the Orbio gateway exposes no key,
+usage, credits, balance or account endpoint (every path returns the same HTML
+catch-all; `/api/v1/models` returns real JSON, so GETs work — those routes
+simply don't exist). `/api/key` returns 405 rather than 404, i.e. the route
+exists but rejects GET — almost certainly the POST behind `orbio_create_key`,
+deliberately not probed because that call mints *and retires* the active key.
+So credit accrual can only be derived while a session is up, and property 2 is
+demonstrable during the session window rather than continuously. The panel must
+say which.
