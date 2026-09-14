@@ -28,7 +28,7 @@
     "scorer:run": "pnpm --filter @launch-auditor/worker scorer:run",
     "backfill": "pnpm --filter @launch-auditor/worker backfill",
     "orbio:auth": "pnpm --filter @launch-auditor/worker orbio:auth",
-    "orbio:push-key": "pnpm --filter @launch-auditor/worker orbio:push-key",
+    "railway:push-env": "pnpm --filter @launch-auditor/worker railway:push-env",
     "orbio:probe": "pnpm --filter @launch-auditor/worker orbio:probe",
     "contracts:build": "forge build --root packages/contracts",
     "contracts:test": "forge test --root packages/contracts",
