@@ -1428,3 +1428,23 @@ separation from putting a session on Railway.
   stays under ~600, and a slow receipt logs `late receipt for … recording its
   batch` instead of a fresh batch with the same reports.
 
+## 2026-09-15 (later) — commit outage: null receipts were cached
+
+### Fixed
+- `packages/rpc-budget`: a `null` answer to a hash-addressed read
+  (`eth_getTransactionReceipt`, `eth_getTransactionByHash`, …) is no longer
+  cached. This was the real cause of the "receipt not found within 240000ms"
+  errors; the morning's hold-and-recheck fix amplified it (see DECISIONS.md).
+- Commit loop: a held (unconfirmed) batch excludes its reports from the next
+  batch instead of blocking it. Receipt-check errors are logged, not swallowed.
+
+### Added
+- `docs/review-pack/` — the independent-review pack (Phase A); the Codex Phase
+  A output arrives as `CODEX-REVIEW-2026-09-15.md` once triaged.
+
+### Verify
+- `pnpm verify` green (rpc-budget 12 tests incl. the null-cache regression).
+- After redeploy: `launch_auditor_commit_age_seconds` under ~600 and holding;
+  `curl -s "$API/v1/launches?limit=200"` shows `proof.committed: true` on
+  launches older than ~20 min within an hour of the deploy.
+

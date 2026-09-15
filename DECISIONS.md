@@ -40,6 +40,24 @@ Key management is demonstrated locally, not in production.
 about an hour after each push, and the panel must say that window exists — the
 same bound recorded under M9 follow-up, now reachable instead of 100% null.
 
+## Commit loop, corrected the same day: null RPC answers were being cached (2026-09-15, later)
+
+The fix above made things worse. Root cause of the receipt timeouts, found only
+after Codex's Phase A review showed 0/200 recent launches committed: the
+`rpc-budget` response cache treats every hash-addressed read as immutable and
+was caching `null` — the first receipt poll that hit a lagging node behind
+Chainstack's load balancer got "not found", and every later poll for the whole
+240 s deadline was served that null from cache. Holding the batch and re-polling
+for 30 minutes therefore re-polled the same cached null, so each slow receipt
+stalled commits for ~34 minutes instead of ~4. Between the 05:27 and ~08:00 UTC
+deploys, batches landed every ~35 minutes against ~18k reports/day, and the
+200-leaf oldest-first batches never reached recent launches.
+
+Now: a `null` result is never cached (a real answer still is, once it exists),
+and a held batch no longer blocks the next one — its reports are excluded from
+`pending` until it is recorded or dropped. The "resolved before any new batch is
+sent" wording above is superseded.
+
 ## Commit loop — a sent tx is resolved before another is sent (2026-09-15)
 
 The public feed posted `commit lag: 10min` at 21:18 local. Cause: four

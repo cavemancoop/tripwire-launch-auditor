@@ -242,27 +242,37 @@ async function runCommitBatch(opts: { force?: boolean }): Promise<CommitResult> 
   const cfg = requireCommitEnv(env);
   if (!cfg.ok) return { committed: false, reason: cfg.reason };
 
-  // Never send a new batch while the last one might already be on-chain.
+  // A held batch is resolved first, but it never blocks the next one: its
+  // reports are simply excluded from `pending` until it is recorded or dropped.
+  // (Blocking cost ~30 min of commits per slow receipt on 2026-09-15.)
+  let held: string[] = [];
   if (unconfirmed) {
     const u = unconfirmed;
     const pub = getBudgetedClient(env.rpcUrl, { priority: PRIORITY.commit });
-    const receipt = await pub.getTransactionReceipt({ hash: u.txHash }).catch(() => null);
+    let receipt: TransactionReceipt | null = null;
+    try {
+      receipt = await pub.getTransactionReceipt({ hash: u.txHash });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(`[commit] receipt check for ${u.txHash}: ${err instanceof Error ? err.message.split('\n')[0] : err}`);
+    }
     const action = unconfirmedAction(u, receipt, Date.now());
     if (action === 'wait') {
-      return { committed: false, reason: `awaiting receipt for ${u.txHash} (sent ${Math.round((Date.now() - u.sentAt) / 1000)}s ago)` };
-    }
-    unconfirmed = null;
-    if (action === 'finalize') {
+      held = u.batch.map((r) => r.id);
+    } else {
+      unconfirmed = null;
+      if (action === 'finalize') {
+        // eslint-disable-next-line no-console
+        console.log(`[commit] late receipt for ${u.txHash} — recording its batch instead of re-committing`);
+        return recordBatch(env, cfg.registry, u.batch, buildMerkleTree(u.batch.map((r) => r.reportHash as Hex)), u.txHash, receipt!);
+      }
       // eslint-disable-next-line no-console
-      console.log(`[commit] late receipt for ${u.txHash} — recording its batch instead of re-committing`);
-      return recordBatch(env, cfg.registry, u.batch, buildMerkleTree(u.batch.map((r) => r.reportHash as Hex)), u.txHash, receipt!);
+      console.warn(`[commit] dropping unconfirmed ${u.txHash} (${action}) — its reports will re-commit`);
     }
-    // eslint-disable-next-line no-console
-    console.warn(`[commit] dropping unconfirmed ${u.txHash} (${action}) — its reports will re-commit`);
   }
 
   const pending = await prisma.report.findMany({
-    where: { validatorPassed: true, commitId: null },
+    where: { validatorPassed: true, commitId: null, ...(held.length ? { id: { notIn: held } } : {}) },
     orderBy: { createdAt: 'asc' },
     select: { id: true, reportHash: true, createdAt: true },
   });
@@ -300,7 +310,7 @@ async function runCommitBatch(opts: { force?: boolean }): Promise<CommitResult> 
   } catch (err) {
     unconfirmed = { txHash, batch, sentAt };
     throw new Error(
-      `${err instanceof Error ? err.message : String(err)} — held as unconfirmed; resolved before any new batch is sent`,
+      `${err instanceof Error ? err.message : String(err)} — held as unconfirmed; its reports are excluded from later batches until it resolves`,
     );
   }
   if (receipt.status !== 'success') {

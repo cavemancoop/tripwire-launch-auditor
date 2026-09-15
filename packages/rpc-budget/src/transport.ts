@@ -61,7 +61,11 @@ export function budgetedHttp(rpcUrl: string, opts: BudgetedHttpOptions): Transpo
         throw lastErr;
       });
 
-      if (key) opts.cache!.set(key, result);
+      // A null answer to a hash-addressed read ("no such tx / receipt / block
+      // yet") is not immutable: the object can appear on the next block or on
+      // the next node behind a load balancer. Caching it froze commit receipt
+      // polls at "not found" for the whole deadline (2026-09-15).
+      if (key && result != null) opts.cache!.set(key, result);
       return result;
     };
 

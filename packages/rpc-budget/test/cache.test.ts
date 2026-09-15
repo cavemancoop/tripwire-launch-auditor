@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { cacheKey, isCacheable, ResponseCache, stableStringify } from '../src/cache';
 
 describe('isCacheable', () => {
@@ -80,5 +80,42 @@ describe('ResponseCache', () => {
     c.set('a', 1);
     c.set('a', 2);
     expect(c.get('a')).toBe(1);
+  });
+});
+
+describe('budgetedHttp — a null answer is never cached', () => {
+  // 2026-09-15: a receipt poll that hit a lagging node got `null`, the null was
+  // cached under the tx hash, and every later poll for the whole deadline was
+  // served "not found" from cache while the tx sat mined on-chain.
+  it('re-asks the node after a null, and caches the first real answer', async () => {
+    const { budgetedHttp } = await import('../src/transport');
+    const { RequestScheduler } = await import('../src/scheduler');
+    const real = { blockNumber: '0x10', status: '0x1' };
+    let calls = 0;
+    vi.stubGlobal('fetch', async () => {
+      calls += 1;
+      const result = calls <= 2 ? null : real;
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: calls, result }), {
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    try {
+      const cache = new ResponseCache(100);
+      const transport = budgetedHttp('http://rpc.test', {
+        scheduler: new RequestScheduler({ rpm: 6000 }),
+        cache,
+        priority: 1,
+        chainId: 4663,
+      });
+      const req = transport({}).request as (a: { method: string; params: unknown[] }) => Promise<unknown>;
+      const args = { method: 'eth_getTransactionReceipt', params: ['0xabc'] };
+      expect(await req(args)).toBeNull();
+      expect(await req(args)).toBeNull();
+      expect(await req(args)).toEqual(real);
+      expect(await req(args)).toEqual(real);
+      expect(calls).toBe(3); // the 4th is served from cache; the two nulls were not
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
