@@ -1312,3 +1312,83 @@ tests (+15: metrics 5, budget-display 6 carried, benchmark-reader coverage
 unchanged, CORS/health 2, lifecycle-budget 2). All three Docker images built
 and smoke-tested locally (`docker run` + a real `/health` curl) before this
 was trusted.
+
+## M9 follow-up — production actually runs the Orbio half (2026-09-14/15)
+
+The M9 entry above left the stack deployed but with nothing Orbio-specific
+running: no key, no lifecycle rows, no deep-dives, no spend. This closes most of
+that, and corrects a framing the handoff got wrong.
+
+### The correction that mattered
+`HANDOFF-2026-09-14.md` said unattended continuity was bounded at ~1h by the
+OAuth session. Measured 2026-09-14: **a gateway key keeps billing inference
+normally with a session that expired two days earlier.** The session bounds *key
+management* — create, revoke, read balance through the MCP — not spending. Two
+continuities, not one. Fable's review (`docs/closer-plan-2026-09-14.md`) reached
+the same decomposition independently; its proposed mechanism (an OpenRouter-style
+`GET /api/v1/key`) turned out not to exist, but the conclusion held via a
+stronger test.
+
+So the thing blocking `llm_deepdive_v0` in production was not a continuity
+problem at all — it was a missing `ORBIO_API_KEY`. One variable.
+
+### Fixed
+- **The staleness gate spent nothing, ever.** `billingStatus: 'stale'` closed
+  the deep-dive gate, so the forecaster the whole benchmark exists to grade had
+  never run in production. Stale now allows the run against the last known
+  balance (or the daily cap when none was ever read) and reports the staleness;
+  `phantom` / `anomaly` still stop inference. Recorded as a decision in
+  DECISIONS.md rather than left to be inferred from a flag.
+- **Forward scan windows ran past the chain head.** The primary-pool
+  re-derivation scans +2h from the launch block — 72k blocks at 0.1s — so ~7 of
+  8 chunks asked for blocks that didn't exist. Blockmachine clamped silently;
+  Chainstack rejects, and the `try/catch` swallowed it, so M4's decoy-pool
+  correction had never run on a single production launch. Clamped in
+  `pickPrimaryV4Pool` (covers t10 and backfill), 2 regression tests. Confirmed
+  fixed in production: zero failures, first real switch logged.
+- **The claim gate ignored the ≥30-positives rule.** It lived in the field
+  report and never in code, so the only cell that could trip the gate was
+  `INSIDER_EXIT@6h` at n=336 with **12** positives. Now enforced, and
+  `minPositivesForClaims` ships in the Benchmark object.
+- **SELL_IMPAIRED presented as forecastable.** A fixed $100 sell against pools
+  of ~$1k median depth is ~10% of the pool: ~90% come back "impaired" on
+  entirely honest tokens. It measures liquidity depth, not deception, and no
+  notional fixes that. Marked descriptive; structurally cannot render a claim
+  badge.
+- **The dashboard contradicted the worker.** The budget panel printed
+  "next run allows up to $0.00 / binding constraint: zero" while deep-dives were
+  scoring at $0.20 each — the API treated an unread balance as an empty one.
+  Unread is now `null`, mirrors the worker's own fallback, and says
+  `balanceUnknown`. Separately the estimator only read `MetabolismEpoch`, which
+  needs a live session, so real recorded spend showed as `requests24h: 0`; it now
+  falls back to the ledger and reports `basis` (`epoch_reconciled` |
+  `local_ledger` | `none`) — the costBasis discipline applied to the panel.
+- **Every visitor had to paste the API URL.** `apps/web` serves `/config.json`
+  from `API_BASE_URL`; the page reads it at boot. A saved override still wins.
+- **Sweeps hid their own failures.** Only budget reasons were logged, which
+  concealed two multi-day outages (a dead model slug, then the missing key).
+  Skip reasons are now aggregated and printed.
+
+### Added
+- `pnpm railway:push-env` — push `ORBIO_API_KEY` + Telegram vars from the local
+  encrypted store and `.env` into a Railway service. Fingerprints only, nothing
+  in shell history, `--dry-run` / `--service` / `--only`.
+- Feed posts lead with `/v1/proof/<hash>` for that forecast and label the commit
+  tx as "Batch anchor (many reports, one Merkle root)" — Merkle batching meant
+  consecutive posts all shared one tx, which reads as a bug to a judge.
+- `docs/closer-plan-2026-09-14.md` — Fable's review, in the repo rather than
+  only in a chat log.
+
+### Measured in production
+50 consecutive deep-dives, `5 scored · 0 skipped · 0 error` per sweep, zero
+schema-validation failures. Free feed posting, ops alerts armed. The Orbio
+gateway exposes **no** key/usage/credits/balance endpoint (14 paths probed;
+`/api/key` returns 405 not 404 — the route exists but rejects GET, almost
+certainly the POST behind `orbio_create_key`, deliberately not probed since that
+call mints *and retires* the active key).
+
+### Still open
+Property 2 (the accrual-driven budget) remains unimplemented, and because
+balance is only readable with a live session, it can only be made visible during
+that window — the session push it depends on is designed but not built. See
+`HANDOFF-2026-09-15.md` §2.
