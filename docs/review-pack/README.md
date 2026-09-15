@@ -25,6 +25,7 @@ Read `CLAIMS.md` first — it is the list the project should be tested against.
 |---|---|
 | `PRIOR-CRITIQUE.md` | An earlier external red-team of the project, verbatim, with one line per item on what was changed in response. |
 | `closer-plan-2026-09-14.md` | An external closing-week plan written in response to `HANDOFF-2026-09-14.md`. |
+| `CODEX-REVIEW-2026-09-15.md`, `…-PHASE-B.md` | The Codex Phase A and Phase B outputs, verbatim. Triage: `DECISIONS.md` "Codex review triage (2026-09-15)". |
 
 Some Phase A documents mention these by name (e.g. `HANDOFF-2026-09-15.md` refers to the
 closer plan). Their contents are deliberately absent until Phase B.

@@ -2,6 +2,58 @@
 
 Standing choices that aren't obvious from the code. Newest first.
 
+## Codex review triage (2026-09-15)
+
+Both phases are in `docs/review-pack/CODEX-REVIEW-2026-09-15.md` (A) and
+`…-PHASE-B.md` (B). Rule applied: anything that touches a public claim is fixed
+before judging (20 Sep); everything else is deferred with a date. Numbers refer
+to Phase B's revised top ten; letters to its §3 "unanticipated" list and the
+prior-critique rows it called "only relabeled".
+
+**A builder's finding Codex could not see (worker logs):** the outcome resolver
+is head-of-line blocked. It sweeps 25 due rows a minute, oldest horizon first,
+and 24 of the 25 are the same SELL_IMPAIRED@1h rows that fail on an RPC error
+at the horizon block, get deferred, and are picked again next minute.
+Throughput ≈ 1 resolved outcome/min. That, not elapsed time, is why nine of
+eleven cells have no data (#3) — and it makes #3 fixable this week.
+
+| Finding | Verdict | One line |
+|---|---|---|
+| #1 Orbio story absent from production | **Accept** | Run the built session push daily; wire property 2 with `basis`; when the log is empty the panel must say so, not lead. Before judging. |
+| #2 `det_v0` miscalibrated (BSS −12.8 / −9.1) | **Accept** | The fix was decided at the post-M3 checkpoint and never applied: `det_v0.1` = intercepts at logit(observed base rate), weights unchanged, versioned and hash-committed; `det_v0`'s record stays as posted. Before judging — the probabilities are public. |
+| #3 two-cell benchmark | **Accept** (root cause above) | Back off deferred rows and spread sweeps across cells; expose per-cell pending/deferred/unresolvable counts on `/v1/benchmark`. Before judging. |
+| #4 API can't reproduce the benchmark | **Accept, partly** | Read-only `GET /v1/launch/:token` with primary-pool evidence, feature vector + provenance, outcome rows. Before judging if time after #1–#3; a snapshot dataset export is deferred to post-judging (30 Sep). |
+| #5 fail-closed observability | **Accept** | Already item 3 on the list: per-catch-site counters + oldest-failure age on `/metrics`, alert on threshold. Fail-closed report generation on pool-selection failure. Before judging. |
+| #6 coverage/latency claims exceed measurement | **Accept** | Replace "every launch" / "within seconds" with measured coverage over eligible launches (age ≥ T+10m) and p50/p95 report latency on `/metrics` and in copy. Committed-coverage gauge replaces commit age as the alert. Before judging. Persisting the held tx across restart: deferred (30 Sep). |
+| #7 dashboard certainty exceeds data | **Accept** | `$0.00` literals → `n/a` unless derived; "P&L" → "compute cost, trailing 24h"; empty chain renders "no rows", never "verified: yes"; `balanceUnknown` shown in the budget card. Before judging. |
+| #8 baseline methodology | **Accept, partly** | Publish overlap n per comparison and add a fixed-window climatology baseline as a named forecaster (`base_rate_fixed`) — the rolling one's AUROC < 0.5 needs explaining before judging, not after. Bootstrap CIs and decision utility: deferred (post-judging). |
+| #9 unauthenticated deep-dive endpoints | **Accept — needs Cooper's yes** | Require `x-api-key` on `POST /v1/deepdive` and MCP `request_deepdive`; `/v1/assess` stays free (no spend). Changes a public endpoint, so it is a human checkpoint. |
+| #10 narrative inconsistent, demand-free | **Accept (copy) / Defer (demand)** | "four" vs "five" outcomes, "authorize once", "paid entirely", "track record is the product" corrected in README, summary and DEMO.md (M10). Demand commitments were always post-contest (spec §10); no change. |
+| §3.7 Telegram "never double-posts" | **Accept** | README wording → "best-effort deduplicated (mark-after-send)". |
+| §3.8 `pnpm verify` green with forge skipped | **Accept** | The summary line must say "contract tests NOT run" when forge is absent; README stops claiming full coverage. |
+| T1 / F9 (demand, griefing) | as #10 / #9 | — |
+| T4 economics "only relabeled" | **Accept (copy)** | As #7. The v0.1 spreadsheet is marked superseded in the planning dir; no replacement model this week. |
+| T16 growth projections | **Accept (withdraw)** | Same: mark superseded; nothing is published that depends on it. |
+| F3 sybil deployers | **Reject for now** | Disclosure is the honest state; entity resolution is v0.4 Trace. |
+| F5 outcome manipulation of the 24h max | **Defer (post-judging)** | Changing an outcome rule mid-record is a human checkpoint and resets the cell; revisit with the SELL_IMPAIRED resize. |
+| B5 velocity control, B8 tiers | **Defer (post-judging)** | Roadmap as recorded under M5c. |
+| B10 upstream ask to Orbio | **Accept** | Send it (builders channel) — a human action, this week. |
+| Closer plan §2.3 "four days clears the bar" | **Withdrawn** | Codex is right: positives, not days, gate INSIDER_EXIT (26/30), and starved cells don't fill with time. |
+
+### Ordered remaining work (replaces HANDOFF-2026-09-15 §3)
+
+1. Resolver backoff + spread (#3) — the cheapest, largest change to the public record.
+2. `det_v0.1` intercepts, committed (#2).
+3. Dashboard honesty pass (#7, §3.7, §3.8) + copy pass (#6, #10 wording).
+4. Coverage/latency gauges and alert (#6); failure counters (#5).
+5. Session push run + property 2 with provenance (#1).
+6. `/v1/launch/:token` detail (#4); `base_rate_fixed` + overlap n (#8).
+7. **Needs Cooper:** #9 auth on deep-dive; B10 message to Orbio; daily `pnpm orbio:auth && pnpm railway:push-env --with-session`; `TELEGRAM_ALERTS_CHANNEL_ID`.
+8. M10: DEMO.md, summary, licence, public repo — last, after 1–6 so it describes what is true.
+
+Post-judging (dated 30 Sep): backfill import as `retrospective=true`; SELL_IMPAIRED resize;
+F5; B5/B8; snapshot export; bootstrap CIs; held-tx persistence.
+
 ## Item 4 — an Orbio session on Railway, and what it may do there (2026-09-15)
 
 **Built, not yet run.** `pnpm railway:push-env --with-session` exists; whether to
