@@ -260,6 +260,10 @@ export async function sweepDueOutcomes(
 export interface OutcomesLoopOptions {
   intervalMs?: number;
   batch?: number;
+  /** outcomes resolved in parallel per sweep. The shared RPC token bucket (watcher >
+   *  commit > outcomes) is the real rate limit, so this only stops the loop being
+   *  latency-bound: at 1, one sweep of 25 took ~5 min (2026-09-15). */
+  concurrency?: number;
 }
 
 export async function runOutcomesLoop(
@@ -268,12 +272,13 @@ export async function runOutcomesLoop(
   opts: OutcomesLoopOptions = {},
 ): Promise<void> {
   const intervalMs = opts.intervalMs ?? 60_000;
-  const batch = opts.batch ?? 25;
+  const batch = opts.batch ?? Number(process.env.OUTCOMES_BATCH || 25);
+  const concurrency = opts.concurrency ?? Number(process.env.OUTCOMES_CONCURRENCY || 4);
   // eslint-disable-next-line no-console
-  console.log(`[outcomes] resolution loop every ${intervalMs / 1000}s, batch ${batch}`);
+  console.log(`[outcomes] resolution loop every ${intervalMs / 1000}s, batch ${batch}, concurrency ${concurrency}, fair across labels`);
   while (!signal.stopped) {
     try {
-      const r = await sweepDueOutcomes(client, batch, { order: 'fair' });
+      const r = await sweepDueOutcomes(client, batch, { order: 'fair', concurrency });
       if (r.picked > 0) {
         // eslint-disable-next-line no-console
         console.log(

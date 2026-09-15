@@ -27,6 +27,15 @@ Chosen (operational, reversible; the committed outcome rule is unchanged):
 - `/metrics` gains per-label `outcomes_pending_due`, `outcomes_deferred`,
   `outcomes_resolved_24h`, so a starved cell is visible without log access.
 
+**Measured after deploy, same day:** the head-of-line block was real but small
+(24 retrying rows); the larger limit is throughput. Horizon-due backlog was
+~21.6k rows (INSIDER_EXIT 9.5k, SELL_IMPAIRED 9.0k, the three 24h-only labels
+1.0k each) against ~900 resolved/24h. With backoff + fair share: 16-20 resolved
+per sweep, ~3.5/min, LIQ_IMPAIRED and TRADING_ALIVE +11 each in 15 min (vs 4 in
+the prior 24h). One sweep took ~5 min at concurrency 1, so the live loop now
+resolves 4 in parallel (`OUTCOMES_CONCURRENCY`); the shared RPC bucket still
+caps total calls with watcher and commit ahead of outcomes.
+
 Not claimed: that the nine cells fill this week. They are now reachable; how fast
 depends on how many due rows each label has and what the rpcError turns out to be.
 
