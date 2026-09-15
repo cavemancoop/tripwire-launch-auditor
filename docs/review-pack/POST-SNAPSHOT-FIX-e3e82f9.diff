@@ -1,0 +1,208 @@
+commit e3e82f98cb905831b0f1508f6352382d32daa364
+Date: Tue Sep 15 01:01:13 2026 -0700
+
+rpc-budget: never cache a null answer; commit: held batch no longer blocks
+
+Root cause of the receipt timeouts: eth_getTransactionReceipt is hash-addressed
+so the response cache kept its first answer forever, including null from a
+lagging node. Every poll for the whole 240s deadline was served that null,
+and the morning's hold-and-recheck then re-polled it for 30 minutes, cutting
+commits to one batch per ~35 min. A null is no longer cached, and a held
+batch excludes its reports from the next one instead of blocking it.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+
+
+ CHANGELOG.md                           | 20 +++++++++++++++++
+ DECISIONS.md                           | 18 ++++++++++++++++
+ apps/worker/src/commit/job.ts          | 34 ++++++++++++++++++-----------
+ packages/rpc-budget/src/transport.ts   |  6 +++++-
+ packages/rpc-budget/test/cache.test.ts | 39 +++++++++++++++++++++++++++++++++-
+ 5 files changed, 103 insertions(+), 14 deletions(-)
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 9dd7534..064d35d 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1428,3 +1428,23 @@ separation from putting a session on Railway.
+   stays under ~600, and a slow receipt logs `late receipt for … recording its
+   batch` instead of a fresh batch with the same reports.
+ 
++## 2026-09-15 (later) — commit outage: null receipts were cached
++
++### Fixed
++- `packages/rpc-budget`: a `null` answer to a hash-addressed read
++  (`eth_getTransactionReceipt`, `eth_getTransactionByHash`, …) is no longer
++  cached. This was the real cause of the "receipt not found within 240000ms"
++  errors; the morning's hold-and-recheck fix amplified it (see DECISIONS.md).
++- Commit loop: a held (unconfirmed) batch excludes its reports from the next
++  batch instead of blocking it. Receipt-check errors are logged, not swallowed.
++
++### Added
++- `docs/review-pack/` — the independent-review pack (Phase A); the Codex Phase
++  A output arrives as `CODEX-REVIEW-2026-09-15.md` once triaged.
++
++### Verify
++- `pnpm verify` green (rpc-budget 12 tests incl. the null-cache regression).
++- After redeploy: `launch_auditor_commit_age_seconds` under ~600 and holding;
++  `curl -s "$API/v1/launches?limit=200"` shows `proof.committed: true` on
++  launches older than ~20 min within an hour of the deploy.
++
+diff --git a/DECISIONS.md b/DECISIONS.md
+index 0a59606..a5821e8 100644
+--- a/DECISIONS.md
++++ b/DECISIONS.md
+@@ -40,6 +40,24 @@ Key management is demonstrated locally, not in production.
+ about an hour after each push, and the panel must say that window exists — the
+ same bound recorded under M9 follow-up, now reachable instead of 100% null.
+ 
++## Commit loop, corrected the same day: null RPC answers were being cached (2026-09-15, later)
++
++The fix above made things worse. Root cause of the receipt timeouts, found only
++after Codex's Phase A review showed 0/200 recent launches committed: the
++`rpc-budget` response cache treats every hash-addressed read as immutable and
++was caching `null` — the first receipt poll that hit a lagging node behind
++Chainstack's load balancer got "not found", and every later poll for the whole
++240 s deadline was served that null from cache. Holding the batch and re-polling
++for 30 minutes therefore re-polled the same cached null, so each slow receipt
++stalled commits for ~34 minutes instead of ~4. Between the 05:27 and ~08:00 UTC
++deploys, batches landed every ~35 minutes against ~18k reports/day, and the
++200-leaf oldest-first batches never reached recent launches.
++
++Now: a `null` result is never cached (a real answer still is, once it exists),
++and a held batch no longer blocks the next one — its reports are excluded from
++`pending` until it is recorded or dropped. The "resolved before any new batch is
++sent" wording above is superseded.
++
+ ## Commit loop — a sent tx is resolved before another is sent (2026-09-15)
+ 
+ The public feed posted `commit lag: 10min` at 21:18 local. Cause: four
+diff --git a/apps/worker/src/commit/job.ts b/apps/worker/src/commit/job.ts
+index 02370b6..9ba2672 100644
+--- a/apps/worker/src/commit/job.ts
++++ b/apps/worker/src/commit/job.ts
+@@ -242,27 +242,37 @@ async function runCommitBatch(opts: { force?: boolean }): Promise<CommitResult>
+   const cfg = requireCommitEnv(env);
+   if (!cfg.ok) return { committed: false, reason: cfg.reason };
+ 
+-  // Never send a new batch while the last one might already be on-chain.
++  // A held batch is resolved first, but it never blocks the next one: its
++  // reports are simply excluded from `pending` until it is recorded or dropped.
++  // (Blocking cost ~30 min of commits per slow receipt on 2026-09-15.)
++  let held: string[] = [];
+   if (unconfirmed) {
+     const u = unconfirmed;
+     const pub = getBudgetedClient(env.rpcUrl, { priority: PRIORITY.commit });
+-    const receipt = await pub.getTransactionReceipt({ hash: u.txHash }).catch(() => null);
++    let receipt: TransactionReceipt | null = null;
++    try {
++      receipt = await pub.getTransactionReceipt({ hash: u.txHash });
++    } catch (err) {
++      // eslint-disable-next-line no-console
++      console.warn(`[commit] receipt check for ${u.txHash}: ${err instanceof Error ? err.message.split('\n')[0] : err}`);
++    }
+     const action = unconfirmedAction(u, receipt, Date.now());
+     if (action === 'wait') {
+-      return { committed: false, reason: `awaiting receipt for ${u.txHash} (sent ${Math.round((Date.now() - u.sentAt) / 1000)}s ago)` };
+-    }
+-    unconfirmed = null;
+-    if (action === 'finalize') {
++      held = u.batch.map((r) => r.id);
++    } else {
++      unconfirmed = null;
++      if (action === 'finalize') {
++        // eslint-disable-next-line no-console
++        console.log(`[commit] late receipt for ${u.txHash} — recording its batch instead of re-committing`);
++        return recordBatch(env, cfg.registry, u.batch, buildMerkleTree(u.batch.map((r) => r.reportHash as Hex)), u.txHash, receipt!);
++      }
+       // eslint-disable-next-line no-console
+-      console.log(`[commit] late receipt for ${u.txHash} — recording its batch instead of re-committing`);
+-      return recordBatch(env, cfg.registry, u.batch, buildMerkleTree(u.batch.map((r) => r.reportHash as Hex)), u.txHash, receipt!);
++      console.warn(`[commit] dropping unconfirmed ${u.txHash} (${action}) — its reports will re-commit`);
+     }
+-    // eslint-disable-next-line no-console
+-    console.warn(`[commit] dropping unconfirmed ${u.txHash} (${action}) — its reports will re-commit`);
+   }
+ 
+   const pending = await prisma.report.findMany({
+-    where: { validatorPassed: true, commitId: null },
++    where: { validatorPassed: true, commitId: null, ...(held.length ? { id: { notIn: held } } : {}) },
+     orderBy: { createdAt: 'asc' },
+     select: { id: true, reportHash: true, createdAt: true },
+   });
+@@ -300,7 +310,7 @@ async function runCommitBatch(opts: { force?: boolean }): Promise<CommitResult>
+   } catch (err) {
+     unconfirmed = { txHash, batch, sentAt };
+     throw new Error(
+-      `${err instanceof Error ? err.message : String(err)} — held as unconfirmed; resolved before any new batch is sent`,
++      `${err instanceof Error ? err.message : String(err)} — held as unconfirmed; its reports are excluded from later batches until it resolves`,
+     );
+   }
+   if (receipt.status !== 'success') {
+diff --git a/packages/rpc-budget/src/transport.ts b/packages/rpc-budget/src/transport.ts
+index dc30249..7f464dd 100644
+--- a/packages/rpc-budget/src/transport.ts
++++ b/packages/rpc-budget/src/transport.ts
+@@ -61,7 +61,11 @@ export function budgetedHttp(rpcUrl: string, opts: BudgetedHttpOptions): Transpo
+         throw lastErr;
+       });
+ 
+-      if (key) opts.cache!.set(key, result);
++      // A null answer to a hash-addressed read ("no such tx / receipt / block
++      // yet") is not immutable: the object can appear on the next block or on
++      // the next node behind a load balancer. Caching it froze commit receipt
++      // polls at "not found" for the whole deadline (2026-09-15).
++      if (key && result != null) opts.cache!.set(key, result);
+       return result;
+     };
+ 
+diff --git a/packages/rpc-budget/test/cache.test.ts b/packages/rpc-budget/test/cache.test.ts
+index ccac4bf..ab1c8ee 100644
+--- a/packages/rpc-budget/test/cache.test.ts
++++ b/packages/rpc-budget/test/cache.test.ts
+@@ -1,4 +1,4 @@
+-import { describe, expect, it } from 'vitest';
++import { describe, expect, it, vi } from 'vitest';
+ import { cacheKey, isCacheable, ResponseCache, stableStringify } from '../src/cache';
+ 
+ describe('isCacheable', () => {
+@@ -82,3 +82,40 @@ describe('ResponseCache', () => {
+     expect(c.get('a')).toBe(1);
+   });
+ });
++
++describe('budgetedHttp — a null answer is never cached', () => {
++  // 2026-09-15: a receipt poll that hit a lagging node got `null`, the null was
++  // cached under the tx hash, and every later poll for the whole deadline was
++  // served "not found" from cache while the tx sat mined on-chain.
++  it('re-asks the node after a null, and caches the first real answer', async () => {
++    const { budgetedHttp } = await import('../src/transport');
++    const { RequestScheduler } = await import('../src/scheduler');
++    const real = { blockNumber: '0x10', status: '0x1' };
++    let calls = 0;
++    vi.stubGlobal('fetch', async () => {
++      calls += 1;
++      const result = calls <= 2 ? null : real;
++      return new Response(JSON.stringify({ jsonrpc: '2.0', id: calls, result }), {
++        headers: { 'content-type': 'application/json' },
++      });
++    });
++    try {
++      const cache = new ResponseCache(100);
++      const transport = budgetedHttp('http://rpc.test', {
++        scheduler: new RequestScheduler({ rpm: 6000 }),
++        cache,
++        priority: 1,
++        chainId: 4663,
++      });
++      const req = transport({}).request as (a: { method: string; params: unknown[] }) => Promise<unknown>;
++      const args = { method: 'eth_getTransactionReceipt', params: ['0xabc'] };
++      expect(await req(args)).toBeNull();
++      expect(await req(args)).toBeNull();
++      expect(await req(args)).toEqual(real);
++      expect(await req(args)).toEqual(real);
++      expect(calls).toBe(3); // the 4th is served from cache; the two nulls were not
++    } finally {
++      vi.unstubAllGlobals();
++    }
++  });
++});
