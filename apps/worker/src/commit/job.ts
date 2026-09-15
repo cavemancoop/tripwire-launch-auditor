@@ -203,10 +203,63 @@ export async function recommitArtifacts(
   return { committed, skipped };
 }
 
+type PendingReport = { id: string; reportHash: string; createdAt: Date };
+
+/**
+ * A batch whose tx was sent but whose receipt never showed up inside
+ * `waitReceipt`'s deadline. Seen in production 2026-09-15: every such tx had
+ * in fact mined successfully, but with no DB row its reports stayed
+ * `commitId: null` and were re-anchored in the next batch — an orphan root
+ * on-chain, extra gas, and a proof pointing at a later commit than the real one.
+ * Held in memory (a restart falls back to the old re-commit behaviour).
+ */
+export interface UnconfirmedBatch {
+  txHash: Hex;
+  batch: PendingReport[];
+  sentAt: number;
+}
+
+/** Give up on an unconfirmed tx after this long and let its reports re-commit. */
+export const UNCONFIRMED_MAX_AGE_MS = 30 * 60_000;
+
+export type UnconfirmedAction = 'finalize' | 'wait' | 'drop_reverted' | 'drop_expired';
+
+/** Pure: what to do with a still-unconfirmed batch given this tick's receipt lookup. */
+export function unconfirmedAction(
+  u: Pick<UnconfirmedBatch, 'sentAt'>,
+  receipt: Pick<TransactionReceipt, 'status'> | null,
+  now: number,
+  maxAgeMs = UNCONFIRMED_MAX_AGE_MS,
+): UnconfirmedAction {
+  if (receipt) return receipt.status === 'success' ? 'finalize' : 'drop_reverted';
+  return now - u.sentAt >= maxAgeMs ? 'drop_expired' : 'wait';
+}
+
+let unconfirmed: UnconfirmedBatch | null = null;
+
 async function runCommitBatch(opts: { force?: boolean }): Promise<CommitResult> {
   const env = loadEnv();
   const cfg = requireCommitEnv(env);
   if (!cfg.ok) return { committed: false, reason: cfg.reason };
+
+  // Never send a new batch while the last one might already be on-chain.
+  if (unconfirmed) {
+    const u = unconfirmed;
+    const pub = getBudgetedClient(env.rpcUrl, { priority: PRIORITY.commit });
+    const receipt = await pub.getTransactionReceipt({ hash: u.txHash }).catch(() => null);
+    const action = unconfirmedAction(u, receipt, Date.now());
+    if (action === 'wait') {
+      return { committed: false, reason: `awaiting receipt for ${u.txHash} (sent ${Math.round((Date.now() - u.sentAt) / 1000)}s ago)` };
+    }
+    unconfirmed = null;
+    if (action === 'finalize') {
+      // eslint-disable-next-line no-console
+      console.log(`[commit] late receipt for ${u.txHash} — recording its batch instead of re-committing`);
+      return recordBatch(env, cfg.registry, u.batch, buildMerkleTree(u.batch.map((r) => r.reportHash as Hex)), u.txHash, receipt!);
+    }
+    // eslint-disable-next-line no-console
+    console.warn(`[commit] dropping unconfirmed ${u.txHash} (${action}) — its reports will re-commit`);
+  }
 
   const pending = await prisma.report.findMany({
     where: { validatorPassed: true, commitId: null },
@@ -240,14 +293,33 @@ async function runCommitBatch(opts: { force?: boolean }): Promise<CommitResult> 
     account: wallet.account!,
     chain: wallet.chain,
   });
-  const receipt = await waitReceipt(pub, txHash);
+  const sentAt = Date.now();
+  let receipt: TransactionReceipt;
+  try {
+    receipt = await waitReceipt(pub, txHash);
+  } catch (err) {
+    unconfirmed = { txHash, batch, sentAt };
+    throw new Error(
+      `${err instanceof Error ? err.message : String(err)} — held as unconfirmed; resolved before any new batch is sent`,
+    );
+  }
   if (receipt.status !== 'success') {
     return { committed: false, reason: `commitBatch tx reverted (${txHash})` };
   }
+  return recordBatch(env, cfg.registry, batch, tree, txHash, receipt);
+}
 
+async function recordBatch(
+  env: WorkerEnv,
+  registry: Hex,
+  batch: PendingReport[],
+  tree: ReturnType<typeof buildMerkleTree>,
+  txHash: Hex,
+  receipt: TransactionReceipt,
+): Promise<CommitResult> {
   let batchId: number | undefined;
   for (const log of receipt.logs) {
-    if (log.address.toLowerCase() !== cfg.registry.toLowerCase()) continue;
+    if (log.address.toLowerCase() !== registry.toLowerCase()) continue;
     try {
       const ev = decodeEventLog({ abi: COMMIT_REGISTRY_ABI, data: log.data, topics: log.topics });
       if (ev.eventName === 'BatchCommitted') batchId = Number(ev.args.batchId);
