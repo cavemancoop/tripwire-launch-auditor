@@ -83,7 +83,10 @@ export async function resolveDrawdown(ctx: ResolverContext): Promise<Resolution>
         horizonPrice = 0; // cannot sell -> price is effectively 0
         horizonSource = 'quote';
       } else {
-        return unresolvable(`quoter ${q.error} at horizon block`, coverage, { refMaxPrice: refMax });
+        return unresolvable(`quoter ${q.error} at horizon block`, coverage, {
+          refMaxPrice: refMax,
+          rpcError: q.message.split('\n')[0]!.slice(0, 200),
+        });
       }
     } else {
       horizonPrice = Number(q.amountOut) / Number(amountIn);

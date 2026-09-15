@@ -12,6 +12,10 @@ export interface MetricsSnapshot {
   idsOrPhantomFlagged: boolean;
   launches24h: number;
   reports24h: number;
+  /** per outcome label: horizon-due PENDING rows, of which deferred (retrying),
+   *  and rows resolved in the trailing 24h. A label with a growing due backlog
+   *  and ~0 resolved is a starved benchmark cell. Optional so older readers work. */
+  outcomes?: Array<{ label: string; pendingDue: number; deferred: number; resolved24h: number }>;
 }
 
 export type MetricsReader = () => Promise<MetricsSnapshot>;
@@ -23,14 +27,33 @@ export const prismaMetricsReader: MetricsReader = async () => {
   const now = new Date();
   const since24h = new Date(now.getTime() - 24 * 3_600_000);
 
-  const [watcherCursor, commit, lifecycle, epoch, launches24h, reports24h] = await Promise.all([
+  const [watcherCursor, commit, lifecycle, epoch, launches24h, reports24h, due, deferred, resolved] = await Promise.all([
     prisma.watcherCursor.findFirst({ orderBy: { updatedAt: 'desc' } }),
     prisma.commit.findFirst({ orderBy: { createdAt: 'desc' } }),
     prisma.lifecycleLog.findFirst({ orderBy: { createdAt: 'desc' } }),
     prisma.metabolismEpoch.findFirst({ orderBy: { at: 'desc' } }),
     prisma.launch.count({ where: { createdAt: { gte: since24h } } }),
     prisma.report.count({ where: { createdAt: { gte: since24h } } }),
+    prisma.outcome.groupBy({
+      by: ['label'],
+      where: { status: 'PENDING', horizonAt: { lte: now } },
+      _count: { _all: true },
+    }),
+    prisma.outcome.groupBy({
+      by: ['label'],
+      where: { status: 'PENDING', horizonAt: { lte: now }, measuredAt: { not: null } },
+      _count: { _all: true },
+    }),
+    prisma.outcome.groupBy({
+      by: ['label'],
+      where: { status: 'RESOLVED', measuredAt: { gte: since24h } },
+      _count: { _all: true },
+    }),
   ]);
+
+  const count = (rows: Array<{ label: string; _count: { _all: number } }>, label: string): number =>
+    rows.find((r) => r.label === label)?._count._all ?? 0;
+  const labels = [...new Set([...due, ...deferred, ...resolved].map((r) => r.label))].sort();
 
   return {
     watcherStalenessSec: age(now, watcherCursor?.updatedAt),
@@ -39,6 +62,12 @@ export const prismaMetricsReader: MetricsReader = async () => {
     idsOrPhantomFlagged: Boolean(lifecycle?.idsMismatch) || Boolean(epoch?.phantom),
     launches24h,
     reports24h,
+    outcomes: labels.map((label) => ({
+      label,
+      pendingDue: count(due, label),
+      deferred: count(deferred, label),
+      resolved24h: count(resolved, label),
+    })),
   };
 };
 
@@ -75,6 +104,16 @@ export function formatPrometheus(m: MetricsSnapshot): string {
   for (const s of METABOLISM_STATES) {
     lines.push(`launch_auditor_metabolism_state{state="${s}"} ${m.metabolismState === s ? 1 : 0}`);
   }
+
+  const series = (name: string, help: string, pick: (o: NonNullable<MetricsSnapshot['outcomes']>[number]) => number): void => {
+    if (!m.outcomes?.length) return;
+    lines.push(`# HELP ${name} ${help}`);
+    lines.push(`# TYPE ${name} gauge`);
+    for (const o of m.outcomes) lines.push(`${name}{label="${o.label}"} ${pick(o)}`);
+  };
+  series('launch_auditor_outcomes_pending_due', 'PENDING outcomes whose horizon has passed, per label', (o) => o.pendingDue);
+  series('launch_auditor_outcomes_deferred', 'Horizon-due PENDING outcomes currently retrying after a transient failure, per label', (o) => o.deferred);
+  series('launch_auditor_outcomes_resolved_24h', 'Outcomes resolved in the trailing 24h, per label', (o) => o.resolved24h);
 
   return lines.join('\n') + '\n';
 }

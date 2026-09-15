@@ -45,6 +45,7 @@ export async function resolveSellImpaired(ctx: ResolverContext): Promise<Resolut
   if (!spot.ok) {
     return unresolvable(`spot sell quote ${spot.error} at horizon block`, coverage, {
       horizonBlock: Number(ctx.horizonBlock),
+      rpcError: spot.message.split('\n')[0]!.slice(0, 200),
     });
   }
   if (spot.amountOut === 0n) {
@@ -73,6 +74,7 @@ export async function resolveSellImpaired(ctx: ResolverContext): Promise<Resolut
   if (!bulk.ok) {
     return unresolvable(`100-unit sell quote ${bulk.error} at horizon block`, coverage, {
       sellSizeTokens: sellSize.toString(),
+      rpcError: bulk.message.split('\n')[0]!.slice(0, 200),
     });
   }
   if (bulk.amountOut === 0n) {

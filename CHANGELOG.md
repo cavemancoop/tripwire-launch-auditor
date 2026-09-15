@@ -1448,3 +1448,24 @@ separation from putting a session on Railway.
   `curl -s "$API/v1/launches?limit=200"` shows `proof.committed: true` on
   launches older than ~20 min within an hour of the deploy.
 
+## 2026-09-15 (later) — outcome resolver no longer starves nine cells
+
+### Fixed
+- `apps/worker/src/outcomes/loop.ts`: deferred rows back off 30 min; transient
+  failures give up to `UNRESOLVABLE` 24h after first deferral; the live loop
+  shares its batch across outcome labels (`order: 'fair'`). Code-path failures
+  back off too. See DECISIONS.md.
+- SELL_IMPAIRED / DRAWDOWN_80 quote failures carry the raw RPC message
+  (`evidence.rpcError`) into the deferral log.
+
+### Added
+- `/metrics`: `launch_auditor_outcomes_pending_due{label}`,
+  `launch_auditor_outcomes_deferred{label}`, `launch_auditor_outcomes_resolved_24h{label}`.
+- Codex Phase B review (verbatim) and the triage of both phases (DECISIONS.md).
+
+### Verify
+- `pnpm verify` green (worker `outcomes-loop.test.ts`, api metrics test).
+- After deploy: `curl -s $API/metrics | grep outcomes_` shows every label; worker
+  log sweeps show `resolved` counts well above 1 and `deferred (n)` lines with
+  an rpcError; within ~24h `/v1/benchmark` lists more than two cells.
+

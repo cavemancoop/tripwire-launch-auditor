@@ -36,6 +36,17 @@ describe('formatPrometheus', () => {
     expect(text).toContain('launch_auditor_commit_age_seconds NaN');
   });
 
+  it('emits per-label outcome backlog series only when provided', () => {
+    expect(formatPrometheus(SNAPSHOT)).not.toContain('launch_auditor_outcomes_pending_due');
+    const text = formatPrometheus({
+      ...SNAPSHOT,
+      outcomes: [{ label: 'SELL_IMPAIRED', pendingDue: 900, deferred: 850, resolved24h: 3 }],
+    });
+    expect(text).toContain('launch_auditor_outcomes_pending_due{label="SELL_IMPAIRED"} 900');
+    expect(text).toContain('launch_auditor_outcomes_deferred{label="SELL_IMPAIRED"} 850');
+    expect(text).toContain('launch_auditor_outcomes_resolved_24h{label="SELL_IMPAIRED"} 3');
+  });
+
   it('flags ids_or_phantom as 1 when set', () => {
     const text = formatPrometheus({ ...SNAPSHOT, idsOrPhantomFlagged: true });
     expect(text).toContain('launch_auditor_ids_or_phantom_flagged 1');

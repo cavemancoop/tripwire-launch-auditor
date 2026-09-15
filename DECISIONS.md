@@ -2,6 +2,34 @@
 
 Standing choices that aren't obvious from the code. Newest first.
 
+## Outcome resolver: backoff, give-up, fair share across labels (2026-09-15)
+
+Triage item 1 (#3). The live loop swept the 25 oldest horizon-due rows every
+minute; 24 of them were SELL_IMPAIRED@1h rows failing an eth_call at the horizon
+block, deferred, and re-picked the next minute. ~1 outcome resolved per minute,
+so nine of eleven cells never reached the benchmark.
+
+Chosen (operational, reversible; the committed outcome rule is unchanged):
+- **Backoff:** a deferred row is not picked again for 30 min.
+- **Give-up:** still failing on a transient error 24h after its *first*
+  deferral -> `UNRESOLVABLE` with the reason. OUTCOME_RULES_v1 already says a
+  failed measurement is unresolvable, never an outcome; UNRESOLVABLE rows are not
+  scored. Clock runs from first deferral, not horizon, so backfill rows with
+  long-past horizons are not dropped on their first error.
+- **Fair share:** the live loop takes oldest-first *within* each label and
+  round-robins across labels. SELL_IMPAIRED is descriptive-only; it no longer
+  gets to starve the four scoreable outcomes.
+- Code-path failures (non-transient) also back off but are never given up on,
+  so a fix can still resolve them.
+- The raw RPC message behind a "network" quote error is now logged
+  (`rpcError`): unrecognised errors default to "network" and were retried
+  blind. Classification is unchanged.
+- `/metrics` gains per-label `outcomes_pending_due`, `outcomes_deferred`,
+  `outcomes_resolved_24h`, so a starved cell is visible without log access.
+
+Not claimed: that the nine cells fill this week. They are now reachable; how fast
+depends on how many due rows each label has and what the rpcError turns out to be.
+
 ## Codex review triage (2026-09-15)
 
 Both phases are in `docs/review-pack/CODEX-REVIEW-2026-09-15.md` (A) and

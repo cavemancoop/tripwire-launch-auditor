@@ -15,6 +15,52 @@ export interface SweepResult {
   failed: number;
 }
 
+/** A deferred row is not picked again for this long. Without it, the oldest
+ *  horizon-due rows that fail on RPC errors were re-picked every minute and took
+ *  24 of 25 sweep slots, so ~1 outcome resolved per minute (2026-09-15). */
+export const DEFAULT_RETRY_BACKOFF_MS = 30 * 60_000;
+/** A row still failing on a transient error this long after its FIRST deferral
+ *  becomes UNRESOLVABLE ("failed measurements are unresolvable, never an
+ *  outcome", OUTCOME_RULES_v1). Measured from first deferral, not horizon, so
+ *  the backfill's long-past horizons are not given up on at the first error. */
+export const DEFAULT_GIVE_UP_AFTER_MS = 24 * 3_600_000;
+
+export const ALL_OUTCOME_LABELS: $Enums.OutcomeLabel[] = [
+  'INSIDER_EXIT',
+  'SELL_IMPAIRED',
+  'LIQ_IMPAIRED',
+  'DRAWDOWN_80',
+  'TRADING_ALIVE',
+];
+
+/** Pure: round-robin across per-label queues so no single label's backlog takes every slot. */
+export function interleave<T>(groups: T[][], limit: number): T[] {
+  const out: T[] = [];
+  for (let i = 0; out.length < limit; i++) {
+    let took = false;
+    for (const g of groups) {
+      if (i < g.length) {
+        out.push(g[i]!);
+        took = true;
+        if (out.length >= limit) break;
+      }
+    }
+    if (!took) break;
+  }
+  return out;
+}
+
+/** Pure: keep retrying a transient failure, or give up and record it as unresolvable. */
+export function deferOrGiveUp(
+  firstDeferredAt: string | null | undefined,
+  now: number,
+  giveUpAfterMs: number = DEFAULT_GIVE_UP_AFTER_MS,
+): { action: 'defer' | 'give_up'; firstDeferredAt: string } {
+  const first =
+    firstDeferredAt && !Number.isNaN(Date.parse(firstDeferredAt)) ? firstDeferredAt : new Date(now).toISOString();
+  return { action: now - Date.parse(first) >= giveUpAfterMs ? 'give_up' : 'defer', firstDeferredAt: first };
+}
+
 /** treat as transient and leave PENDING for the next sweep */
 const RETRYABLE =
   /network|timeout|ETIMEDOUT|ECONNRESET|ECONNREFUSED|socket hang up|fetch failed|429|rate.?limit|too many requests|request limit|network is busy|-32005|-32097|capacity|throttl|sweep error/i;
@@ -34,8 +80,13 @@ export interface SweepFilter {
   /** skip these labels (e.g. deprioritise the slow INSIDER_EXIT@6h cell so the
    *  72h / 7d / TRADING_ALIVE cells get reached) */
   excludeLabels?: $Enums.OutcomeLabel[];
-  /** oldest-horizon-first (default) or a spread across cells via id order */
-  order?: 'horizon' | 'spread';
+  /** oldest-horizon-first (default), a spread across cells via id order, or
+   *  `fair`: oldest-first within each label, round-robin across labels */
+  order?: 'horizon' | 'spread' | 'fair';
+  /** skip rows deferred more recently than this (default 30 min) */
+  retryBackoffMs?: number;
+  /** transient failures this long after first deferral become UNRESOLVABLE (default 24h) */
+  giveUpAfterMs?: number;
   /** only outcomes whose launch reached the qualified lane — for ALL labels,
    *  not just the heavy ones. ~87% of retrospective launches are non-qualified
    *  spam / token-vs-token / >10%-fee side pools whose DRAWDOWN/TRADING_ALIVE
@@ -49,10 +100,14 @@ export async function sweepDueOutcomes(
   limit = 25,
   filter: SweepFilter = {},
 ): Promise<SweepResult> {
-  const due = await prisma.outcome.findMany({
-    where: {
-      status: 'PENDING',
-      horizonAt: { lte: new Date() },
+  const now = new Date();
+  const retryCutoff = new Date(now.getTime() - (filter.retryBackoffMs ?? DEFAULT_RETRY_BACKOFF_MS));
+  const giveUpAfterMs = filter.giveUpAfterMs ?? DEFAULT_GIVE_UP_AFTER_MS;
+  const where = {
+      status: 'PENDING' as const,
+      horizonAt: { lte: now },
+      // a deferral stamps measuredAt on a still-PENDING row; wait out the backoff
+      AND: [{ OR: [{ measuredAt: null }, { measuredAt: { lt: retryCutoff } }] }],
       ...(filter.onlyLabels?.length ? { label: { in: filter.onlyLabels } } : {}),
       ...(filter.excludeLabels?.length ? { label: { notIn: filter.excludeLabels } } : {}),
       ...(filter.laneQualifiedOnly
@@ -66,10 +121,30 @@ export async function sweepDueOutcomes(
               ],
             }
           : {}),
-    },
-    orderBy: filter.order === 'spread' ? { id: 'asc' } : { horizonAt: 'asc' },
-    take: limit,
-  });
+  };
+
+  let due;
+  if (filter.order === 'fair') {
+    const labels = (filter.onlyLabels?.length ? filter.onlyLabels : ALL_OUTCOME_LABELS).filter(
+      (l) => !filter.excludeLabels?.includes(l),
+    );
+    const groups = await Promise.all(
+      labels.map((label) =>
+        prisma.outcome.findMany({
+          where: { ...where, label },
+          orderBy: { horizonAt: 'asc' },
+          take: limit,
+        }),
+      ),
+    );
+    due = interleave(groups, limit);
+  } else {
+    due = await prisma.outcome.findMany({
+      where,
+      orderBy: filter.order === 'spread' ? { id: 'asc' } : { horizonAt: 'asc' },
+      take: limit,
+    });
+  }
 
   const out: SweepResult = {
     picked: due.length,
@@ -80,11 +155,40 @@ export async function sweepDueOutcomes(
     failed: 0,
   };
 
-  const deferRow = async (id: string, label: string, tokenAddress: string, msg: string) => {
+  const deferRow = async (row: (typeof due)[number], label: string, msg: string) => {
+    const prior = (row.evidence ?? {}) as { firstDeferredAt?: string; deferrals?: number };
+    const d = deferOrGiveUp(prior.firstDeferredAt, Date.now(), giveUpAfterMs);
+    const deferrals = (prior.deferrals ?? 0) + 1;
+    if (d.action === 'give_up') {
+      out.unresolvable++;
+      await prisma.outcome.update({
+        where: { id: row.id },
+        data: {
+          status: 'UNRESOLVABLE',
+          value: null,
+          evidence: {
+            reason: `gave up after ${deferrals} transient failures since ${d.firstDeferredAt}: ${msg}`,
+            firstDeferredAt: d.firstDeferredAt,
+            deferrals,
+          } as Prisma.InputJsonValue,
+          measuredAt: new Date(),
+        },
+      });
+      // eslint-disable-next-line no-console
+      console.warn(`[outcomes] ${label} ${row.tokenAddress} gave up (unresolvable) after ${deferrals} deferrals: ${msg}`);
+      return;
+    }
     out.retryLater++;
-    await prisma.outcome.update({ where: { id }, data: { measuredAt: new Date() } }); // stay PENDING
+    await prisma.outcome.update({
+      where: { id: row.id },
+      // stay PENDING; measuredAt starts the backoff, evidence carries the give-up clock
+      data: {
+        measuredAt: new Date(),
+        evidence: { firstDeferredAt: d.firstDeferredAt, deferrals, lastError: msg.slice(0, 300) } as Prisma.InputJsonValue,
+      },
+    });
     // eslint-disable-next-line no-console
-    console.warn(`[outcomes] ${label} ${tokenAddress} deferred: ${msg}`);
+    console.warn(`[outcomes] ${label} ${row.tokenAddress} deferred (${deferrals}): ${msg}`);
   };
 
   const resolveRow = async (row: (typeof due)[number]): Promise<void> => {
@@ -96,7 +200,9 @@ export async function sweepDueOutcomes(
       );
 
       if (res.status === 'UNRESOLVABLE' && res.reason && RETRYABLE.test(res.reason)) {
-        await deferRow(row.id, `${row.label}@${row.horizon}`, row.tokenAddress, res.reason);
+        // the classified reason decides retryability; the raw RPC message is only for the log
+        const raw = (res.evidence as { rpcError?: string } | undefined)?.rpcError;
+        await deferRow(row, `${row.label}@${row.horizon}`, raw ? `${res.reason} — ${raw}` : res.reason);
         return;
       }
 
@@ -123,10 +229,14 @@ export async function sweepDueOutcomes(
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (err instanceof DeadlineError || RETRYABLE.test(msg)) {
-        await deferRow(row.id, `${row.label}@${row.horizon}`, row.tokenAddress, msg);
+        await deferRow(row, `${row.label}@${row.horizon}`, msg);
         return;
       }
       out.failed++;
+      // back off a code-path failure too, or it takes a slot every sweep forever; never give up on it
+      await prisma.outcome
+        .update({ where: { id: row.id }, data: { measuredAt: new Date() } })
+        .catch(() => {});
       // eslint-disable-next-line no-console
       console.error(
         `[outcomes] ${row.label}@${row.horizon} ${row.tokenAddress} failed:`,
@@ -163,7 +273,7 @@ export async function runOutcomesLoop(
   console.log(`[outcomes] resolution loop every ${intervalMs / 1000}s, batch ${batch}`);
   while (!signal.stopped) {
     try {
-      const r = await sweepDueOutcomes(client, batch);
+      const r = await sweepDueOutcomes(client, batch, { order: 'fair' });
       if (r.picked > 0) {
         // eslint-disable-next-line no-console
         console.log(
