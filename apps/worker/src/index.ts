@@ -13,6 +13,7 @@ import { runDeepdiveLoop, startDeepdiveWorker } from './deepdive';
 import { loadEnv, type WorkerEnv } from './env';
 import { startHealthServer } from './health-server';
 import { runLifecycleLoop } from './metabolism';
+import { seedTokenStoreFromEnv } from './metabolism/session-seed';
 import { runOutcomesLoop } from './outcomes';
 import { runScorerLoop } from './scorer';
 import { runTelegramPosterLoop } from './telegram/poster';
@@ -62,6 +63,11 @@ async function main(): Promise<void> {
   const client = rpc();
   const env = loadEnv();
   const signal: StopSignal = { stopped: false };
+
+  // Before anything reads the token store: a container starts with no disk, so a
+  // pushed Orbio session (railway:push-env --with-session) is written here.
+  const seed = seedTokenStoreFromEnv();
+  if (seed.seeded || process.env.ORBIO_SESSION_SEED) console.log(`[metabolism] session seed: ${seed.reason}`);
 
   await bootRpcBudget(client, env);
 

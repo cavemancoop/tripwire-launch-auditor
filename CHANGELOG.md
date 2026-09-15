@@ -1392,3 +1392,39 @@ Property 2 (the accrual-driven budget) remains unimplemented, and because
 balance is only readable with a live session, it can only be made visible during
 that window — the session push it depends on is designed but not built. See
 `HANDOFF-2026-09-15.md` §2.
+
+## 2026-09-15 — item 4 (session push) + commit receipt fix
+
+### Added
+- `pnpm railway:push-env --with-session` — after checking the local session
+  actually works (`listTools` only), pushes `ORBIO_SESSION_SEED` (client
+  registration + access token, re-encrypted; no gateway key, no refresh token)
+  and `METABOLISM_KEY_MANAGEMENT=observe`.
+- Worker boot seeds the token store from `ORBIO_SESSION_SEED` when no store
+  exists (`metabolism/session-seed.ts`). Never throws; a wrong
+  `TOKEN_ENCRYPTION_KEY` is named by fingerprint.
+- Lifecycle observe mode (`restrictToObserve`): reads and snapshots, never
+  mints / rotates / revokes; adopts an operator key already live at the
+  provider. In observe mode "we hold the secret" is checked against the key
+  inference really uses (`ORBIO_API_KEY`).
+
+### Fixed
+- Commit loop re-committed batches whose receipt missed the 240s deadline even
+  though the tx had mined. A timed-out tx is now resolved before any new batch.
+
+### Decisions
+Both recorded in `DECISIONS.md` (2026-09-15), including the reduced secret
+separation from putting a session on Railway.
+
+### Verify
+- `pnpm verify` green.
+- `pnpm railway:push-env --with-session --dry-run` refuses with "run `pnpm orbio:auth`"
+  when the local session is dead; after a fresh `pnpm orbio:auth` it lists
+  `ORBIO_SESSION_SEED  session seed for key <fp> (N chars)`.
+- After a real push: worker log shows `[metabolism] session seed: wrote…` and
+  `keys observe`; `curl -s "$API/v1/lifecycle?limit=1"` returns entries with a
+  `balanceUsd`, and no `minted` / `revoked` reasons appear.
+- After the worker redeploys with the commit fix: `launch_auditor_commit_age_seconds`
+  stays under ~600, and a slow receipt logs `late receipt for … recording its
+  batch` instead of a fresh batch with the same reports.
+

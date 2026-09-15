@@ -39,8 +39,10 @@ import {
   orbioRevokeKey,
   type OrbioConnection,
 } from './orbio-client';
+import { resolveGatewayKey } from '../deepdive/openrouter';
 import { reconcileIds, type IdsReconcile } from './ids-reconcile';
 import { reconcileEpoch, type BillingStatus } from './reconcile';
+import { keyManagementMode } from './session-seed';
 import { applyReconciliation, totalSpendUsd, windowEstimate } from './spend-ledger';
 import { nextState, type LifecycleEvent, type LifecycleState } from './state';
 import {
@@ -227,6 +229,28 @@ export function checkAgainstStateMachine(from: LifecycleState, event: LifecycleE
   return ok;
 }
 
+/**
+ * Observe mode (a seeded session on an ephemeral container — `session-seed.ts`):
+ * keep every reading and every non-acting transition, but turn anything that
+ * would call `orbio_create_key` / `orbio_revoke_key` into a logged snapshot.
+ *
+ * A pending mint is the one case with a non-acting equivalent: if the provider
+ * already has a key and we hold its secret (the operator's `ORBIO_API_KEY`),
+ * the transition is recorded as adopting that key instead of minting one.
+ */
+export function restrictToObserve(d: LifecycleDecision, r: LifecycleReading): LifecycleDecision {
+  const note = 'observe mode — key management stays with the operator (pnpm orbio:auth)';
+  if (d.kind === 'steady') return d;
+  if (d.kind === 'transition') {
+    if (!d.mint) return d;
+    if (r.hasKey && r.holdSecret) {
+      return { ...d, mint: false, reason: `adopted the operator-provisioned key instead of minting (${note})` };
+    }
+    return { kind: 'steady', state: r.state, reason: `would mint: ${d.reason} — ${note}` };
+  }
+  return { kind: 'steady', state: r.state, reason: `would ${d.kind}: ${d.reason} — ${note}` };
+}
+
 /* ─────────────────────── signed lifecycle_log writer ─────────────────────── */
 
 export interface LifecycleRowInput {
@@ -395,6 +419,7 @@ export async function runLifecycleLoop(
   const writer = deps.writer ?? (await LifecycleLogWriter.fromDb(agentPk));
   const storePath = tokenStorePath();
   const encKey = loadEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY);
+  const mode = keyManagementMode();
 
   const last = await prisma.lifecycleLog.findFirst({
     orderBy: { createdAt: 'desc' },
@@ -409,7 +434,7 @@ export async function runLifecycleLoop(
 
   // eslint-disable-next-line no-console
   console.log(
-    `[metabolism] lifecycle loop every ${env.metabolismStatusPollSec}s · reserve $${cfg.reserveUsd} · low-water $${cfg.lowWaterUsd} · hygiene ${cfg.hygieneRotateDays}d · start ${state}${halted ? ' (HALTED)' : ''}`,
+    `[metabolism] lifecycle loop every ${env.metabolismStatusPollSec}s · reserve $${cfg.reserveUsd} · low-water $${cfg.lowWaterUsd} · hygiene ${cfg.hygieneRotateDays}d · keys ${mode} · start ${state}${halted ? ' (HALTED)' : ''}`,
   );
 
   let conn: OrbioConnection | null = null;
@@ -519,10 +544,14 @@ export async function runLifecycleLoop(
         console.log(`[metabolism] epoch: ${ep.reason}`);
       }
 
+      // Observe mode never writes a key to the store, so the key we hold is the
+      // one inference actually uses: ORBIO_API_KEY (a seed carries no key).
+      const heldKey = mode === 'observe' ? resolveGatewayKey() : blob.gatewayKey;
+      const heldPrefix = mode === 'observe' ? heldKey : blob.gatewayKeyPrefix;
       const holdSecret =
-        typeof blob.gatewayKey === 'string' &&
-        blob.gatewayKey.length > 0 &&
-        (!status.prefix || samePrefix(status.prefix, blob.gatewayKeyPrefix));
+        typeof heldKey === 'string' &&
+        heldKey.length > 0 &&
+        (!status.prefix || samePrefix(status.prefix, heldPrefix));
 
       const reading: LifecycleReading = {
         state,
@@ -572,7 +601,13 @@ export async function runLifecycleLoop(
         return created.prefix;
       };
 
-      const decision = decideLifecycle(reading, cfg);
+      const decided = decideLifecycle(reading, cfg);
+      const decision = mode === 'observe' ? restrictToObserve(decided, reading) : decided;
+      if (decided.kind === 'revoke' && decision.kind === 'steady' && reading.phantomSpend) {
+        // cannot revoke without managing keys; billingStatus=phantom already closes the deep-dive gate
+        // eslint-disable-next-line no-console
+        console.error(`[metabolism] PHANTOM SPEND in observe mode — NOT revoked, inference gated. ${decided.reason}`);
+      }
       if (ids.direction === 'ledger_ahead') {
         // eslint-disable-next-line no-console
         console.warn(`[metabolism] ${ids.reason}`);

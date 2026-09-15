@@ -2,6 +2,62 @@
 
 Standing choices that aren't obvious from the code. Newest first.
 
+## Item 4 — an Orbio session on Railway, and what it may do there (2026-09-15)
+
+**Built, not yet run.** `pnpm railway:push-env --with-session` exists; whether to
+use it is the operator's call, because of the cost below.
+
+**The cost, stated plainly.** The token store is a stronger secret than the
+gateway key — the key only spends against a capped balance; the session can
+mint and revoke keys through the MCP. The seed is encrypted with
+`TOKEN_ENCRYPTION_KEY`, which is already on Railway, so both halves sit in one
+place. Anyone who can read the worker's env holds a working Orbio session.
+
+**What bounds it.**
+- **No refresh token in the seed.** Stripped on the laptop and again at boot.
+  The pushed session dies with its access token (~1h) and nobody holding the
+  Railway env can extend it. It also cannot race or burn the laptop's one-shot
+  refresh grant.
+- **No gateway key in the seed.** A container disk is ephemeral and the store
+  outranks `ORBIO_API_KEY`, so a seeded key would come back on every restart and
+  shadow any newer key pushed later. The key travels only as `ORBIO_API_KEY`.
+- **Observe mode (`METABOLISM_KEY_MANAGEMENT=observe`, implied by a seed).** The
+  deployed lifecycle loop reads balance and key status and writes signed
+  snapshots — which is all property 2 needs — but turns every mint, rotate and
+  revoke into a logged `would …` snapshot. A pending mint with the operator's key
+  already live is recorded as adopting that key. Without this, the prod loop
+  (which starts at `NO_KEY` with an empty lifecycle log) would have minted on its
+  first tick, retiring the key both the laptop and `ORBIO_API_KEY` hold, and the
+  new key would have lived only on an ephemeral disk.
+- **Seed never clobbers.** Written only when no store file exists.
+
+**What observe mode gives up.** A `PHANTOM_SPEND` on Railway is not revoked. It
+still closes the deep-dive gate (`billingStatus = phantom`) and logs an error;
+revocation stays a laptop action (`pnpm orbio:auth`, then the managed loop).
+Key management is demonstrated locally, not in production.
+
+**Net effect on the claim.** Production can show balance-derived metabolism for
+about an hour after each push, and the panel must say that window exists — the
+same bound recorded under M9 follow-up, now reachable instead of 100% null.
+
+## Commit loop — a sent tx is resolved before another is sent (2026-09-15)
+
+The public feed posted `commit lag: 10min` at 21:18 local. Cause: four
+`commitBatch` txs in the recent log hit the 240s receipt deadline; all four had
+**mined successfully** (checked by hash). With no DB row written, their reports
+stayed uncommitted and were re-anchored by the next batch — orphan roots
+on-chain, extra gas, and proofs that point at a later commit than the one that
+actually came first. Launch volume is ~3× last week (8,964/24h) and outcome
+resolution was logging RPC network errors at the same time, so the shared RPC
+budget is the likely reason receipts are slow; that part is unconfirmed.
+
+Now: a timed-out tx is held as *unconfirmed* and checked every tick before any
+new batch goes out — late success records that batch, a revert or 30 minutes
+with no receipt drops it and lets its reports re-commit. Held in memory; a
+restart falls back to the old behaviour. Earlier orphan roots are left as they
+are (on-chain, harmless to verification — every report still has a valid proof
+under the root recorded for it).
+
 ## Checkpoint after M3 — Fable's calls on the mid-build review (2026-09-05)
 
 Full memo: `checkpoint-decisions-m4.md`. Mid-build review: `midbuild-review-m0-m3.md`.

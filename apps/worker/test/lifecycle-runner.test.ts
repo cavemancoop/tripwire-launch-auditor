@@ -5,6 +5,7 @@ import { GENESIS_HASH, verifyLifecycleRows, type LifecycleChainRow } from '@laun
 import {
   decideLifecycle,
   LifecycleLogWriter,
+  restrictToObserve,
   type LifecycleConfig,
   type LifecyclePersistRecord,
   type LifecycleReading,
@@ -169,6 +170,39 @@ describe('decideLifecycle — adapted §8 machine (2026-09-09 decisions)', () =>
       to: 'NO_KEY',
       event: 'REVOKED',
     });
+  });
+});
+
+describe('restrictToObserve — a seeded container never mints, rotates or revokes', () => {
+  const observe = (r: LifecycleReading) => restrictToObserve(decideLifecycle(r, CFG), r);
+
+  it('NO_KEY with the operator key live at the provider → adopt it, no mint', () => {
+    const d = observe(read({ state: 'NO_KEY', hasKey: true, holdSecret: true }));
+    expect(d).toMatchObject({ kind: 'transition', to: 'ACTIVE', event: 'KEY_CLAIMED', mint: false });
+    expect(nextState('NO_KEY', 'KEY_CLAIMED')?.state).toBe('ACTIVE');
+  });
+
+  it('NO_KEY with no usable key → steady, logs the mint it skipped', () => {
+    const d = observe(read({ state: 'NO_KEY', hasKey: false, holdSecret: false }));
+    expect(d).toMatchObject({ kind: 'steady', state: 'NO_KEY' });
+    expect(d.reason).toMatch(/^would mint/);
+  });
+
+  it('hygiene-due key → steady, no rotate', () => {
+    const d = observe(read({ keyAgeDays: 9 }));
+    expect(d).toMatchObject({ kind: 'steady', state: 'ACTIVE' });
+    expect(d.reason).toMatch(/^would rotate/);
+  });
+
+  it('PHANTOM_SPEND → steady, no revoke (the billing gate still closes)', () => {
+    const d = observe(read({ phantomSpend: true }));
+    expect(d).toMatchObject({ kind: 'steady', state: 'ACTIVE' });
+    expect(d.reason).toMatch(/^would revoke: phantom spend/);
+  });
+
+  it('non-acting transitions pass through untouched', () => {
+    const r = read({ balanceUsd: 2 });
+    expect(observe(r)).toEqual(decideLifecycle(r, CFG));
   });
 });
 
