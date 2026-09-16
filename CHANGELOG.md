@@ -1565,3 +1565,24 @@ separation from putting a session on Railway.
 - `pnpm verify` green (`reconcile.test.ts` late-charge cases).
 - `/v1/lifecycle` budget `spendableKeyUsd` = balance − 0.5.
 
+## 2026-09-16 — dashboard: funding receipts, cost panel without hard-coded numbers
+
+### Added
+- `GET /v1/funding` (`apps/api/src/funding.ts`): every CREDIT `Activated` event
+  whose beneficiary is the agent's account, split operator vs agent, with tx
+  hashes. Incremental on-chain scan, cached for 60 s.
+- Dashboard Funding card under Metabolism.
+
+### Changed (de-claiming; reviewed in the wording pass)
+- "P&L — trailing 24h" -> "Compute cost — trailing 24h". Both boxes now show
+  derived numbers with their basis; the hard-coded `$0.00` revenue/cash rows and
+  "paid entirely … never held or converted money" are gone (Codex #7).
+- Continuity card: zero signed rows reads "no signed rows yet", not "chain
+  verified: yes". The OAuth-refresh note is replaced (the key is a wallet
+  signature now).
+- Top metric shows the real AI balance and lifecycle state.
+
+### Verify
+- `curl -s $API/v1/funding` lists activation #58 (20 CREDIT, operator).
+- Dashboard Metabolism panel shows AI balance, Funding card with the tx link.
+

@@ -10,6 +10,7 @@ import { createPublicClient, http, parseAbiItem, type Hex } from 'viem';
 import { checkDesignPartner } from './auth';
 import { makeAssessEnqueuer, type AssessEnqueuer } from './assess-queue';
 import { budgetDisplay } from './budget-display';
+import { chainFundingReader, type FundingReader } from './funding';
 import { makeDeepdiveEnqueuer, type DeepdiveEnqueuer } from './deepdive-queue';
 import { loadApiEnv, type ApiEnv } from './env';
 import { formatPrometheus, prismaMetricsReader, type MetricsReader } from './metrics';
@@ -389,6 +390,7 @@ export interface BuildServerOptions {
   benchmarkReader?: BenchmarkReader;
   proofReader?: ProofReader;
   metricsReader?: MetricsReader;
+  fundingReader?: FundingReader;
   /** injectable for tests — defaults to a BullMQ producer on the `deepdive` queue */
   enqueueDeepdive?: DeepdiveEnqueuer;
   /** injectable for tests — defaults to a BullMQ producer on the `assess` queue */
@@ -407,6 +409,7 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
   const readBenchmark = opts.benchmarkReader ?? prismaBenchmarkReader;
   const readProof = opts.proofReader ?? prismaProofReader(env);
   const readMetrics = opts.metricsReader ?? prismaMetricsReader;
+  const readFunding = opts.fundingReader ?? chainFundingReader(env);
 
   let enqueueDeepdive = opts.enqueueDeepdive;
   const getEnqueueDeepdive = (): DeepdiveEnqueuer => (enqueueDeepdive ??= makeDeepdiveEnqueuer());
@@ -518,6 +521,16 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
 
   // spec §9 — free: an independently verifiable Merkle proof for a report
   // hash, plus (best-effort) confirmation that its batch root is on-chain.
+  // 2026-09-16 — every CREDIT activation into the agent's Orbio account, from
+  // chain 4663: who funded the inference, how much, and the tx to check it.
+  app.get('/v1/funding', async (_req, reply) => {
+    try {
+      return await readFunding();
+    } catch (err) {
+      return reply.code(503).send({ error: 'funding read failed', detail: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
   app.get('/v1/proof/:hash', async (req, reply) => {
     const { hash } = req.params as { hash: string };
     if (!HEX_HASH.test(hash)) {

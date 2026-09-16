@@ -42,6 +42,11 @@ export interface ApiEnv {
   deepdiveDailyCapUsd: number;
   deepdiveCapPerRunUsd: number;
   metabolismReserveUsd: number;
+  /** 2026-09-16 — the agent's Orbio account (public address) and the CREDIT
+   *  token, for `GET /v1/funding`. All three unset = endpoint reports unconfigured. */
+  orbioAgentAccount?: `0x${string}`;
+  orbioCreditAddress?: `0x${string}`;
+  fundingFromBlock?: number;
 }
 
 export function loadApiEnv(): ApiEnv {
@@ -62,5 +67,8 @@ export function loadApiEnv(): ApiEnv {
     deepdiveDailyCapUsd: Number(process.env.DEEPDIVE_DAILY_CAP_USD || 5),
     deepdiveCapPerRunUsd: Number(process.env.DEEPDIVE_CAP_PER_RUN_USD || 0.2),
     metabolismReserveUsd: Number(process.env.RESERVE_USD || 3),
+    orbioAgentAccount: (process.env.ORBIO_AGENT_ACCOUNT || undefined) as `0x${string}` | undefined,
+    orbioCreditAddress: (process.env.ORBIO_CREDIT_ADDRESS || undefined) as `0x${string}` | undefined,
+    fundingFromBlock: process.env.ORBIO_FUNDING_FROM_BLOCK ? Number(process.env.ORBIO_FUNDING_FROM_BLOCK) : undefined,
   };
 }

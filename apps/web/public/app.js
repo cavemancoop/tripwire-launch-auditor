@@ -135,7 +135,7 @@ function renderMetabolism(lifecycle) {
   const revocations = entries.filter((e) => e.newState === 'REVOKING').length;
   const spendPerReport = estimator.requests24h > 0 ? estimator.estimatedSpend24hUsd / estimator.requests24h : null;
 
-  grid.appendChild(metric('Active key remaining', usd(latest?.keyRemainingUsd ?? null), latest?.keyHashPrefix ? `key ${latest.keyHashPrefix}` : 'no key claimed'));
+  grid.appendChild(metric('AI balance', usd(latest?.balanceUsd ?? null), latest?.keyHashPrefix ? `${latest.newState} · key ${latest.keyHashPrefix}` : latest ? latest.newState : 'no reading yet'));
   grid.appendChild(metric('Credits accrued', accrual ? `${usd(accrual.perHour)}/hr` : 'n/a', accrual ? `over ${accrual.hours.toFixed(1)}h of samples` : 'not enough samples yet'));
   grid.appendChild(metric('Spend per report', spendPerReport !== null ? usd(spendPerReport, 4) : 'n/a', `${estimator.requests24h} requests, trailing 24h`));
   grid.appendChild(metric('Rotations', String(rotations), `${revocations} revocation${revocations === 1 ? '' : 's'}`));
@@ -157,10 +157,12 @@ function renderMetabolism(lifecycle) {
   const spanMs = entries.length ? new Date(entries[entries.length - 1].at).getTime() - new Date(entries[0].at).getTime() : 0;
   const spanDays = spanMs / 86_400_000;
   document.getElementById('continuity-body').innerHTML = `
-    <div class="kv"><span class="k">chain verified</span><span class="v">${check.verified ? 'yes' : 'BROKEN at ' + check.brokenAt}</span></div>
-    <div class="kv"><span class="k">starts at genesis</span><span class="v">${check.startsAtGenesis ? 'yes' : 'no'}</span></div>
+    ${entries.length === 0
+      ? '<div class="kv"><span class="k">chain</span><span class="v">no signed rows yet — nothing to verify</span></div>'
+      : `<div class="kv"><span class="k">chain verified</span><span class="v">${check.verified ? 'yes' : 'BROKEN at ' + check.brokenAt}</span></div>
+    <div class="kv"><span class="k">starts at genesis</span><span class="v">${check.startsAtGenesis ? 'yes' : 'no'}</span></div>`}
     <div class="kv"><span class="k">log span held</span><span class="v">${spanDays.toFixed(2)} days (${entries.length} rows)</span></div>
-    <p class="note">Without a working OAuth refresh grant, unattended continuity is bounded by the access token's own lifetime, not by this log's span — see CHANGELOG.md. This number describes what the signed log currently covers, not a guarantee of what comes next.</p>
+    <p class="note">The agent's API key is a signature from its own wallet, so no sign-in expires. This describes what the signed log currently covers, not a guarantee of what comes next.</p>
   `;
 }
 
@@ -168,22 +170,43 @@ function renderMetabolism(lifecycle) {
 
 function renderPnl(lifecycle) {
   const { estimator } = lifecycle;
-  const wouldHaveCost = Math.max(estimator.providerSpend24hUsd, estimator.estimatedSpend24hUsd);
+  const n = estimator.requests24h;
+  const reqs = `${n} request${n === 1 ? '' : 's'}`;
 
   const standalone = document.querySelector('#pnl-standalone .pnl-body');
   standalone.innerHTML = `
-    <div class="big neg">${usd(-wouldHaveCost)}</div>
-    <div class="kv"><span class="k">revenue (free during contest)</span><span class="v">$0.00</span></div>
-    <div class="kv"><span class="k">compute, cash-priced</span><span class="v">${usd(wouldHaveCost)}</span></div>
-    <p class="note">What the trailing-24h LLM deep-dives would have cost on a plain OpenRouter account with no Orbio credits — the standing red-team check from spec &sect;0.1.</p>
+    <div class="big">${usd(estimator.estimatedSpend24hUsd, 4)}</div>
+    <div class="kv"><span class="k">basis</span><span class="v">token counts × pinned model price</span></div>
+    <div class="kv"><span class="k">requests</span><span class="v">${n}</span></div>
+    <p class="note">What the trailing-24h LLM deep-dives would cost at list price on a plain OpenRouter account. An estimate, labelled as one.</p>
   `;
 
   const orbio = document.querySelector('#pnl-orbio .pnl-body');
   orbio.innerHTML = `
-    <div class="big zero">$0.00</div>
-    <div class="kv"><span class="k">revenue (free during contest)</span><span class="v">$0.00</span></div>
-    <div class="kv"><span class="k">cash spent</span><span class="v">$0.00</span></div>
-    <p class="note">Same compute, actually run: ${estimator.requests24h} request${estimator.requests24h === 1 ? '' : 's'} in the trailing 24h, paid entirely from the agent's Orbio-funded key. The agent never held or converted money to make this happen.</p>
+    <div class="big">${usd(estimator.providerSpend24hUsd, 4)}</div>
+    <div class="kv"><span class="k">basis</span><span class="v">${estimator.basis === 'epoch_reconciled' ? "Orbio's own balance counter, per 60s window" : estimator.basis}</span></div>
+    <div class="kv"><span class="k">paid from</span><span class="v">activated CREDIT balance</span></div>
+    <p class="note">Same ${reqs}, as charged by the Orbio gateway to the agent's account. Where that balance came from is listed under Funding, with the on-chain transactions.</p>
+  `;
+}
+
+// ── Funding ─────────────────────────────────────────────────────────────
+
+function renderFunding(f) {
+  const body = document.getElementById('funding-body');
+  if (!f || !f.configured) {
+    body.innerHTML = '<p class="note">Funding source not configured on this instance.</p>';
+    return;
+  }
+  const rows = f.activations
+    .map(
+      (a) => `<div class="kv"><span class="k">${fmtDate(a.at)} · #${a.activationId} · ${a.by === 'agent' ? 'agent activated its own CREDIT' : 'operator activation from ' + short(a.from)}</span><span class="v">${usd(a.amountUsd)} · <a href="${EXPLORER_BASE}/tx/${a.txHash}" target="_blank" rel="noopener">tx ↗</a></span></div>`,
+    )
+    .join('');
+  body.innerHTML = `
+    <div class="kv"><span class="k">agent account</span><span class="v"><a href="${EXPLORER_BASE}/address/${f.account}" target="_blank" rel="noopener">${short(f.account)} ↗</a></span></div>
+    <div class="kv"><span class="k">activated in total</span><span class="v">${usd(f.totalActivatedUsd)} (operator ${usd(f.byOperatorUsd)} · agent ${usd(f.byAgentUsd)})</span></div>
+    ${rows || '<p class="note">No activations yet.</p>'}
   `;
 }
 
@@ -301,14 +324,16 @@ function renderLifecycle(lifecycle) {
 async function loadAll() {
   const statusDot = document.getElementById('api-status');
   try {
-    const [lifecycle, launches, benchmark] = await Promise.all([
+    const [lifecycle, launches, benchmark, funding] = await Promise.all([
       getJson('/v1/lifecycle?limit=500'),
       getJson('/v1/launches?limit=50'),
       getJson('/v1/benchmark').catch(() => null),
+      getJson('/v1/funding').catch(() => null),
     ]);
     statusDot.className = 'status-dot ok';
     renderMetabolism(lifecycle);
     renderPnl(lifecycle);
+    renderFunding(funding);
     renderLifecycle(lifecycle);
     renderLaunches(launches.launches);
     if (benchmark && benchmark.all) {
