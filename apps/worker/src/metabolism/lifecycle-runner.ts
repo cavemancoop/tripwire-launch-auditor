@@ -506,7 +506,13 @@ export async function runLifecycleLoop(
       });
       const providerSpendPrevUsd =
         prevEpoch?.providerSpendUsd ?? blob.spendBaseline?.providerSpentUsd ?? providerSpendUsd;
-      const win = await windowEstimate(prevEpoch?.at ?? null, epochAt);
+      // First epoch ever: start the window at the spend baseline (set this tick
+      // or earlier), not the beginning of time. Otherwise every historical local
+      // estimate is graded against one tick of provider delta, and the first row
+      // reads as a -100% anomaly (seen in production 2026-09-16).
+      const windowStart =
+        prevEpoch?.at ?? (blob.spendBaseline?.at ? new Date(blob.spendBaseline.at) : epochAt);
+      const win = await windowEstimate(windowStart, epochAt);
       const ep = reconcileEpoch({
         providerSpendNowUsd: providerSpendUsd,
         providerSpendPrevUsd,
@@ -540,7 +546,7 @@ export async function runLifecycleLoop(
         select: { id: true },
       });
       await applyReconciliation({
-        since: prevEpoch?.at ?? null,
+        since: windowStart,
         until: epochAt,
         epochId: epochRow.id,
         factor: ep.reconciliationFactor,
