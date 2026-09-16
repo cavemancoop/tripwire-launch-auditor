@@ -1469,3 +1469,25 @@ separation from putting a session on Railway.
   log sweeps show `resolved` counts well above 1 and `deferred (n)` lines with
   an rpcError; within ~24h `/v1/benchmark` lists more than two cells.
 
+## 2026-09-15 (later still) — qualified-only outcome resolution, opt-in
+
+### Added
+- `OUTCOMES_QUALIFIED_ONLY` env var (default off, unchanged behavior). When on,
+  the live loop resolves INSIDER_EXIT/SELL_IMPAIRED/LIQ_IMPAIRED for
+  qualified-lane launches only; DRAWDOWN_80/TRADING_ALIVE stay universal. See
+  DECISIONS.md for why (INSIDER_EXIT ~80 getLogs/resolution vs SELL_IMPAIRED's
+  ~2, and ~87% of launches never qualify).
+
+### Measured
+- Raising `OUTCOMES_CONCURRENCY` 1→4 did not change the resolved-per-minute
+  rate — confirms the shared RPC token bucket, not sweep latency, is the
+  constraint.
+
+### Verify
+- `pnpm verify` green.
+- Toggle on production: `railway variables --service worker --set OUTCOMES_QUALIFIED_ONLY=1`;
+  worker log line changes to "...qualified-lane only for
+  INSIDER_EXIT/SELL_IMPAIRED/LIQ_IMPAIRED"; `/metrics`
+  `launch_auditor_outcomes_pending_due{label=...}` should stop growing for
+  those three labels within an hour.
+

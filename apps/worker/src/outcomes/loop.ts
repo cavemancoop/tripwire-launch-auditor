@@ -264,6 +264,10 @@ export interface OutcomesLoopOptions {
    *  commit > outcomes) is the real rate limit, so this only stops the loop being
    *  latency-bound: at 1, one sweep of 25 took ~5 min (2026-09-15). */
   concurrency?: number;
+  /** INSIDER_EXIT / SELL_IMPAIRED / LIQ_IMPAIRED resolve for qualified-lane
+   *  launches only; DRAWDOWN_80 / TRADING_ALIVE stay universal. Env:
+   *  OUTCOMES_QUALIFIED_ONLY. Off by default (current behavior unchanged). */
+  qualifiedOnly?: boolean;
 }
 
 export async function runOutcomesLoop(
@@ -274,11 +278,23 @@ export async function runOutcomesLoop(
   const intervalMs = opts.intervalMs ?? 60_000;
   const batch = opts.batch ?? Number(process.env.OUTCOMES_BATCH || 25);
   const concurrency = opts.concurrency ?? Number(process.env.OUTCOMES_CONCURRENCY || 4);
+  // 2026-09-15: every index-lane launch (the ~87% that never clear the qualified
+  // bar) still gets INSIDER_EXIT / SELL_IMPAIRED / LIQ_IMPAIRED rows created
+  // (spec §1's "applies to: all" for INSIDER_EXIT), and INSIDER_EXIT resolution
+  // costs ~80 sequential getLogs vs ~2 quoter calls for SELL_IMPAIRED — so a
+  // shared RPC budget spends most of itself resolving outcomes for tokens
+  // nobody qualified to buy. Off by default: identical behavior until opted in.
+  // DRAWDOWN_80 / TRADING_ALIVE stay universal either way (backfill's own
+  // qualifiedOnly semantics, reused here) — they apply to every launch by spec.
+  const qualifiedOnly = opts.qualifiedOnly ?? /^(1|true|yes)$/i.test(process.env.OUTCOMES_QUALIFIED_ONLY || '');
   // eslint-disable-next-line no-console
-  console.log(`[outcomes] resolution loop every ${intervalMs / 1000}s, batch ${batch}, concurrency ${concurrency}, fair across labels`);
+  console.log(
+    `[outcomes] resolution loop every ${intervalMs / 1000}s, batch ${batch}, concurrency ${concurrency}, ` +
+      `fair across labels${qualifiedOnly ? ', qualified-lane only for INSIDER_EXIT/SELL_IMPAIRED/LIQ_IMPAIRED' : ''}`,
+  );
   while (!signal.stopped) {
     try {
-      const r = await sweepDueOutcomes(client, batch, { order: 'fair', concurrency });
+      const r = await sweepDueOutcomes(client, batch, { order: 'fair', concurrency, qualifiedOnly });
       if (r.picked > 0) {
         // eslint-disable-next-line no-console
         console.log(

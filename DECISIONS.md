@@ -2,6 +2,47 @@
 
 Standing choices that aren't obvious from the code. Newest first.
 
+## Outcome resolver: why the backlog keeps growing, and the qualified-only lever (2026-09-15, later)
+
+Raising `OUTCOMES_CONCURRENCY` to 4 made no measurable difference (resolved-per-
+minute unchanged; backlog still growing). That itself is informative: the shared
+RPC token bucket, not sweep latency, is the constraint — concurrency changes how
+many outcomes are in flight, not how many requests/sec leave the process.
+
+**Why INSIDER_EXIT dominates the budget.** Every index-lane launch (spec §1:
+INSIDER_EXIT "applies to: all") gets an INSIDER_EXIT row at enumeration
+(`ensureOutcomeRows`), qualified or not. Resolving one costs ~80 sequential
+`eth_getLogs` calls (cluster-transfer scan); SELL_IMPAIRED costs ~2 quoter
+calls. So a handful of INSIDER_EXIT resolutions can spend most of a sweep's
+share of the 500 req/min budget, most of it on tokens nobody bought.
+
+**Decision: `OUTCOMES_QUALIFIED_ONLY` (env, default off — current behavior
+unchanged).** When on, INSIDER_EXIT/SELL_IMPAIRED/LIQ_IMPAIRED resolve only for
+qualified-lane launches (≥$2,000 liquidity-equivalent or ≥25 unique buyers in
+10 min, or any paid request — spec §3.1); DRAWDOWN_80/TRADING_ALIVE stay
+universal, matching backfill's existing `qualifiedOnly` semantics and its own
+documented rationale ("~87% of retrospective launches are spam / token-vs-token
+/ >10%-fee side pools whose outcomes are unresolvable and would bias the base
+rate"). This does not change what gets *committed* — every det_v0 forecast is
+still produced and committed for every launch; it changes which outcomes the
+resolver spends RPC budget trying to grade.
+
+**What it leaves uncaptured.** A non-qualified launch's INSIDER_EXIT/SELL/LIQ
+rows are still created but never resolved while the flag is on — they sit
+PENDING indefinitely rather than counting toward the benchmark. If a thinly-
+traded launch's insiders dump, that specific event goes unscored. The rows are
+not deleted, so switching the flag off later resolves the backlog rather than
+losing it. Enumeration-time skip (never creating those rows) is a further
+optimization, not done — the current rows are cheap to store, just not to grade.
+
+**RPC ceiling — needs Cooper to confirm, not assumed.** Chainstack's published
+Growth tier is 250 requests/**second** ($49/mo); `RPC_BUDGET_RPM` in production
+is unset and defaults to 500 requests/**minute** (~8.3/s) — an order of
+magnitude under a standard Growth plan, so RPM is unlikely to be the binding
+constraint if that is the actual plan. Confirm the number shown on the
+Chainstack dashboard for this specific node (units and whether it's a hard cap)
+before changing `RPC_BUDGET_RPM` either direction.
+
 ## Outcome resolver: backoff, give-up, fair share across labels (2026-09-15)
 
 Triage item 1 (#3). The live loop swept the 25 oldest horizon-due rows every
