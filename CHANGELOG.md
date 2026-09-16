@@ -1510,3 +1510,24 @@ separation from putting a session on Railway.
 - worker log: `[outcomes] resolution loop ... qualified-lane only for
   INSIDER_EXIT/SELL_IMPAIRED/LIQ_IMPAIRED`.
 
+## 2026-09-16 — Metabolism reads the gateway, not the MCP (slice 1 of the on-chain move)
+
+### Found
+- Production deep-dives were all failing: the key's account has $0 activated
+  balance (402 `insufficient_quota`), surfaced by the SDK as "Response
+  validation failed" and counted as skips.
+- Orbio's protocol is on-chain (CREDIT token, `activate`, wallet-signed keys);
+  the MCP is optional. Contracts verified on chain 4663 — see DECISIONS.md.
+
+### Added
+- `apps/worker/src/metabolism/gateway-reader.ts`: `GET {gateway}/key` ->
+  balance, lifetime spend, key prefix. `METABOLISM_SOURCE` (default `gateway`).
+- Lifecycle runner uses it; the gateway source is always observe mode.
+
+### Verify
+- `pnpm verify` green (`gateway-reader.test.ts`, recorded live fixture).
+- After deploy: `curl -s "$API/v1/lifecycle?limit=3"` returns entries with a
+  real `balanceUsd`; worker log `[metabolism] … source gateway · keys observe`
+  and a `NO_KEY -> STARVED` transition while the balance is 0; deep-dive sweeps
+  log `budget: balance is at or below the reserve` instead of validation failures.
+

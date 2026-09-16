@@ -40,6 +40,7 @@ import {
   type OrbioConnection,
 } from './orbio-client';
 import { resolveGatewayKey } from '../deepdive/openrouter';
+import { gatewayGetKey, gatewayKeyToReading, metabolismSource, type MetabolismReading } from './gateway-reader';
 import { reconcileIds, type IdsReconcile } from './ids-reconcile';
 import { reconcileEpoch, type BillingStatus } from './reconcile';
 import { keyManagementMode } from './session-seed';
@@ -419,7 +420,9 @@ export async function runLifecycleLoop(
   const writer = deps.writer ?? (await LifecycleLogWriter.fromDb(agentPk));
   const storePath = tokenStorePath();
   const encKey = loadEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY);
-  const mode = keyManagementMode();
+  const source = metabolismSource();
+  // the gateway source has no key-management calls at all, so it is always observe
+  const mode = source === 'gateway' ? 'observe' : keyManagementMode();
 
   const last = await prisma.lifecycleLog.findFirst({
     orderBy: { createdAt: 'desc' },
@@ -434,7 +437,7 @@ export async function runLifecycleLoop(
 
   // eslint-disable-next-line no-console
   console.log(
-    `[metabolism] lifecycle loop every ${env.metabolismStatusPollSec}s · reserve $${cfg.reserveUsd} · low-water $${cfg.lowWaterUsd} · hygiene ${cfg.hygieneRotateDays}d · keys ${mode} · start ${state}${halted ? ' (HALTED)' : ''}`,
+    `[metabolism] lifecycle loop every ${env.metabolismStatusPollSec}s · reserve $${cfg.reserveUsd} · low-water $${cfg.lowWaterUsd} · hygiene ${cfg.hygieneRotateDays}d · source ${source} · keys ${mode} · start ${state}${halted ? ' (HALTED)' : ''}`,
   );
 
   let conn: OrbioConnection | null = null;
@@ -447,15 +450,21 @@ export async function runLifecycleLoop(
 
   while (!signal.stopped) {
     try {
-      if (!conn) conn = await connect();
-      const c = conn;
-
-      const [balance, status] = await Promise.all([
-        orbioGetBalance(c.client),
-        orbioGetKeyStatus(c.client),
-      ]);
+      let c: OrbioConnection | null = null;
+      let read: MetabolismReading;
+      if (source === 'gateway') {
+        read = gatewayKeyToReading(
+          await gatewayGetKey({ baseUrl: env.orbioGatewayV1Url, apiKey: resolveGatewayKey() }),
+        );
+      } else {
+        if (!conn) conn = await connect();
+        c = conn;
+        const [b, s] = await Promise.all([orbioGetBalance(c.client), orbioGetKeyStatus(c.client)]);
+        read = { balanceUsd: b.balance.usd, providerSpendUsd: b.spent.usd, status: s };
+      }
+      const { status } = read;
       const ledgerSpendUsd = await totalSpendUsd();
-      const providerSpendUsd = balance.spent.usd;
+      const providerSpendUsd = read.providerSpendUsd;
       const blob = readOAuthBlob(storePath, encKey);
 
       // Establish / refresh the per-key IDS baseline before reconciling, so the
@@ -556,7 +565,7 @@ export async function runLifecycleLoop(
       const reading: LifecycleReading = {
         state,
         halted,
-        balanceUsd: balance.balance.usd,
+        balanceUsd: read.balanceUsd,
         hasKey: status.hasKey,
         holdSecret,
         keyAgeDays:
@@ -578,10 +587,11 @@ export async function runLifecycleLoop(
         providerSpendUsd: reading.providerSpendUsd,
         billingStatus,
         keyId: status.prefix ?? blob.gatewayKeyPrefix ?? null,
-        keyHashPrefix: blob.gatewayKeyPrefix ?? null,
+        keyHashPrefix: blob.gatewayKeyPrefix ?? (source === 'gateway' ? status.prefix : null),
       };
 
       const mint = async (why: string): Promise<string> => {
+        if (!c) throw new Error('minting needs the MCP source (METABOLISM_SOURCE=mcp)');
         const created = await orbioCreateKey(c.client, {
           label: `launch-auditor ${new Date().toISOString().slice(0, 10)}`,
         });
@@ -699,6 +709,7 @@ export async function runLifecycleLoop(
           ...common,
         });
         try {
+          if (!c) throw new Error('revoking needs the MCP source (METABOLISM_SOURCE=mcp)');
           await orbioRevokeKey(c.client);
         } catch (e) {
           // eslint-disable-next-line no-console

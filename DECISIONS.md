@@ -2,6 +2,64 @@
 
 Standing choices that aren't obvious from the code. Newest first.
 
+## Orbio is on-chain now: Metabolism moves off the MCP (2026-09-16)
+
+**What Orbio told us (builders channel, 2026-09-16, dev "yash"):** "for mcp,
+reduce relying on it … now that protocol is onchain, you could do without mcp.
+top up api key: activate · read balance: api endpoint · api key: sign message
+from wallet. so everything is autonomous." Documented at
+`https://www.orbio.so/protocol/agents.md` (copied into the evidence below).
+
+**The protocol, as documented and verified on chain 4663:**
+- **Key:** the wallet signs `Orbio API key · chain 4663 · epoch N`; the key is
+  `sk-orb-{N}-{base64(signature)}`. No key-creation call, no expiry. Rotation =
+  a higher epoch, accepted on first use.
+- **Balance:** `GET {gateway}/key` -> `balance.available` (activated AI balance)
+  and `balance.used` (lifetime usage). Every gateway response carries
+  `X-Orbio-Balance` = balance the request started from.
+- **Top-up:** `CREDIT.activate(amount)` (6 decimals) burns CREDIT into the
+  *calling* wallet's AI balance; emits `Activated(activationId, from,
+  beneficiary, amount)`. Or `Exchange.buyAndActivate` with USDG.
+- **Accrual:** staked ORBIO earns CREDIT. Observed pattern (last ~6h: 5 mints to
+  5 wallets at 5 blocks, 0.06–94.8 CREDIT) = per-staker claims, not an hourly
+  airdrop — claiming is a transaction.
+- **Contracts (bytecode present, `eth_getCode` 2026-09-16):** CREDIT
+  `0xe33322da1380e61e5ae5dfb21e7f62924c73004c` (symbol CREDIT, 6 dec, supply
+  218,850); Staking `0xe0710011278bfb63e57c5f227e5980984b1eddca`; Exchange
+  `0x6951ffd32630b05e06f50062aea801625a58ebc0` (all three share one 130-byte
+  proxy codehash, EIP-1967 slot empty); ORBIO `0xaa07a0e9…28a3` (950M supply);
+  USDG `0x5fc5360d…d168`.
+
+**Production finding that forced this now:** the account behind the current key
+has `available: 0`. A 1-token request returns `402 insufficient_quota — "This
+account has no available balance"`. The deep-dive SDK surfaces that as
+"Response validation failed", counted as a per-launch skip, while the budget gate
+(no balance source) believed $4.66 remained. `llm_deepdive_v0` has produced no
+reports since the balance hit zero. No money lost; the forecaster was dead.
+Neither agent wallet (signer `0x6a5A…B4BE`, gas `0x9b4E…BA03`) holds CREDIT,
+ORBIO or USDG. Cooper's own wallet holds 800k+ ORBIO, staked and accruing.
+
+**Plan (split per CLAUDE.md):**
+1. **Built today:** the lifecycle runner reads balance, lifetime spend and key
+   prefix from `GET /key` (`METABOLISM_SOURCE=gateway`, the default). Signed
+   lifecycle rows and M5c epochs run in production on the provider's own
+   numbers, unattended, with no session. The gateway source has no
+   create/revoke, so it always runs in observe mode. Effect with a $0 balance:
+   `NO_KEY -> STARVED`, the deep-dive gate closes with "balance is at or below
+   the reserve", and the dashboard stops saying "unknown".
+2. Wallet-signed key derived at boot from the agent wallet. **Needs Cooper:**
+   which wallet.
+3. On-chain metabolism: trailing-24h CREDIT claims to the agent wallet feed
+   `dailyDeepdiveBudget` (property 2); autonomous claim -> `activate` below
+   low-water; activation tx hashes in the lifecycle log. **Needs Cooper:** how
+   CREDIT reaches the agent wallet (stake a slice of ORBIO there, transfer
+   CREDIT, or buy with USDG) and how much.
+4. Dashboard / README / spec wording to match. **Needs Cooper's wording approval.**
+
+**Superseded by this:** the session push (`--with-session`), the session seed,
+observe mode as a *security* bound, the "~1h unattended" bound, and the
+OAuth-refresh workaround. The code stays until slice 2 lands, then goes.
+
 ## GET /api/v1/key works — no MCP session needed to read balance (2026-09-15, later)
 
 **Reported by another builder in the Orbio channel, confirmed against our own
@@ -41,11 +99,9 @@ real problem). Two live-money interpretations are both consistent with a
   four days of deep-dive spend plausibly lands near zero; `used: 0.629913`
   alone doesn't rule this out.
 
-**Next step (not done):** cross-check this response against `orbio_get_balance`
-for the *same* key during a live MCP session (the daily push already gives us
-one), and ask in the same message whether `available` is per-key or
-account-wide. Until then `deepdiveRunGate` keeps using the local-ledger
-fallback it already has — unchanged, not degraded, by this finding.
+**Resolved 2026-09-16:** Orbio's agent docs define `available` as the activated
+AI balance the key draws from, and a live 402 `insufficient_quota` confirmed $0
+means nothing can be spent. It is wired into the runner — see the entry above.
 
 ## Outcome resolver: why the backlog keeps growing, and the qualified-only lever (2026-09-15, later)
 
