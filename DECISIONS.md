@@ -2,6 +2,51 @@
 
 Standing choices that aren't obvious from the code. Newest first.
 
+## GET /api/v1/key works — no MCP session needed to read balance (2026-09-15, later)
+
+**Reported by another builder in the Orbio channel, confirmed against our own
+key:** `curl https://api.orbio.so/api/v1/key -H "Authorization: Bearer $ORBIO_API_KEY"`
+returns 200, not the 405 the earlier probe found on 2026-09-14. Live response
+(2026-09-15, key `sk-orbio-dY3Oyq`, minted 2026-09-12):
+
+```json
+{"object":"key","key":{"kind":"secret","prefix":"sk-orbio-dY3Oyq","label":"launch-auditor 2026-09-12","created_at":"2026-09-12T00:39:36.233434+00:00"},
+ "balance":{"currency":"USD","available":"0","used":"0.629913","available_micro_usd":"0","used_micro_usd":"629913"},
+ "rate_limit":{"requests_per_minute":120,"concurrent":32}}
+```
+
+**Why the earlier probe found nothing.** The 2026-09-14 probe hit `/api/key`
+(singular) and got 405 (POST-only, `orbio_create_key`'s route). This is
+`/api/v1/key` — the OpenRouter-shaped path under the gateway base URL, exactly
+as the closer plan speculated (§2.1) and as OpenRouter's own `GET /api/v1/key`
+works. Nobody had tried the right path with a live key before.
+
+**What this changes, if the semantics check out:** balance becomes readable
+with the gateway key alone — no MCP session, no daily push, no observe-mode
+tradeoff. This is potentially the direct fix for property 2 and for the
+`balanceUnknown` state on the dashboard, replacing the session-push design
+from earlier today rather than supplementing it.
+
+**Not yet wired in — `available: "0"` needs interpreting first, not assuming.**
+This is a spend-gate input; getting its meaning wrong is a money-safety bug in
+either direction (wrongly halt legitimate spend, or read a false "fine" past a
+real problem). Two live-money interpretations are both consistent with a
+5-week-old key that has real usage:
+- **Per-key allocation, not account balance** — matches the M5b design note
+  ("a key holds no money — the account balance IS the quota"); if so
+  `available` is the wrong field for the daily-budget gate and the account-wide
+  figure (previously only visible via `orbio_get_balance` over MCP) may not be
+  in this response at all.
+- **Genuinely near-zero account balance** — the $46.10 seen 2026-09-12 minus
+  four days of deep-dive spend plausibly lands near zero; `used: 0.629913`
+  alone doesn't rule this out.
+
+**Next step (not done):** cross-check this response against `orbio_get_balance`
+for the *same* key during a live MCP session (the daily push already gives us
+one), and ask in the same message whether `available` is per-key or
+account-wide. Until then `deepdiveRunGate` keeps using the local-ledger
+fallback it already has — unchanged, not degraded, by this finding.
+
 ## Outcome resolver: why the backlog keeps growing, and the qualified-only lever (2026-09-15, later)
 
 Raising `OUTCOMES_CONCURRENCY` to 4 made no measurable difference (resolved-per-
@@ -35,13 +80,21 @@ not deleted, so switching the flag off later resolves the backlog rather than
 losing it. Enumeration-time skip (never creating those rows) is a further
 optimization, not done — the current rows are cheap to store, just not to grade.
 
-**RPC ceiling — needs Cooper to confirm, not assumed.** Chainstack's published
-Growth tier is 250 requests/**second** ($49/mo); `RPC_BUDGET_RPM` in production
-is unset and defaults to 500 requests/**minute** (~8.3/s) — an order of
-magnitude under a standard Growth plan, so RPM is unlikely to be the binding
-constraint if that is the actual plan. Confirm the number shown on the
-Chainstack dashboard for this specific node (units and whether it's a hard cap)
-before changing `RPC_BUDGET_RPM` either direction.
+**RPC ceiling — confirmed.** Chainstack's dashboard for this node shows 250
+requests/**second** (the standard Growth-tier number), not per minute.
+`RPC_BUDGET_RPM=500`/min (≈8/sec) was never close to that ceiling — raised to
+**3000/min (50/sec, 20% of the hard cap)** on Railway, redeployed. Left
+headroom rather than maxing out: Chainstack's monthly request-unit quota for
+this plan hasn't been confirmed, and a rate-limit ceiling doesn't rule out a
+volume-based cost the account should check before pushing further.
+
+**Qualified-only turned ON** (`OUTCOMES_QUALIFIED_ONLY=1`), per Cooper: launches
+under roughly $20k market cap carry risks a buyer should already assume, and an
+audit of one on request can be published ad hoc rather than folded into the
+scored benchmark. Note this is a different bar from the code's qualified-lane
+threshold (≥$2,000 liquidity-equivalent or ≥25 buyers in 10 min, spec §3.1) —
+the existing lane definition is what's now gating outcome resolution; nobody
+asked to change that number to $20k specifically.
 
 ## Outcome resolver: backoff, give-up, fair share across labels (2026-09-15)
 

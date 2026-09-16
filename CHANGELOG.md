@@ -1491,3 +1491,22 @@ separation from putting a session on Railway.
   `launch_auditor_outcomes_pending_due{label=...}` should stop growing for
   those three labels within an hour.
 
+## 2026-09-15 (Cooper's session) — RPC budget raised, qualified-only turned on, key endpoint found
+
+### Changed (Railway, ops only — no code)
+- `RPC_BUDGET_RPM`: 500 -> 3000/min, after confirming Chainstack's real ceiling
+  is 250/sec (~15,000/min), not the 250/min assumed earlier today.
+- `OUTCOMES_QUALIFIED_ONLY`: 0 -> 1 (Cooper's call — see DECISIONS.md).
+
+### Found
+- `GET https://api.orbio.so/api/v1/key` with the bearer gateway key returns
+  200 with balance/usage/rate-limit, no MCP session required (reported by
+  another builder, confirmed against our own key). Not yet wired into the
+  spend gate — see DECISIONS.md for why and what's still open.
+
+### Verify
+- `curl -s $API/metrics | grep outcomes_pending_due` — SELL_IMPAIRED/
+  INSIDER_EXIT/LIQ_IMPAIRED should stop growing within an hour.
+- worker log: `[outcomes] resolution loop ... qualified-lane only for
+  INSIDER_EXIT/SELL_IMPAIRED/LIQ_IMPAIRED`.
+
