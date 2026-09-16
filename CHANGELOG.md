@@ -1551,3 +1551,17 @@ separation from putting a session on Railway.
   Blockscout shows an `Activated` event from the gas wallet; within a few ticks
   `/v1/lifecycle` shows the balance and `STARVED -> ACTIVE`.
 
+## 2026-09-16 — agent live on its own Orbio account; lag-aware epochs
+
+### Measured
+- Wallet-signature key authenticated; `STARVED -> ACTIVE` at $20.00 (operator
+  activation #58 to the gas wallet); deep-dive sweep 5 scored / 0 skipped.
+
+### Fixed
+- `reconcileEpoch`: phantom needs zero requests in this and the previous window
+  (`lagRequestCount`); windows under $0.02 on both sides are not graded.
+
+### Verify
+- `pnpm verify` green (`reconcile.test.ts` late-charge cases).
+- `/v1/lifecycle` budget `spendableKeyUsd` = balance − 0.5.
+

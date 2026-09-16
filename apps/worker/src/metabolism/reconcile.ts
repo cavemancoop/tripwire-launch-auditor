@@ -48,6 +48,13 @@ export interface EpochInput {
   anomalyPct: number;
   /** provider delta below this is rounding noise, not phantom spend */
   phantomToleranceUsd: number;
+  /** runs recorded in the window BEFORE this one. Orbio charges land after the
+   *  answer they pay for (agents doc §5), so a charge can arrive one window late:
+   *  spend in an idle window that follows a busy one is lag, not phantom. */
+  lagRequestCount?: number;
+  /** below this on both sides, a window is too small to grade (sub-cent lag and
+   *  rounding swing the percentage wildly). Default 0.02. */
+  minGradeUsd?: number;
 }
 
 export interface EpochResult {
@@ -72,8 +79,9 @@ export function reconcileEpoch(i: EpochInput): EpochResult {
   const localEstimateUsd = r6(Math.max(0, i.localEstimateUsd));
   const base = { providerDeltaUsd, localEstimateUsd, requestCount: i.requestCount };
 
-  // 1. the compromise signal: money left the account and we did nothing
-  if (i.requestCount === 0 && providerDeltaUsd > i.phantomToleranceUsd) {
+  // 1. the compromise signal: money left the account and we did nothing — in this
+  //    window or the one before it (late-landing charges)
+  if (i.requestCount === 0 && (i.lagRequestCount ?? 0) === 0 && providerDeltaUsd > i.phantomToleranceUsd) {
     return {
       ...base,
       reconciliationFactor: null,
@@ -85,7 +93,8 @@ export function reconcileEpoch(i: EpochInput): EpochResult {
     };
   }
 
-  // 2. idle window — nothing to reconcile, nothing wrong
+  // 2. idle window — nothing to reconcile, nothing wrong (including a late charge
+  //    for the previous window's requests)
   if (i.requestCount === 0) {
     return {
       ...base,
@@ -111,7 +120,21 @@ export function reconcileEpoch(i: EpochInput): EpochResult {
     };
   }
 
-  // 4. the normal case — grade the estimator
+  // 4. too small to grade: sub-cent windows are dominated by billing lag
+  const minGradeUsd = i.minGradeUsd ?? 0.02;
+  if (localEstimateUsd < minGradeUsd && providerDeltaUsd < minGradeUsd) {
+    return {
+      ...base,
+      reconciliationFactor: null,
+      discrepancyPct: null,
+      phantom: false,
+      anomaly: false,
+      billingStatus: 'aggregate_only',
+      reason: `too small to grade: provider ${usd(providerDeltaUsd)} vs estimate ${usd(localEstimateUsd)} over ${i.requestCount} request(s) (both < ${usd(minGradeUsd)})`,
+    };
+  }
+
+  // 5. the normal case — grade the estimator
   const factor = providerDeltaUsd > 0 ? r6(providerDeltaUsd / localEstimateUsd) : null;
   const discrepancyPct = r6(((providerDeltaUsd - localEstimateUsd) / localEstimateUsd) * 100);
   const anomaly = Math.abs(discrepancyPct) > i.anomalyPct;

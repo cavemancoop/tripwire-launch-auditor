@@ -71,6 +71,32 @@ describe('reconcileEpoch — provider delta vs local estimates (M5c)', () => {
   });
 });
 
+describe('reconcileEpoch — late-landing charges (2026-09-16)', () => {
+  const tiny = { anomalyPct: 50, phantomToleranceUsd: 0.005 };
+
+  it('spend in an idle window right after a busy one is lag, not phantom', () => {
+    const r = reconcileEpoch({ providerSpendNowUsd: 1.03, providerSpendPrevUsd: 1.0, localEstimateUsd: 0, requestCount: 0, lagRequestCount: 12, ...tiny });
+    expect(r.phantom).toBe(false);
+    expect(r.billingStatus).toBe('aggregate_only');
+  });
+
+  it('spend with no requests in this OR the previous window is still phantom', () => {
+    const r = reconcileEpoch({ providerSpendNowUsd: 1.03, providerSpendPrevUsd: 1.0, localEstimateUsd: 0, requestCount: 0, lagRequestCount: 0, ...tiny });
+    expect(r.phantom).toBe(true);
+  });
+
+  it('a sub-cent window is too small to grade — the live -100% case', () => {
+    const r = reconcileEpoch({ providerSpendNowUsd: 0, providerSpendPrevUsd: 0, localEstimateUsd: 0.0023, requestCount: 5, ...tiny });
+    expect(r.anomaly).toBe(false);
+    expect(r.reason).toMatch(/too small to grade/);
+  });
+
+  it('a window above the grading floor is still graded', () => {
+    const r = reconcileEpoch({ providerSpendNowUsd: 0, providerSpendPrevUsd: 0, localEstimateUsd: 0.5, requestCount: 40, ...tiny });
+    expect(r.anomaly).toBe(true);
+  });
+});
+
 describe('billingBlocksInference', () => {
   it('blocks on anomaly and phantom only', () => {
     expect(billingBlocksInference('anomaly')).toBe(true);

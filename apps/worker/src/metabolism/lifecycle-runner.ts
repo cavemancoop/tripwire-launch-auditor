@@ -586,8 +586,9 @@ export async function runLifecycleLoop(
       // the estimator's error. Phantom (spend with no requests) is the only
       // compromise signal; a sustained anomaly pauses inference, never revokes.
       const epochAt = new Date();
-      const prevEpoch = await prisma.metabolismEpoch.findFirst({
+      const [prevEpoch, prevPrevEpoch] = await prisma.metabolismEpoch.findMany({
         orderBy: { at: 'desc' },
+        take: 2,
         select: { at: true, providerSpendUsd: true },
       });
       const providerSpendPrevUsd =
@@ -604,6 +605,9 @@ export async function runLifecycleLoop(
         providerSpendPrevUsd,
         localEstimateUsd: win.estimatedUsd,
         requestCount: win.count,
+        lagRequestCount: prevEpoch
+          ? (await windowEstimate(prevPrevEpoch?.at ?? new Date(prevEpoch.at.getTime() - intervalMs), prevEpoch.at)).count
+          : 0,
         anomalyPct: env.metabolismAnomalyPct,
         phantomToleranceUsd: env.metabolismPhantomToleranceUsd,
       });

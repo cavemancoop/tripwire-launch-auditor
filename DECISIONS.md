@@ -2,6 +2,32 @@
 
 Standing choices that aren't obvious from the code. Newest first.
 
+## Live on the agent's own account; epoch rules made lag-aware (2026-09-16)
+
+**Funding landed as an activation, not a transfer.** Cooper activated 20 CREDIT
+from his wallet `0x4cb72456e82aeDd8b1ef0F08D03Cc6bFf96c6291` with the gas wallet
+as beneficiary — activation #58, tx
+`0xb7f87415d3b285c5daf3e94a66453396b3b9452813e557d61a73dca5659e2c24`, block
+64,784,388. The agent wallet never held transferable CREDIT, which is strictly
+safer than the transfer plan; the agent's own activate path stays armed for
+future transfers. Within one tick of `ORBIO_KEY_SOURCE=wallet`: the gas wallet's
+signature key authenticated, `STARVED -> ACTIVE: balance recovered to $20.00`,
+and the next deep-dive sweep scored 5/5 — the first LLM reports since the old
+account hit $0.
+
+**Two epoch rules changed because charges land after the answer they pay for**
+(Orbio agents doc §5):
+- **Phantom** now requires zero requests in this window *and* the one before
+  it. Previously a late charge arriving in the idle window after a sweep would
+  read as a compromise; it was only below the $0.005 tolerance by luck of sweep
+  cost.
+- **Anomaly** is not graded when both provider delta and local estimate are
+  under $0.02 (`minGradeUsd`). The first live window was $0.0023 of estimate vs
+  $0.00 charged = "-100%"; three of those in a row would have paused inference.
+
+`RESERVE_USD` 3 -> 0.5 on api as well as worker, so the dashboard's spendable
+figure matches the gate's.
+
 ## Funding the agent: operator-transferred CREDIT, disclosed as a proof of concept (2026-09-16)
 
 **Cooper's decision.** The agent's Orbio account is the **gas wallet**
