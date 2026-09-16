@@ -1531,3 +1531,23 @@ separation from putting a session on Railway.
   and a `NO_KEY -> STARVED` transition while the balance is 0; deep-dive sweeps
   log `budget: balance is at or below the reserve` instead of validation failures.
 
+## 2026-09-16 — wallet-signed Orbio key + autonomous CREDIT activation (slices 2+3)
+
+### Added
+- `apps/worker/src/metabolism/credit-wallet.ts`: key derivation from a wallet
+  signature, `CREDIT.activate` with receipt + `Activated` decoding, on-chain
+  daily activation total, pure `activationDecision`, and the call allowlist.
+- Worker boot derives the key when `ORBIO_KEY_SOURCE=wallet`; the lifecycle
+  runner activates CREDIT when `CREDIT_ACTIVATE=1`. Both default off.
+- New env: `ORBIO_KEY_SOURCE`, `ORBIO_KEY_EPOCH`, `ORBIO_CREDIT_ADDRESS`,
+  `ORBIO_STAKING_ADDRESS`, `CREDIT_ACTIVATE*`.
+
+### Verify
+- `pnpm verify` green (`credit-wallet.test.ts`: key format + signature recovery,
+  allowlist refusals, activation decisions).
+- After enabling on Railway with CREDIT in the gas wallet: worker log
+  `gateway key from the gas wallet's signature: sk-orb-0-…` then
+  `activated $5.00 CREDIT -> AI balance (activation #…, tx 0x…)`; the tx on
+  Blockscout shows an `Activated` event from the gas wallet; within a few ticks
+  `/v1/lifecycle` shows the balance and `STARVED -> ACTIVE`.
+

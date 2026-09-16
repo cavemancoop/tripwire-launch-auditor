@@ -39,7 +39,18 @@ import {
   orbioRevokeKey,
   type OrbioConnection,
 } from './orbio-client';
-import { resolveGatewayKey } from '../deepdive/openrouter';
+import { getWalletClient } from '@launch-auditor/chain';
+import { getBudgetedClient, PRIORITY } from '@launch-auditor/rpc-budget';
+import type { PublicClient } from 'viem';
+import { privateKeyToAccount } from 'viem/accounts';
+import { resolveGatewayKey, walletGatewayKeyActive } from '../deepdive/openrouter';
+import {
+  activateCredit,
+  activatedTodayUsd,
+  activationDecision,
+  creditHeldUsd,
+  type ProtocolAddresses,
+} from './credit-wallet';
 import { gatewayGetKey, gatewayKeyToReading, metabolismSource, type MetabolismReading } from './gateway-reader';
 import { reconcileIds, type IdsReconcile } from './ids-reconcile';
 import { reconcileEpoch, type BillingStatus } from './reconcile';
@@ -440,6 +451,25 @@ export async function runLifecycleLoop(
     `[metabolism] lifecycle loop every ${env.metabolismStatusPollSec}s · reserve $${cfg.reserveUsd} · low-water $${cfg.lowWaterUsd} · hygiene ${cfg.hygieneRotateDays}d · source ${source} · keys ${mode} · start ${state}${halted ? ' (HALTED)' : ''}`,
   );
 
+  // CREDIT activation (on-chain slice 3): only with the gateway source, a wallet
+  // key, and the protocol addresses configured. In-memory pending guard; the
+  // daily cap is read from the wallet's own Activated events, so it survives restarts.
+  const activation =
+    source === 'gateway' && /^(1|true|yes)$/i.test(process.env.CREDIT_ACTIVATE || '') && env.gasWalletPrivateKey && process.env.ORBIO_CREDIT_ADDRESS
+      ? {
+          addresses: { credit: process.env.ORBIO_CREDIT_ADDRESS as `0x${string}`, staking: (process.env.ORBIO_STAKING_ADDRESS || undefined) as `0x${string}` | undefined } satisfies ProtocolAddresses,
+          wallet: privateKeyToAccount(env.gasWalletPrivateKey).address,
+          lowWaterUsd: Number(process.env.CREDIT_ACTIVATE_LOW_WATER_USD || 2),
+          chunkUsd: Number(process.env.CREDIT_ACTIVATE_CHUNK_USD || 5),
+          dailyCapUsd: Number(process.env.CREDIT_ACTIVATE_DAILY_CAP_USD || env.deepdiveDailyCapUsd),
+        }
+      : null;
+  let lastActivation: { at: number; balanceBefore: number; amountUsd: number } | null = null;
+  if (activation) {
+    // eslint-disable-next-line no-console
+    console.log(`[metabolism] CREDIT activation on for ${activation.wallet} · low-water $${activation.lowWaterUsd} · chunk $${activation.chunkUsd} · cap $${activation.dailyCapUsd}/day`);
+  }
+
   let conn: OrbioConnection | null = null;
   const dropConn = async (): Promise<void> => {
     if (conn) {
@@ -453,9 +483,16 @@ export async function runLifecycleLoop(
       let c: OrbioConnection | null = null;
       let read: MetabolismReading;
       if (source === 'gateway') {
-        read = gatewayKeyToReading(
-          await gatewayGetKey({ baseUrl: env.orbioGatewayV1Url, apiKey: resolveGatewayKey() }),
-        );
+        try {
+          read = gatewayKeyToReading(
+            await gatewayGetKey({ baseUrl: env.orbioGatewayV1Url, apiKey: resolveGatewayKey() }),
+          );
+        } catch (e) {
+          // A wallet-signature key is unknown to the gateway until the wallet's
+          // first activation: that is "no account yet, balance 0", not an outage.
+          if (!(walletGatewayKeyActive() && /-> 401/.test(e instanceof Error ? e.message : ''))) throw e;
+          read = { balanceUsd: 0, providerSpendUsd: 0, status: { hasKey: false, prefix: null, createdAt: null } };
+        }
       } else {
         if (!conn) conn = await connect();
         c = conn;
@@ -463,6 +500,55 @@ export async function runLifecycleLoop(
         read = { balanceUsd: b.balance.usd, providerSpendUsd: b.spent.usd, status: s };
       }
       const { status } = read;
+
+      if (activation) {
+        const pending =
+          lastActivation !== null &&
+          Date.now() - lastActivation.at < 10 * 60_000 &&
+          read.balanceUsd < lastActivation.balanceBefore + lastActivation.amountUsd * 0.5;
+        if (lastActivation && !pending) lastActivation = null;
+        const pub = getBudgetedClient(env.rpcUrl, { priority: PRIORITY.commit }) as unknown as PublicClient;
+        const held = await creditHeldUsd(pub, activation.addresses.credit, activation.wallet);
+        const needsCheck = !pending && held > 0 && read.balanceUsd < activation.lowWaterUsd;
+        const today = needsCheck
+          ? await activatedTodayUsd(pub, activation.addresses.credit, activation.wallet, 9_999n)
+          : 0;
+        const d = activationDecision({
+          apiBalanceUsd: read.balanceUsd,
+          creditHeldUsd: held,
+          lowWaterUsd: activation.lowWaterUsd,
+          chunkUsd: activation.chunkUsd,
+          activatedTodayUsd: today,
+          dailyCapUsd: activation.dailyCapUsd,
+          pending,
+        });
+        if (d.activate) {
+          // mark pending before sending: a timeout must not become a second activation
+          lastActivation = { at: Date.now(), balanceBefore: read.balanceUsd, amountUsd: d.amountUsd };
+          const r = await activateCredit({
+            wallet: getWalletClient(env.rpcUrl, env.gasWalletPrivateKey!),
+            pub,
+            addresses: activation.addresses,
+            amountUsd: d.amountUsd,
+          });
+          const reason = `activated $${d.amountUsd.toFixed(2)} CREDIT -> AI balance (activation #${r.activationId ?? '?'}, tx ${r.txHash}) — ${d.reason}`;
+          await writer.append({
+            isSnapshot: false,
+            prevState: state,
+            newState: state,
+            reason,
+            idsMismatch: false,
+            balanceUsd: read.balanceUsd,
+            reserveUsd: cfg.reserveUsd,
+            ledgerSpendUsd: await totalSpendUsd(),
+            providerSpendUsd: read.providerSpendUsd,
+            keyId: status.prefix,
+            keyHashPrefix: status.prefix,
+          });
+          // eslint-disable-next-line no-console
+          console.log(`[metabolism] ${reason}`);
+        }
+      }
       const ledgerSpendUsd = await totalSpendUsd();
       const providerSpendUsd = read.providerSpendUsd;
       const blob = readOAuthBlob(storePath, encKey);
@@ -563,10 +649,14 @@ export async function runLifecycleLoop(
       // one inference actually uses: ORBIO_API_KEY (a seed carries no key).
       const heldKey = mode === 'observe' ? resolveGatewayKey() : blob.gatewayKey;
       const heldPrefix = mode === 'observe' ? heldKey : blob.gatewayKeyPrefix;
+      // Gateway source: the gateway just authenticated our key to answer, so we hold
+      // its secret by definition — prefix formats differ between key schemes.
       const holdSecret =
-        typeof heldKey === 'string' &&
-        heldKey.length > 0 &&
-        (!status.prefix || samePrefix(status.prefix, heldPrefix));
+        source === 'gateway'
+          ? status.hasKey
+          : typeof heldKey === 'string' &&
+            heldKey.length > 0 &&
+            (!status.prefix || samePrefix(status.prefix, heldPrefix));
 
       const reading: LifecycleReading = {
         state,

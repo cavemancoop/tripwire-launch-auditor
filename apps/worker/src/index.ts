@@ -14,6 +14,8 @@ import { loadEnv, type WorkerEnv } from './env';
 import { startHealthServer } from './health-server';
 import { runLifecycleLoop } from './metabolism';
 import { seedTokenStoreFromEnv } from './metabolism/session-seed';
+import { deriveOrbioApiKey, describeKey } from './metabolism/credit-wallet';
+import { setWalletGatewayKey } from './deepdive/openrouter';
 import { runOutcomesLoop } from './outcomes';
 import { runScorerLoop } from './scorer';
 import { runTelegramPosterLoop } from './telegram/poster';
@@ -66,6 +68,17 @@ async function main(): Promise<void> {
 
   // Before anything reads the token store: a container starts with no disk, so a
   // pushed Orbio session (railway:push-env --with-session) is written here.
+  // Orbio on-chain (2026-09-16): the agent's API key is its wallet's signature.
+  if (process.env.ORBIO_KEY_SOURCE?.trim().toLowerCase() === 'wallet') {
+    if (!env.gasWalletPrivateKey) {
+      console.warn('[metabolism] ORBIO_KEY_SOURCE=wallet but GAS_WALLET_PRIVATE_KEY is not set — keeping ORBIO_API_KEY');
+    } else {
+      const key = await deriveOrbioApiKey(env.gasWalletPrivateKey, Number(process.env.ORBIO_KEY_EPOCH || 0));
+      setWalletGatewayKey(key);
+      console.log(`[metabolism] gateway key from the gas wallet's signature: ${describeKey(key)}`);
+    }
+  }
+
   const seed = seedTokenStoreFromEnv();
   if (seed.seeded || process.env.ORBIO_SESSION_SEED) console.log(`[metabolism] session seed: ${seed.reason}`);
 

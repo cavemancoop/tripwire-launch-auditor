@@ -17,8 +17,18 @@ import {
   tokenStorePath,
 } from '../metabolism/token-store';
 
-/** Resolve the gateway key: encrypted store → ORBIO_API_KEY → OPENROUTER_API_KEY. */
+let walletKey: string | null = null;
+
+/** Set at worker boot when ORBIO_KEY_SOURCE=wallet: the agent wallet's signature key. */
+export function setWalletGatewayKey(key: string | null): void {
+  walletKey = key;
+}
+
+export const walletGatewayKeyActive = (): boolean => walletKey !== null;
+
+/** Resolve the gateway key: wallet signature → encrypted store → ORBIO_API_KEY → OPENROUTER_API_KEY. */
 export function resolveGatewayKey(env: NodeJS.ProcessEnv = process.env): string {
+  if (walletKey) return walletKey;
   if (env.TOKEN_ENCRYPTION_KEY) {
     try {
       const blob = readOAuthBlob(tokenStorePath(env), loadEncryptionKey(env.TOKEN_ENCRYPTION_KEY));

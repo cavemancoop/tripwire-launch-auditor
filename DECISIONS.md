@@ -2,6 +2,54 @@
 
 Standing choices that aren't obvious from the code. Newest first.
 
+## Funding the agent: operator-transferred CREDIT, disclosed as a proof of concept (2026-09-16)
+
+**Cooper's decision.** The agent's Orbio account is the **gas wallet**
+(`0x9b4EDe199198ca3D41A9a7D2997606BaCd30BA03`). It is funded by Cooper
+transferring CREDIT earned by his own staked ORBIO (800k+, which stays in his
+wallet). Not by moving ORBIO to the agent: a compromise or bug could lose staked
+ORBIO, while the most a compromise can take here is the unactivated CREDIT the
+wallet holds — activated balance cannot be transferred or cashed out.
+
+**How it is described publicly (wording to be approved in slice 4):** a proof of
+concept — the operator funds the agent's wallet with CREDIT earned from their
+own staked ORBIO; activation, budgeting, spending and receipts after that are the
+agent's, on-chain. Spec §0.1 property 2 ("throughput follows token activity and
+holdings") becomes "throughput follows the CREDIT the agent receives" until the
+agent stakes for itself. Autonomous earning (a small stake in the agent wallet,
+reversible — no lock-up, see below) is optional and not scheduled.
+
+**Why this is enough:** actual deep-dive spend has been ~$0.44/day (888 requests
+/24h), so $20 of CREDIT covers roughly a month; the $5/day cap was never binding.
+
+**Staking terms (read on-chain 2026-09-16, for the day this is revisited):**
+`MIN_POSITION` 1,000 ORBIO; `PERIOD` 3600 s; time-weighted rewards; no lock,
+cooldown or unlock-time function; `unstake`/`unstakeAll` settle pending CREDIT;
+per-staker `claim()` (selector 0x4e71d92d) mints it. Total staked 291.8M ORBIO.
+Implementation `0xcd068ca1…36Bd` behind an EIP-1967 proxy.
+
+**Built (slices 2+3, flags off until the CREDIT lands):**
+- `ORBIO_KEY_SOURCE=wallet`: at boot the worker signs
+  `Orbio API key · chain 4663 · epoch ORBIO_KEY_EPOCH` with the gas wallet;
+  that key outranks every other source. Logged only as `sk-orb-0-xxxx…`.
+  Before the wallet's first activation the gateway answers 401; the runner
+  reads that as balance 0, not an outage.
+- `CREDIT_ACTIVATE=1`: when the API balance is below $2 and the wallet holds
+  CREDIT, activate min($5 chunk, held, today's remaining cap). The daily cap is
+  summed from the wallet's own `Activated` events since UTC midnight, so a
+  restart cannot reset it. Pending guard: marked before the tx is sent, cleared
+  once the balance reflects it or after 10 min. Each activation is a signed
+  lifecycle row with the activation id and tx hash.
+- **Allowlist:** the only protocol calls the wallet can make are
+  `CREDIT.activate` and `Staking.claim` (`assertAllowedCall`, tested against
+  transfer, approve, transferFrom, unstake, unstakeAll, ORBIO.transfer,
+  Exchange.buy). There is no code path that moves CREDIT or ORBIO elsewhere.
+- **Known gap:** a restart inside the pending window, before the balance shows
+  an activation, could activate one extra chunk. Bounded by the on-chain daily
+  cap, and the CREDIT is not lost — it becomes the agent's AI balance.
+- **Not built yet:** the outflow alert (any CREDIT/ORBIO leaving the wallet other
+  than by activation burn).
+
 ## Orbio is on-chain now: Metabolism moves off the MCP (2026-09-16)
 
 **What Orbio told us (builders channel, 2026-09-16, dev "yash"):** "for mcp,
