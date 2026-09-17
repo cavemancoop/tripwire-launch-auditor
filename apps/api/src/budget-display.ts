@@ -22,6 +22,12 @@ export interface BudgetDisplayInputs {
   keyRemainingUsd: number | null;
   reserveUsd: number;
   billingStatus?: string | null;
+  /** property 2 (2026-09-16): 50% of CREDIT activated into the agent's account
+   *  in the trailing 24h (apps/worker/src/metabolism/budget.ts's
+   *  dailyDeepdiveBudget, mirrored here). Undefined when the worker isn't
+   *  configured to compute it — the display then behaves exactly as before
+   *  (flat dailyCapUsd only), never a new way to show zero. */
+  creditShareUsd?: number;
 }
 
 export interface BudgetDisplay {
@@ -31,8 +37,10 @@ export interface BudgetDisplay {
   remainingTodayUsd: number;
   spendableKeyUsd: number;
   maxRunCostUsd: number;
-  /** whichever of the three candidates the min() actually picked */
-  bindingConstraint: 'cap_per_run' | 'daily_cap' | 'spendable_key' | 'zero';
+  /** whichever candidate the min() actually picked */
+  bindingConstraint: 'cap_per_run' | 'daily_cap' | 'credit_share' | 'spendable_key' | 'zero';
+  /** echoed only when creditShareUsd was provided */
+  creditShareUsd?: number;
   gateClosedByBilling: boolean;
   /** the balance behind these numbers has not been re-read from Orbio recently */
   balanceStale: boolean;
@@ -62,6 +70,11 @@ export function budgetDisplay(i: BudgetDisplayInputs): BudgetDisplay {
     ['daily_cap', remainingTodayUsd],
     ['spendable_key', spendableKeyUsd],
   ];
+  if (i.creditShareUsd !== undefined) {
+    // remaining-today already accounts for what's spent, credit_share hasn't
+    // been spent against yet today — the same asymmetry dailyDeepdiveBudget has.
+    candidates.push(['credit_share', Math.max(0, i.creditShareUsd)]);
+  }
   let binding = candidates[0]!;
   for (const c of candidates) if (c[1] < binding[1]) binding = c;
 
@@ -80,5 +93,6 @@ export function budgetDisplay(i: BudgetDisplayInputs): BudgetDisplay {
     gateClosedByBilling,
     balanceStale,
     balanceUnknown,
+    ...(i.creditShareUsd !== undefined ? { creditShareUsd: round2(i.creditShareUsd) } : {}),
   };
 }

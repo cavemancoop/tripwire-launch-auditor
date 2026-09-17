@@ -1635,3 +1635,18 @@ separation from putting a session on Railway.
 Without further funding, this cap trends toward $0 ~24h after the last
 CREDIT activation into the agent's wallet, even with balance remaining.
 
+## 2026-09-16 (same night) — dashboard budget display now matches the real gate
+
+### Fixed
+- `budgetDisplay` gained a `credit_share` candidate (optional `creditShareUsd`
+  input) so the dashboard's daily cap tracks property 2 instead of showing a
+  stale flat number once on-chain accrual becomes the binding constraint.
+- `FundingSummary` gained `trailingCreditsUsd` (rolling 24h, reused from the
+  already-cached scan `/v1/funding` does — no extra RPC read).
+
+### Verify
+- `pnpm verify` green (10 new tests: rolling-window edge at exactly 24h,
+  credit_share binding/non-binding/zero cases).
+- `curl -s $API/v1/lifecycle?limit=1` — `budget.creditShareUsd` present and
+  non-undefined once `ORBIO_AGENT_ACCOUNT`/`ORBIO_CREDIT_ADDRESS` are set.
+

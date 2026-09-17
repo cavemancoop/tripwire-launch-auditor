@@ -75,6 +75,37 @@ describe('budgetDisplay — staleness is reported, not enforced', () => {
   });
 });
 
+describe('budgetDisplay — credit_share (property 2, 2026-09-16)', () => {
+  // The dashboard must not silently keep showing the flat dailyCapUsd once
+  // the real gate is bound by accrual instead — that's exactly the
+  // dashboard-contradicts-the-system bug the previous test group exists to
+  // prevent, just for the newer term.
+  it('is absent from the candidates entirely when not provided — old behavior unchanged', () => {
+    const b = budgetDisplay(BASE);
+    expect(b.creditShareUsd).toBeUndefined();
+    expect(b.bindingConstraint).not.toBe('credit_share');
+  });
+
+  it('binds on credit_share when it is the smallest candidate', () => {
+    const b = budgetDisplay({ ...BASE, capPerRunUsd: 5, dailyCapUsd: 5, keyRemainingUsd: 100, creditShareUsd: 0.1 });
+    expect(b.maxRunCostUsd).toBe(0.1);
+    expect(b.bindingConstraint).toBe('credit_share');
+    expect(b.creditShareUsd).toBe(0.1);
+  });
+
+  it('a large credit_share does not override a smaller daily_cap or cap_per_run', () => {
+    const b = budgetDisplay({ ...BASE, creditShareUsd: 1000 });
+    expect(b.bindingConstraint).toBe('cap_per_run');
+    expect(b.creditShareUsd).toBe(1000); // still echoed, even when it isn't binding
+  });
+
+  it('a zero credit_share (funding aged out of the 24h window) closes the gate to zero', () => {
+    const b = budgetDisplay({ ...BASE, creditShareUsd: 0 });
+    expect(b.maxRunCostUsd).toBe(0);
+    expect(b.bindingConstraint).toBe('zero');
+  });
+});
+
 describe('budgetDisplay — an unread balance is not an empty one', () => {
   // The worker falls back to the daily cap when no lifecycle snapshot exists
   // and keeps running. Reporting 0 here printed "next run allows up to $0.00 /

@@ -27,6 +27,42 @@ describe('summarizeFunding', () => {
     expect(s.byAgentUsd).toBe(5);
     expect(s.activations.map((a) => [a.activationId, a.by])).toEqual([['61', 'agent'], ['58', 'operator']]);
   });
+
+  // property 2 (2026-09-16): the daily budget's credit_share term reads this
+  // figure. Getting the window wrong either overstates the real cap (still
+  // counting a funding event that's actually aged out) or understates it.
+  describe('trailingCreditsUsd — the rolling 24h window', () => {
+    const now = Date.parse('2026-09-17T12:00:00Z');
+
+    it('counts an activation inside the window', () => {
+      const s = summarizeFunding(AGENT, [{ activationId: '58', amountUsd: 20, from: '0x4cb7', blockNumber: 1, at: '2026-09-16T20:11:04Z', txHash: '0xb7f8' }], now);
+      expect(s.trailingCreditsUsd).toBe(20);
+    });
+
+    it('drops an activation the moment it ages past 24h — no gradual decay', () => {
+      const justOut = summarizeFunding(AGENT, [{ activationId: '58', amountUsd: 20, from: '0x4cb7', blockNumber: 1, at: '2026-09-16T11:59:59Z', txHash: '0xb7f8' }], now);
+      expect(justOut.trailingCreditsUsd).toBe(0);
+      const justIn = summarizeFunding(AGENT, [{ activationId: '58', amountUsd: 20, from: '0x4cb7', blockNumber: 1, at: '2026-09-16T12:00:01Z', txHash: '0xb7f8' }], now);
+      expect(justIn.trailingCreditsUsd).toBe(20);
+    });
+
+    it('sums multiple activations, agent and operator both count', () => {
+      const s = summarizeFunding(
+        AGENT,
+        [
+          { activationId: '58', amountUsd: 20, from: '0x4cb7', blockNumber: 1, at: '2026-09-17T00:00:00Z', txHash: '0xa' },
+          { activationId: '61', amountUsd: 5, from: AGENT.toLowerCase(), blockNumber: 2, at: '2026-09-17T10:00:00Z', txHash: '0xb' },
+        ],
+        now,
+      );
+      expect(s.trailingCreditsUsd).toBe(25);
+    });
+
+    it('a row with no block timestamp is excluded, not treated as recent', () => {
+      const s = summarizeFunding(AGENT, [{ activationId: '58', amountUsd: 20, from: '0x4cb7', blockNumber: 1, at: null, txHash: '0xb7f8' }], now);
+      expect(s.trailingCreditsUsd).toBe(0);
+    });
+  });
 });
 
 describe('GET /v1/funding', () => {
@@ -35,7 +71,7 @@ describe('GET /v1/funding', () => {
   });
 
   it('serves the reader and turns a reader failure into 503', async () => {
-    const ok: FundingSummary = { configured: true, account: AGENT, creditAddress: '0xe333', fromBlock: 1, totalActivatedUsd: 20, byOperatorUsd: 20, byAgentUsd: 0, activations: [] };
+    const ok: FundingSummary = { configured: true, account: AGENT, creditAddress: '0xe333', fromBlock: 1, totalActivatedUsd: 20, byOperatorUsd: 20, byAgentUsd: 0, trailingCreditsUsd: 20, activations: [] };
     const app = buildServer({ env: ENV, fundingReader: async () => ok });
     expect((await app.inject({ method: 'GET', url: '/v1/funding' })).json()).toMatchObject({ totalActivatedUsd: 20 });
     const bad = buildServer({ env: ENV, fundingReader: async () => { throw new Error('rpc down'); } });

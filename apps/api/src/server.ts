@@ -560,13 +560,21 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
       ? Math.min(MAX_LIMIT, Math.max(1, Math.trunc(parsed)))
       : DEFAULT_LIMIT;
 
-    const [entries, estimator] = await Promise.all([readLifecycle(limit), readEstimator()]);
+    const [entries, estimator, funding] = await Promise.all([
+      readLifecycle(limit),
+      readEstimator(),
+      // property 2 (2026-09-16): same cached on-chain read /v1/funding uses.
+      // A failure here must not take the whole lifecycle endpoint down —
+      // fall back to no credit_share term, exactly like an unconfigured instance.
+      readFunding().catch(() => null),
+    ]);
     const check = verifyLifecycleRows(entries);
 
     const latest = entries[entries.length - 1];
     const budget = budgetDisplay({
       dailyCapUsd: env.deepdiveDailyCapUsd,
       capPerRunUsd: env.deepdiveCapPerRunUsd,
+      creditShareUsd: funding?.configured ? funding.trailingCreditsUsd * 0.5 : undefined,
       spentTrailing24hUsd: Math.max(estimator.providerSpend24hUsd, estimator.estimatedSpend24hUsd),
       // null, not 0, when no balance has ever been read: the worker falls back
       // to the daily cap in that case and keeps running, so reporting 0 here

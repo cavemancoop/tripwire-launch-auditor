@@ -28,6 +28,10 @@ export interface FundingSummary {
   totalActivatedUsd: number;
   byOperatorUsd: number;
   byAgentUsd: number;
+  /** property 2 (2026-09-16): Σ activated in the trailing 24h, any funder —
+   *  the same figure the worker's dailyDeepdiveBudget() derives its
+   *  credit_share term from. Reuses this reader's own cached scan, no extra RPC. */
+  trailingCreditsUsd: number;
   activations: FundingActivation[];
 }
 
@@ -44,17 +48,26 @@ const EMPTY: Omit<FundingSummary, 'configured'> = {
   totalActivatedUsd: 0,
   byOperatorUsd: 0,
   byAgentUsd: 0,
+  trailingCreditsUsd: 0,
   activations: [],
 };
 
 const round6 = (n: number): number => Math.round(n * 1e6) / 1e6;
 
-export function summarizeFunding(account: string, rows: Omit<FundingActivation, 'by'>[]): Pick<FundingSummary, 'totalActivatedUsd' | 'byOperatorUsd' | 'byAgentUsd' | 'activations'> {
+export function summarizeFunding(
+  account: string,
+  rows: Omit<FundingActivation, 'by'>[],
+  nowMs: number = Date.now(),
+): Pick<FundingSummary, 'totalActivatedUsd' | 'byOperatorUsd' | 'byAgentUsd' | 'trailingCreditsUsd' | 'activations'> {
   const activations = rows
     .map((r) => ({ ...r, by: (r.from.toLowerCase() === account.toLowerCase() ? 'agent' : 'operator') as FundingActivation['by'] }))
     .sort((a, b) => b.blockNumber - a.blockNumber);
   const sum = (by?: FundingActivation['by']) => round6(activations.filter((a) => !by || a.by === by).reduce((s, a) => s + a.amountUsd, 0));
-  return { activations, totalActivatedUsd: sum(), byOperatorUsd: sum('operator'), byAgentUsd: sum('agent') };
+  const cutoffMs = nowMs - 86_400_000;
+  const trailingCreditsUsd = round6(
+    activations.filter((a) => a.at !== null && Date.parse(a.at) >= cutoffMs).reduce((s, a) => s + a.amountUsd, 0),
+  );
+  return { activations, totalActivatedUsd: sum(), byOperatorUsd: sum('operator'), byAgentUsd: sum('agent'), trailingCreditsUsd };
 }
 
 /**

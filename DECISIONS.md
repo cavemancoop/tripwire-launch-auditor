@@ -2,6 +2,24 @@
 
 Standing choices that aren't obvious from the code. Newest first.
 
+## Dashboard's budget display fixed to match the real gate (2026-09-16, same night)
+
+Caught before Cooper went offline: `apps/api/src/budget-display.ts` is a
+deliberately duplicated read-only mirror of the worker's gate (same treatment
+as `merkle.ts`) — wiring property 2 into the worker did **not** update it, so
+the dashboard would have kept showing a flat `dailyCapUsd: 5` while the real
+gate used the accrual-derived figure. At the moment this was caught the two
+happened to agree (the $20 activation's 50% share, $10, is still above the
+flat $5 cap) — but ~24h after that single activation, the real cap drops to
+$0 while the dashboard would have kept saying $5, unexplained, with nobody
+watching for the next 10 days.
+
+**Fixed:** `budgetDisplay` takes an optional `creditShareUsd` and adds
+`credit_share` as a fourth candidate, mirroring `dailyDeepdiveBudget` exactly.
+`/v1/lifecycle` computes it by reusing `/v1/funding`'s already-cached on-chain
+scan (`trailingCreditsUsd` added to `FundingSummary`) rather than a second RPC
+read. Absent → identical to previous behavior (existing tests unchanged).
+
 ## Property 2 wired in: daily budget follows on-chain accrual (2026-09-16)
 
 **Cooper's call:** now that funding is human-gated (he decides when/how much
