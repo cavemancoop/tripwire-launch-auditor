@@ -2,6 +2,71 @@
 
 Standing choices that aren't obvious from the code. Newest first.
 
+## det_v0.1: promote four cells, hold SELL_IMPAIRED (2026-09-17)
+
+**Decision.** Applied 4 of the 6 rates from the 2026-09-09 re-featured backfill
+to det_v0.1's `biasOverride` (`LIQ_IMPAIRED@24h`, `DRAWDOWN_80@24h`,
+`TRADING_ALIVE@24h`; `INSIDER_EXIT@6h/@24h` unchanged from the 2026-09-08
+backfill, which that refeature run excluded) and wired `det_v0.1` into
+`assemble.ts` so it's built and persisted alongside `det_v0` on every launch
+report. `SELL_IMPAIRED@1h/@24h` — measured at ~96% true by that same
+backfill — was deliberately left out of `biasOverride` and still reads
+det_v0's original hand-set prior.
+
+**Why.** `det_v0` is negative-Brier-Skill on every live cell (confirmed via
+`/v1/benchmark`: worst is `SELL_IMPAIRED@1h` at -9.66). `det_v0.1` was
+designed and coded for exactly this (checkpoint §8.3, scored as its own
+forecaster so "both run live and the tuning is visible" per the code
+comment) but was never wired into the report pipeline. Four of the five
+newly-measured cells barely move from det_v0's existing prior and aren't
+controversial. SELL_IMPAIRED is different: the 96% figure only became
+measurable because the same backfill run fixed a wrong-pool quote bug that
+had previously contaminated this cell entirely (`resolve-sell-impaired.ts` /
+`primary-pool.ts`), and n=53 (~2 negative cases) can't rule out a residual
+artifact in that same resolver. Re-running the identical code path at a
+bigger sample would be the same unverified claim asserted louder, not
+independent confirmation.
+
+**The queued follow-up, and what it actually needs to deliver validation.**
+`cohort-extraction` (a separate ~3,500-token dataset at
+`~/cohort-extraction`, built for peak-market-cap bucketing from Dune trade
+data — unrelated purpose) is a plausible future source of an independent
+check, but it computes nothing about sell-impairment today and pressure-test
+review (Opus 4.8, 2026-09-16/17) surfaced the conditions that actually make
+it useful rather than illusory:
+- **Independent pool selection, not a port.** Any sell-impairment check built
+  on the cohort must *re-derive* pool selection on its own, then treat the
+  already-fixed TS resolver as a cross-check reference, not a dependency —
+  do both implementations agree on which pool, for a sample of tokens?
+  Copying `resolve-sell-impaired.ts`'s logic wholesale (the natural, tempting
+  move — it's the known-good reference) would silently reintroduce the exact
+  correlated-error risk this is meant to escape.
+- **A Dune-trade-history label and the live-RPC 96% are different
+  operationalizations on different substrates**, not two routes to the same
+  number — if they disagree, that alone won't say which is wrong (a Dune
+  trade record can't see a reverted sell the way an `eth_call` simulation
+  can). The real gold standard stays a small (~100-token) ground-truth audit:
+  simulate the sell against actual historical pool/router state at the
+  launch-window block and compare against both labels.
+- **The oft-cited "~140 non-impaired tokens at 4%" is conditional, not free.**
+  It assumes the cohort's base rate matches det_v0's live input population.
+  If the cohort's inclusion criterion (enough Dune trade history to compute a
+  VWAP bucket) systematically excludes fast-dying, thin-history tokens —
+  plausibly correlated with sell-impairment — the measured rate describes
+  "tokens that survived into a bucket," not launches generally.
+- **§A20 may not actually block this.** §A20 is a bucket-*label* fix (which
+  SUCCESS/F1/F2 a token lands in); a sell-impairment check is a different
+  label over the same token set. If §A20 doesn't change cohort *membership*
+  (only re-assigns bucket within it), the sell-check extraction can run in
+  parallel with the §A20 pressure test — only a bucket-*stratified*
+  discrimination analysis would need §A20 settled first. Confirm which,
+  before treating this as a hard serial dependency.
+
+**Consequence.** `det_v0.1` starts accumulating its own live Brier Skill
+Score immediately. Nothing changes for what the public feed posts —
+`telegram/poster.ts` still hardcodes `det_v0` — until that live data is
+reviewed and a separate decision is made to switch.
+
 ## Wording pass applied — public copy now matches what's built (2026-09-16, later)
 
 Cooper: "all yes" to every item in `docs/WORDING-PASS-2026-09-16.md`. Applied

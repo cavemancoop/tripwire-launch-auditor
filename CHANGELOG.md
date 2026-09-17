@@ -1692,3 +1692,33 @@ CREDIT activation into the agent's wallet, even with balance remaining.
 ### Verify
 - `git diff 9339f17 d59b531 -- README.md launch-auditor-spec-v0.2.md apps/web/public/index.html`
 
+## 2026-09-17 — det_v0.1: four cells promoted, wired for parallel scoring; SELL_IMPAIRED held
+
+### Added
+- `packages/scoring/weights/det_v0_1.json`: `LIQ_IMPAIRED@24h`, `DRAWDOWN_80@24h`,
+  `TRADING_ALIVE@24h` `biasOverride` updated to the 2026-09-09 re-featured
+  backfill's rates (n grew 144/102/79 -> 194/131/204). `INSIDER_EXIT@6h/@24h`
+  unchanged (that backfill excluded INSIDER_EXIT). `SELL_IMPAIRED@1h/@24h`
+  deliberately NOT added despite being newly measurable (~96%, n~50) — see
+  DECISIONS.md.
+- `apps/worker/src/report/assemble.ts`: `det_v0.1` now built and persisted
+  alongside `det_v0`/`heuristic_v1` for every launch report — it accumulates
+  its own live Brier Skill Score without touching what's posted to the public
+  feed (`telegram/poster.ts` is unchanged, still `det_v0` only).
+- `packages/db/prisma/schema.prisma` + migration
+  `20260917042039_m10_det_v0_1_forecaster_kind`: `ForecasterKind` enum gains
+  `det_v0_1 @map("det_v0.1")` (Postgres enum values can't contain a literal
+  dot). Applied automatically on the next worker deploy — `prisma migrate
+  deploy` already runs in the worker's start command, no manual DB step
+  needed.
+
+### Fixed
+- `packages/scoring/test/det-v01.test.ts`: `TRADING_ALIVE@24h` bias assertion
+  updated `-1.016` -> `-0.972` to match the new intercept.
+
+### Verify
+- `pnpm verify` green (48 files / 381 tests, prisma schema valid, typecheck
+  clean).
+- After deploy: `curl -s $API/v1/benchmark` should show a `det_v0.1` row
+  starting to accumulate `n` once T+10m reports and their outcomes resolve.
+

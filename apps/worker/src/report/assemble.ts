@@ -1,6 +1,6 @@
 import { getChainConfig } from '@launch-auditor/chain';
 import { prisma } from '@launch-auditor/db';
-import { detV0, heuristicV1, type FeatureInputs, type OutcomeKey } from '@launch-auditor/scoring';
+import { detV0, detV0_1, heuristicV1, type FeatureInputs, type OutcomeKey } from '@launch-auditor/scoring';
 import type { Hex, PublicClient } from 'viem';
 import { loadEnv } from '../env';
 import {
@@ -83,8 +83,10 @@ export function toFeatureInputs(
 }
 
 /**
- * Build signed + validated det_v0 and heuristic_v1 report drafts for a launch,
- * pinned to the T+10m block. Not yet persisted.
+ * Build signed + validated det_v0, det_v0.1 and heuristic_v1 report drafts for
+ * a launch, pinned to the T+10m block. Not yet persisted. det_v0.1 is scored
+ * alongside det_v0 but is not (yet) the forecaster posted to the public feed —
+ * see DECISIONS.md.
  */
 export async function buildLaunchReports(
   client: Pick<PublicClient, 'getBlock'>,
@@ -117,6 +119,7 @@ export async function buildLaunchReports(
   const forecasters: { name: string; version: string; probs: Partial<Record<OutcomeKey, number>> }[] = [
     { name: 'heuristic_v1', version: 'v1', probs: heuristicV1(inputs).probabilities },
     { name: 'det_v0', version: detV0(inputs).version, probs: detV0(inputs).probabilities },
+    { name: 'det_v0.1', version: detV0_1(inputs).version, probs: detV0_1(inputs).probabilities },
   ];
 
   const drafts: ReportDraft[] = [];

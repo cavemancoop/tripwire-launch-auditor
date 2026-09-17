@@ -62,7 +62,7 @@ describe('det_v0.1', () => {
     }
     // mergeDetV01 puts the override into the bias, not the weights
     const merged = mergeDetV01();
-    expect(merged.outcomes['TRADING_ALIVE@24h']!.bias).toBe(-1.016);
+    expect(merged.outcomes['TRADING_ALIVE@24h']!.bias).toBe(-0.972);
     expect(merged.outcomes['SELL_IMPAIRED@1h']!.bias).toBe(
       DET_V0_WEIGHTS.outcomes['SELL_IMPAIRED@1h']!.bias,
     );
