@@ -1,4 +1,4 @@
-# Launch Auditor v0.2 — Precommitted Exit-Risk Oracle for Robinhood Chain
+# Tripwire Launch Auditor v0.2 — Precommitted Exit-Risk Oracle for Robinhood Chain
 
 Supersedes v0.1. Scoped to a seven-day Build Week entry that doubles as a demand experiment. Everything cut from v0.1 is listed in §11 with the reason.
 
@@ -52,7 +52,7 @@ A forecaster "beats" a baseline only with a statistically significant AUROC gap 
 
 ### 3.1 Two lanes (spam defense)
 - Index lane, every launch: event-derived features only; no simulation, no LLM, no external API calls beyond RPC and Blockscout. Cost per launch ≈ 0. Per-creator quota: after 5 launches by one creator in 24h, further launches are indexed but not scored.
-- Qualified lane: launches that reach ≥ 2,000 USD liquidity-equivalent or ≥ 25 unique buyers within 10 minutes, or any paid request. Runs simulation (non-launchpad), external scanner fetch, and optionally the LLM deep-dive.
+- Qualified lane: launches that reach ≥ 25 unique buyers within 10 minutes. Runs simulation (non-launchpad), external scanner fetch, and optionally the LLM deep-dive. **Implementation note (2026-09-17):** the buyer-count gate is live; the ≥ 2,000 USD liquidity-equivalent leg and the "any paid request qualifies" leg below are spec'd but not yet wired — `POST /v1/assess/{token}` currently reruns `det_v0`/`heuristic_v1` on already-stored features rather than promoting the launch to the qualified lane.
 
 ### 3.2 Creator cluster (v1, deliberately narrow)
 A wallet is in the creator cluster if any of: it is the creator; it bought in the launch block (Noxa restricts launch-block buys to the creator, so any such buy is creator-controlled); it received tokens directly from the creator; its first-ever inbound transaction on 4663 came from the creator. Shared bridge or CEX funding source is not association (false-cluster risk). Each cluster membership carries the evidence transaction hash. Cluster confidence is published.

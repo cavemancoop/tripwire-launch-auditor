@@ -54,6 +54,24 @@ code {
 .brand { display: flex; align-items: center; gap: 0.75rem; }
 .brand-mark { font-size: 1.6rem; color: var(--accent); }
 .brand h1 { font-size: 1.15rem; margin: 0; letter-spacing: 0.01em; }
+
+.hero-intro {
+  max-width: 1180px;
+  margin: 1.5rem auto 0;
+  padding: 0 2rem;
+}
+.hero-sentence {
+  font-size: 1.05rem;
+  line-height: 1.55;
+  color: var(--text);
+  max-width: 62ch;
+  margin: 0;
+}
+.hero-disclaimer {
+  margin: 0.6rem 0 0;
+  color: var(--text-faint);
+  font-size: 0.75rem;
+}
 .tagline { margin: 0.1rem 0 0; color: var(--text-dim); font-size: 0.8rem; }
 
 .api-config {
@@ -123,6 +141,10 @@ main {
   max-width: 68ch;
   line-height: 1.5;
   font-size: 0.85rem;
+}
+.panel-callout {
+  color: var(--accent);
+  font-weight: 500;
 }
 
 .metric-grid {

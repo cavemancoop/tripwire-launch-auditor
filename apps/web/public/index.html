@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Launch Auditor</title>
+<title>Tripwire Launch Auditor</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
@@ -14,7 +14,7 @@
   <div class="brand">
     <span class="brand-mark">◈</span>
     <div>
-      <h1>Launch Auditor</h1>
+      <h1>Tripwire Launch Auditor</h1>
       <p class="tagline">Precommitted exit-risk oracle &middot; Robinhood Chain (4663)</p>
     </div>
   </div>
@@ -25,6 +25,16 @@
     <span id="api-status" class="status-dot" title="api reachability"></span>
   </div>
 </header>
+
+<div class="hero-intro">
+  <p class="hero-sentence">
+    Tripwire watches every new token launch on Robinhood Chain, publishes exact
+    probabilities for how it could go wrong, and signs &amp; timestamps that
+    forecast on-chain before anyone can know the outcome &mdash; then grades
+    itself in public against what actually happened.
+  </p>
+  <p class="hero-disclaimer">Independent research tooling &mdash; not affiliated with Robinhood Markets.</p>
+</div>
 
 <main>
 
@@ -82,7 +92,8 @@
 
   <section class="panel" id="panel-benchmark">
     <h2><span class="panel-index">04</span> Benchmark</h2>
-    <p class="panel-sub">AUROC / Brier Skill vs. baselines, per outcome &middot; horizon &middot; forecaster. Minimum <span id="min-metrics">100</span> resolved to show a metric, <span id="min-claims">200</span> (with &ge;30 positives) to claim a beat. "+N retro" = backfill launches folded into the all-inclusive column beyond what live traffic alone has resolved. "Beats X" means the ranking is statistically distinguishable from X's (DeLong test) &mdash; not that the probability itself is well-calibrated; Brier Skill is shown alongside for that.</p>
+    <p class="panel-sub">AUROC / Brier Skill vs. baselines, per outcome &middot; horizon &middot; forecaster. Minimum <span id="min-metrics">100</span> resolved to show a metric, <span id="min-claims">200</span> (with &ge;30 positives) to claim a beat. "Beats X" means the ranking is statistically distinguishable from X's (DeLong test) &mdash; not that the probability itself is well-calibrated; Brier Skill is shown alongside for that.</p>
+    <p class="panel-sub panel-callout">This benchmark contains only live, precommitted forecasts. No backfilled rows.</p>
     <div class="table-wrap" id="benchmark-wrap"><p class="empty">loading&hellip;</p></div>
   </section>
 

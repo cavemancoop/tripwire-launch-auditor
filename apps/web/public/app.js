@@ -139,7 +139,7 @@ function renderMetabolism(lifecycle) {
   grid.appendChild(metric('Credits accrued', accrual ? `${usd(accrual.perHour)}/hr` : 'n/a', accrual ? `over ${accrual.hours.toFixed(1)}h of samples` : 'not enough samples yet'));
   grid.appendChild(metric('Spend per report', spendPerReport !== null ? usd(spendPerReport, 4) : 'n/a', `${estimator.requests24h} requests, trailing 24h`));
   grid.appendChild(metric('Rotations', String(rotations), `${revocations} revocation${revocations === 1 ? '' : 's'}`));
-  grid.appendChild(metric('Billing status', latest?.billingStatus ?? 'n/a', estimator.meanAbsDiscrepancyPct !== null ? `mean |discrepancy| ${estimator.meanAbsDiscrepancyPct}%` : 'no reconciled epochs yet'));
+  grid.appendChild(metric('Billing status', latest?.billingStatus ?? 'n/a', latest?.newState ?? 'no reading yet'));
 
   const b = budget;
   document.getElementById('budget-body').innerHTML = `

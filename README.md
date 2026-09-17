@@ -1,4 +1,4 @@
-# Launch Auditor
+# Tripwire Launch Auditor
 
 Precommitted exit-risk oracle for Robinhood Chain (chain 4663). For every new token
 launch it computes deterministic manipulation / exit-risk features within seconds,
@@ -20,7 +20,7 @@ Full spec: [`launch-auditor-spec-v0.2.md`](./launch-auditor-spec-v0.2.md).
 Text for an external submission form or one-pager — stays inside what's
 actually provable today.
 
-> Launch Auditor watches every new token on Robinhood Chain, computes
+> Tripwire Launch Auditor watches every new token on Robinhood Chain, computes
 > deterministic manipulation and exit-risk features within seconds, and
 > publishes separate probabilities for five mechanically defined outcomes —
 > insider exit, sell impairment, liquidity impairment, 80% drawdown, still

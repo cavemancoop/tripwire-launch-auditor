@@ -1,4 +1,4 @@
-# Launch Auditor — demo walkthrough
+# Tripwire Launch Auditor — demo walkthrough
 
 For the team. A 5–10 minute guided path through what's live, plus how to check
 any of it yourself. Every number below is real and pulled live on
@@ -71,9 +71,11 @@ checked with a DeLong significance test. Right now:
   Brier Skill is shown next to it for exactly that reason, and it is negative
   on every cell in the table right now, `det_v0` included. The forecaster
   discriminates better than chance in places; its stated probabilities are not
-  yet trustworthy at face value. Recalibrating the intercepts to observed base
-  rates (`det_v0.1`, spec'd, not yet applied) is the fix, tracked in
-  `DECISIONS.md`.
+  yet trustworthy at face value. `det_v0.1` (recalibrated intercepts on 4 of 5
+  measured cells; `SELL_IMPAIRED` deliberately held back pending independent
+  validation — see `DECISIONS.md`) is now live and scoring in parallel as of
+  2026-09-17, but has zero graded outcomes yet — it needs its own track record
+  before the public feed switches to it, not a promise, a still-open measurement.
 - `SELL_IMPAIRED` is intentionally excluded from claims — a fixed $100 test
   sell against median ~$1k pools is almost always "impaired" by construction;
   it's shown as a descriptive liquidity-depth statistic, not a forecast.
@@ -94,15 +96,30 @@ discipline.
 - **Proven, live, checkable by anyone:** every committed report existed before
   its outcome; the scorer is open-source and reproducible; the agent's Orbio
   funding is exactly one on-chain transaction, and every dollar since has been
-  the agent's own key, spent and tracked in the open.
+  the agent's own key, spent and tracked in the open. The benchmark contains
+  **only** live, precommitted forecasts — zero backfilled rows folded in. That's
+  the rarer property to have and the reason it stays that way: importing
+  retrospective data would dilute a "no cherry-picking" claim that the live
+  rows alone already prove, not strengthen it.
 - **Proven, but narrow:** `det_v0` beats a real baseline on exactly one cell
   (`TRADING_ALIVE@24h`); several more beat a weaker heuristic baseline. Most of
   the eleven cells don't clear the claim bar yet, mainly on sample size for
   the rarer outcomes.
 - **Not yet true, in progress:** `det_v0`'s probabilities are not well
-  calibrated (negative Brier Skill everywhere) — a recalibrated version
-  (`det_v0.1`) exists as a spec'd fix, not yet applied, so nobody should read
-  "beats base_rate" as "is accurate."
+  calibrated (negative Brier Skill everywhere) — `det_v0.1` is live and
+  accumulating its own track record (above), so nobody should read "beats
+  base_rate" as "is accurate" until that's measured.
+- **An unmet spec promise, and why it's staying unmet for now:** the spec
+  commits to fitting `det_v1` — a real re-fit of the model's weights, not
+  just intercept recalibration — once resolved outcomes exceed 300 for a
+  cell. Six of the seven outcome/horizon cells now qualify (up to 3,452
+  resolved on `TRADING_ALIVE@24h`). It has not been built. Not for lack of
+  data: fitting `det_v1` on the same live outcomes it would then be scored
+  against makes the benchmark in-sample and meaningless. Doing it honestly
+  means fitting on data up to some time T and scoring only forecasts issued
+  after T — which means `det_v1` would arrive with zero graded outcomes,
+  exactly where `llm_deepdive_v0` sits today. The unmet promise is the
+  methodologically disciplined outcome here, not an oversight.
 - **A real, disclosed constraint, not a bug:** the daily deep-dive budget is
   now literally a function of CREDIT activated into the agent's account in the
   trailing 24 hours (spec §0.1 property 2, wired in 2026-09-16). That's a
