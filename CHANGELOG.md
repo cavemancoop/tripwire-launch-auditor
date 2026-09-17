@@ -1670,3 +1670,25 @@ CREDIT activation into the agent's wallet, even with balance remaining.
 - worker log on a keep-warm fire: `[metabolism] activated $X.XX CREDIT ->
   AI balance ... — keep-warm: ...h since last activation >= 20h`.
 
+## 2026-09-16 (later still) — wording pass applied; style guide added
+
+### Changed (public copy, Cooper approved all 10 items)
+- README.md / spec: "four" -> "five outcomes, eleven cells"; property 2
+  rewritten to describe the live on-chain CREDIT mechanism instead of the
+  old unbuilt claim; property 3 rewritten (wallet-signed key never expires,
+  vs. the old "keys drain, rotate" language); "one-time browser sign-in —
+  the ONLY interactive step, ever" corrected to "no browser, no session,
+  ever"; fork-and-run's "no top-up" clarified to "no top-up from a fiat
+  rail" with a pointer to the dashboard's Funding disclosure.
+- Dashboard benchmark panel: added what "beats X" does and doesn't mean
+  (DeLong-significant ranking, not calibration).
+- Full before/after table in DECISIONS.md.
+
+### Added
+- `docs/STYLE-GUIDE-2026-09-16.md`: visual identity from the dashboard's
+  existing tokens, the accent-color inconsistency flagged (not fixed),
+  a tailored video-explainer prompt.
+
+### Verify
+- `git diff 9339f17 d59b531 -- README.md launch-auditor-spec-v0.2.md apps/web/public/index.html`
+

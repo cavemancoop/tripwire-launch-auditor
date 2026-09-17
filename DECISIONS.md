@@ -2,6 +2,32 @@
 
 Standing choices that aren't obvious from the code. Newest first.
 
+## Wording pass applied — public copy now matches what's built (2026-09-16, later)
+
+Cooper: "all yes" to every item in `docs/WORDING-PASS-2026-09-16.md`. Applied
+to README.md, the spec, and the dashboard's benchmark panel (`d59b531`):
+
+| # | What changed | Where |
+|---|---|---|
+| 1 | "four" -> "five mechanically-defined outcomes (eleven outcome×horizon cells)" | README §1, spec §0 |
+| 2 | Added: "every dollar of compute it has ever spent came from an on-chain CREDIT activation" | README §1 (non-claims paragraph) |
+| 3 | "no card, no top-up, no payment rail" -> "...no top-up **from a fiat rail**...", + a pointer to the dashboard's Funding panel | README §8.1 |
+| 4 | Property 2 rewritten from the unbuilt "throughput follows token activity and holdings" to the actual live mechanism, `min(dailyCap, 50% of trailing-24h CREDIT activated, balance)`, with the funding-transparency line | spec §0.1 |
+| 6 | "one-time browser sign-in — the ONLY interactive step, ever" -> "no browser, no session, ever" (wallet-signed key), old OAuth path kept as a documented fallback | README §8.1 |
+| 7 | Property 3 rewritten: "keys drain, rotate at the next accrual" (never true of the wallet-signed key) -> "the key is a standing wallet signature... nothing expires" | spec §0.1 |
+| 9 | Added a line explaining "beats X" = DeLong-significant ranking, not calibration — Brier Skill shown alongside for that reason | dashboard benchmark panel (`index.html`) |
+| 5, 10 | No code/copy change needed — #5's sentence was already absent from current copy (only in the frozen field report, left as history); #10 was framing, not a factual claim | — |
+| 8 | Deferred as already scoped — M10 (DEMO.md, licence, public repo) is its own milestone, not a copy edit | — |
+
+**Deliberately not touched:** the frozen field-report snapshot in
+`docs/review-pack/` (explicitly a historical artifact) and the separately
+published field-report Claude Artifact — updating the latter is a distinct
+publish action, not a repo commit, and wasn't asked for.
+
+Same commit added `docs/STYLE-GUIDE-2026-09-16.md` (visual identity, pulled
+from the dashboard's existing CSS tokens, flags the accent-color mismatch with
+the field-report artifact) and a tailored video-explainer prompt.
+
 ## Found and fixed: property 2 could deadlock a real balance to $0 forever (2026-09-16, same night)
 
 **Found answering Cooper's own question** ("how much CREDIT do we need for
