@@ -68,4 +68,44 @@ describe('POST /mcp', () => {
     expect(body.result?.isError ?? Boolean(body.error)).toBe(true);
     await app.close();
   });
+
+  // 2026-09-16: request_deepdive spends the agent's own Orbio balance, so it
+  // needs the same x-api-key design partners send to the HTTP endpoint.
+  describe('request_deepdive — requires a design-partner key', () => {
+    const call = (headers: Record<string, string>, enqueueDeepdive?: never) =>
+      buildServer({ env: { designPartnerApiKeys: ['partner-key-1'] } as never, enqueueDeepdive }).inject({
+        method: 'POST',
+        url: '/mcp',
+        headers,
+        payload: {
+          jsonrpc: '2.0',
+          id: 4,
+          method: 'tools/call',
+          params: { name: 'request_deepdive', arguments: { token: '0x00000000000000000000000000000000dec0ded1' } },
+        },
+      });
+    // never enqueued when unauthed — passing it would throw (no Redis in tests) if the lock failed open
+    const unreachable = (async () => {
+      throw new Error('must not enqueue without a valid key');
+    }) as never;
+
+    it('refuses without the header', async () => {
+      const res = await call(MCP_HEADERS, unreachable);
+      const body = parseSse(res.payload);
+      expect(JSON.parse(body.result!.content![0]!.text).error).toMatch(/x-api-key/);
+    });
+
+    it('refuses a wrong key', async () => {
+      const res = await call({ ...MCP_HEADERS, 'x-api-key': 'wrong' }, unreachable);
+      const body = parseSse(res.payload);
+      expect(JSON.parse(body.result!.content![0]!.text).error).toMatch(/x-api-key/);
+    });
+
+    it('enqueues with a valid key', async () => {
+      const enqueue = (async () => ({ id: 'job-1' })) as never;
+      const res = await call({ ...MCP_HEADERS, 'x-api-key': 'partner-key-1' }, enqueue);
+      const body = parseSse(res.payload);
+      expect(JSON.parse(body.result!.content![0]!.text).queued).toBe(true);
+    });
+  });
 });

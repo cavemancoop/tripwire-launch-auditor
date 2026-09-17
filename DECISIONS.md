@@ -2,6 +2,17 @@
 
 Standing choices that aren't obvious from the code. Newest first.
 
+## Locked the two spending endpoints (2026-09-16)
+
+`POST /v1/deepdive/{token}` and the MCP `request_deepdive` tool were open to
+anyone and each accepted call spends the agent's own Orbio balance (up to
+$0.20). With a real balance now, an anonymous caller could exhaust the $5/day
+cap. Both now require the `x-api-key` header design partners already send
+(`checkDesignPartner`, previously echoed but never enforced). `/v1/assess`
+stays free — det_v0/heuristic only, no LLM spend. `GET /v1/report/:token`
+still shows whatever `llm_deepdive_v0` result already exists for free; only
+*triggering* a new run is gated.
+
 ## Live on the agent's own account; epoch rules made lag-aware (2026-09-16)
 
 **Funding landed as an activation, not a transfer.** Cooper activated 20 CREDIT

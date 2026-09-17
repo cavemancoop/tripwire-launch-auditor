@@ -1586,3 +1586,15 @@ separation from putting a session on Railway.
 - `curl -s $API/v1/funding` lists activation #58 (20 CREDIT, operator).
 - Dashboard Metabolism panel shows AI balance, Funding card with the tx link.
 
+## 2026-09-16 — lock the spending endpoints
+
+### Changed
+- `POST /v1/deepdive/:token` and MCP `request_deepdive` now require a valid
+  `x-api-key` (401 / a JSON error otherwise). `/v1/assess` unchanged (free).
+
+### Verify
+- `pnpm verify` green (11 new/updated tests: refuse no-key, refuse wrong-key,
+  accept valid key, for both HTTP and MCP).
+- `curl -sI -X POST $API/v1/deepdive/0x...` -> 401 without a key; 202 with
+  `-H "x-api-key: $DESIGN_PARTNER_API_KEYS"`.
+

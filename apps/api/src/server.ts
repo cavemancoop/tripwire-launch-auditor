@@ -489,14 +489,20 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
   });
 
   // spec §9 — `POST /v1/deepdive/{token}`: enqueue an on-demand
-  // `llm_deepdive_v0` run. Free during the contest; x402 gating is deferred
-  // (spec §9: payments only if time remains after the free endpoints).
+  // `llm_deepdive_v0` run. x402 gating is deferred (spec §9), but this spends
+  // the agent's own Orbio balance per call — 2026-09-16, once that balance held
+  // real money, an unauthenticated caller could exhaust the daily cap. Requires
+  // the same `x-api-key` design partners already send; `/v1/assess` stays free
+  // (det_v0/heuristic only, no LLM spend).
   app.post('/v1/deepdive/:token', async (req, reply) => {
     const { token } = req.params as { token: string };
     if (!HEX_ADDR.test(token)) {
       return reply.code(400).send({ error: 'token must be a 20-byte hex address' });
     }
     const auth = checkDesignPartner(req.headers['x-api-key'] as string | undefined, env.designPartnerApiKeys);
+    if (!auth.designPartner) {
+      return reply.code(401).send({ error: 'x-api-key required for /v1/deepdive — this spends the agent\'s Orbio balance' });
+    }
     try {
       const { id } = await getEnqueueDeepdive()({ tokenAddress: token.toLowerCase(), trigger: 'on_demand' });
       return reply
@@ -596,6 +602,7 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
     readBenchmark,
     enqueueDeepdive: getEnqueueDeepdive,
     enqueueAssess: getEnqueueAssess,
+    designPartnerApiKeys: env.designPartnerApiKeys,
   });
 
   return app;

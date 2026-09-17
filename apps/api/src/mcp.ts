@@ -23,12 +23,14 @@ export interface McpDeps {
   readBenchmark: BenchmarkReader;
   enqueueDeepdive: () => DeepdiveEnqueuer;
   enqueueAssess: () => AssessEnqueuer;
+  /** design-partner keys accepted for the spending tool (request_deepdive) */
+  designPartnerApiKeys: string[];
 }
 
 const TOKEN_ADDR = z.string().regex(/^0x[0-9a-fA-F]{40}$/, 'must be a 20-byte hex address');
 const text = (value: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(value) }] });
 
-function buildMcpServer(deps: McpDeps): McpServer {
+function buildMcpServer(deps: McpDeps, authed: boolean): McpServer {
   const server = new McpServer({ name: 'launch-auditor', version: '0.0.0' });
 
   server.tool(
@@ -53,9 +55,13 @@ function buildMcpServer(deps: McpDeps): McpServer {
 
   server.tool(
     'request_deepdive',
-    'Trigger an on-demand llm_deepdive_v0 run for a qualified-lane token (free during the contest).',
+    'Trigger an on-demand llm_deepdive_v0 run for a qualified-lane token. Spends the ' +
+      "agent's Orbio balance; requires the x-api-key header on this MCP connection.",
     { token: TOKEN_ADDR },
     async ({ token }) => {
+      if (!authed) {
+        return text({ error: "x-api-key required for request_deepdive — this spends the agent's Orbio balance" });
+      }
       const { id } = await deps.enqueueDeepdive()({ tokenAddress: token.toLowerCase(), trigger: 'on_demand' });
       return text({ queued: true, token: token.toLowerCase(), jobId: id ?? null });
     },
@@ -66,7 +72,9 @@ function buildMcpServer(deps: McpDeps): McpServer {
 
 export function mountMcp(app: FastifyInstance, deps: McpDeps): void {
   app.post('/mcp', async (req, reply) => {
-    const server = buildMcpServer(deps);
+    const key = req.headers['x-api-key'] as string | undefined;
+    const authed = Boolean(key) && deps.designPartnerApiKeys.includes(key!);
+    const server = buildMcpServer(deps, authed);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     reply.hijack(); // the transport writes the response itself
     try {
