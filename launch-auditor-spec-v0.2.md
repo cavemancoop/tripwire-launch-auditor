@@ -4,15 +4,16 @@ Supersedes v0.1. Scoped to a seven-day Build Week entry that doubles as a demand
 
 ## 0. What it is, in one paragraph
 
-For every new token launch on Robinhood Chain, the agent computes a small set of deterministic manipulation and exit-risk features within seconds, publishes separate probabilities for four concrete, mechanically-defined outcomes, signs and commits the forecast on-chain before the outcome can be known, and grades every forecast later with an open-source scorer against those outcomes and against public baselines (base rate, a fixed heuristic, and existing scanners' scores). An LLM deep-dive, paid for with the agent's Orbio-funded key, runs on qualified launches and is scored as a separate forecaster so the dashboard shows whether the model adds discrimination over the heuristics. The agent claims, monitors, rotates and revokes its own OpenRouter key through the Orbio MCP. Revenue, if any, arrives over x402 in USDG at a plain address; there is no automated token purchase.
+For every new token launch on Robinhood Chain, the agent computes a small set of deterministic manipulation and exit-risk features within seconds, publishes separate probabilities for five concrete, mechanically-defined outcomes
+(eleven outcome×horizon cells in total), signs and commits the forecast on-chain before the outcome can be known, and grades every forecast later with an open-source scorer against those outcomes and against public baselines (base rate, a fixed heuristic, and existing scanners' scores). An LLM deep-dive, paid for with the agent's Orbio-funded key, runs on qualified launches and is scored as a separate forecaster so the dashboard shows whether the model adds discrimination over the heuristics. The agent claims, monitors, rotates and revokes its own OpenRouter key through the Orbio MCP. Revenue, if any, arrives over x402 in USDG at a plain address; there is no automated token purchase.
 
 What it claims: the forecast existed before the outcome; the scorer is reproducible; the comparison to baselines is public. What it does not claim: that it pays for itself, that no human touched the server, or that the analysis is correct because it is committed.
 
 ### 0.1 The Orbio-specific test (standing red-team check)
 "Would this demo work identically on a plain OpenRouter account with no token? If yes, it proves nothing about Orbio." The screener, commits and benchmark fail this test on their own; they are the work, not the proof. The demo therefore hinges on three properties only Orbio provides, and the dashboard leads with them:
 1. Zero-billing compute: any holder clones the repo, authorizes the MCP, and runs an instance with no card, top-up or payment rail (fork-and-run, §8.1).
-2. Credit-driven behavior: the daily deep-dive budget is a function of credits accrued in the trailing 24h; throughput visibly follows token activity and holdings, and the agent never holds or converts money to make that happen.
-3. Unattended continuity: keys drain, rotate at the next accrual, and the signed lifecycle log shows it.
+2. Credit-driven behavior: the daily deep-dive budget is spent from CREDIT activated into the agent's own on-chain account (spec §8, live 2026-09-16); every activation — who funded it and how much — is a public transaction (Funding, on the dashboard). Sizing the cap itself from trailing accrual, not a fixed number, is built and live: `min(dailyCap, 50% of CREDIT activated into the account in the trailing 24h, balance)`.
+3. Unattended continuity: the key is a standing wallet signature, not a session — nothing expires. The signed lifecycle log shows every state change; the only human action possible on the account is funding it, and every such action is a public transaction, not a credential grant.
 Money handling is minimized accordingly: x402 payments are optional and last in the build order.
 
 ## 1. Outcomes (versioned, deterministic, per horizon)

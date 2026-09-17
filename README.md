@@ -2,13 +2,16 @@
 
 Precommitted exit-risk oracle for Robinhood Chain (chain 4663). For every new token
 launch it computes deterministic manipulation / exit-risk features within seconds,
-publishes probabilities for four mechanically-defined outcomes, signs and commits the
+publishes probabilities for five mechanically-defined outcomes (eleven outcome×horizon
+cells in total), signs and commits the
 forecast on-chain **before** the outcome can be known, and later grades every forecast
 with an open-source scorer against those outcomes and against public baselines.
 
 What it claims: the forecast existed before the outcome; the scorer is reproducible;
 the baseline comparison is public. What it does **not** claim: that it pays for itself,
 that no human touched the server, or that a forecast is correct because it was committed.
+What it claims about the agent's own account: every dollar of compute it has ever spent came
+from an on-chain CREDIT activation, each one a public transaction (dashboard → Funding).
 
 Full spec: [`launch-auditor-spec-v0.2.md`](./launch-auditor-spec-v0.2.md).
 
@@ -157,7 +160,9 @@ pnpm db:migrate
 
 This is the property the Orbio red-team test (spec §0.1) actually checks: anyone
 holding $ORBIO can clone this repo, authorize once, and run their own instance —
-with **no card, no top-up, no payment rail**. Three steps, end to end:
+with **no card, no top-up from a fiat rail, no payment rail**. Three steps, end to end
+(this deployed instance's own funding is disclosed on the dashboard's Metabolism →
+Funding panel — see [DEMO.md](./DEMO.md)):
 
 ```bash
 # 1. clone + configure
@@ -170,8 +175,10 @@ cp .env.example .env
 # one on first run if it's blank)
 docker compose up -d && pnpm db:migrate
 
-# 2. one-time browser sign-in — the ONLY interactive step, ever
-pnpm orbio:auth
+# 2. no browser, no session, ever — the agent's API key is its own wallet's
+# signature. Set ORBIO_KEY_SOURCE=wallet and point GAS_WALLET_PRIVATE_KEY at a
+# wallet you control. (The original browser OAuth flow still exists as a
+# fallback: METABOLISM_SOURCE=mcp, then `pnpm orbio:auth`.)
 
 # 3. run everything
 pnpm start
@@ -182,8 +189,9 @@ outcome resolver, the deep-dive worker, the free-feed Telegram poster, a periodi
 benchmark snapshot, the API, and the dashboard — all from one command
 (`scripts/start.mjs`; no extra dependency, just child processes sharing this
 terminal). From here the agent mints and manages its own Orbio gateway key without
-further human input; see [Metabolism](#metabolism--orbio-mcp-client--lifecycle-runner--spend-ledger-m5b-1--m5b-2--m5b-3)
-below for what "without further human input" is currently bounded by.
+further human input — its key is a standing wallet signature, not a session, so
+nothing expires; see [Metabolism](#metabolism--orbio-mcp-client--lifecycle-runner--spend-ledger-m5b-1--m5b-2--m5b-3)
+below for what "without further human input" covers and doesn't.
 
 Open the dashboard at `http://localhost:3002` (`WEB_PORT`) once everything is up.
 
