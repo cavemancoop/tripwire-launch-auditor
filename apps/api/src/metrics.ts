@@ -16,6 +16,12 @@ export interface MetricsSnapshot {
    *  and rows resolved in the trailing 24h. A label with a growing due backlog
    *  and ~0 resolved is a starved benchmark cell. Optional so older readers work. */
   outcomes?: Array<{ label: string; pendingDue: number; deferred: number; resolved24h: number }>;
+  /** seconds since the newest det_v0 report was written (report generation stalled if this grows) */
+  newestDetReportAgeSec?: number | null;
+  /** launch -> report delay of that newest report (the T+10m job running behind if this grows) */
+  newestDetReportLagSec?: number | null;
+  /** share of launches from 1–2h ago that have a det_v0 report (coverage over eligible launches) */
+  detCoverage1to2h?: number | null;
 }
 
 export type MetricsReader = () => Promise<MetricsSnapshot>;
@@ -51,6 +57,21 @@ export const prismaMetricsReader: MetricsReader = async () => {
     }),
   ]);
 
+  const [newestDet, eligible, eligibleWithDet] = await Promise.all([
+    prisma.report.findFirst({
+      where: { forecaster: 'det_v0' },
+      orderBy: { createdAt: 'desc' },
+      select: { createdAt: true, launch: { select: { launchAt: true } } },
+    }),
+    prisma.launch.count({ where: { launchAt: { gte: new Date(now.getTime() - 2 * 3_600_000), lt: new Date(now.getTime() - 3_600_000) } } }),
+    prisma.launch.count({
+      where: {
+        launchAt: { gte: new Date(now.getTime() - 2 * 3_600_000), lt: new Date(now.getTime() - 3_600_000) },
+        reports: { some: { forecaster: 'det_v0' } },
+      },
+    }),
+  ]);
+
   const count = (rows: Array<{ label: string; _count: { _all: number } }>, label: string): number =>
     rows.find((r) => r.label === label)?._count._all ?? 0;
   const labels = [...new Set([...due, ...deferred, ...resolved].map((r) => r.label))].sort();
@@ -62,6 +83,12 @@ export const prismaMetricsReader: MetricsReader = async () => {
     idsOrPhantomFlagged: Boolean(lifecycle?.idsMismatch) || Boolean(epoch?.phantom),
     launches24h,
     reports24h,
+    newestDetReportAgeSec: age(now, newestDet?.createdAt),
+    newestDetReportLagSec:
+      newestDet?.createdAt && newestDet.launch?.launchAt
+        ? (newestDet.createdAt.getTime() - newestDet.launch.launchAt.getTime()) / 1000
+        : null,
+    detCoverage1to2h: eligible > 0 ? eligibleWithDet / eligible : null,
     outcomes: labels.map((label) => ({
       label,
       pendingDue: count(due, label),
@@ -103,6 +130,12 @@ export function formatPrometheus(m: MetricsSnapshot): string {
   lines.push('# TYPE launch_auditor_metabolism_state gauge');
   for (const s of METABOLISM_STATES) {
     lines.push(`launch_auditor_metabolism_state{state="${s}"} ${m.metabolismState === s ? 1 : 0}`);
+  }
+
+  if (m.newestDetReportAgeSec !== undefined) {
+    gauge('launch_auditor_det_report_age_seconds', 'Seconds since the newest det_v0 report was written', m.newestDetReportAgeSec);
+    gauge('launch_auditor_det_report_lag_seconds', 'Launch-to-report delay of the newest det_v0 report', m.newestDetReportLagSec ?? null);
+    gauge('launch_auditor_det_coverage_1to2h', 'Share of launches from 1-2h ago with a det_v0 report', m.detCoverage1to2h ?? null);
   }
 
   const series = (name: string, help: string, pick: (o: NonNullable<MetricsSnapshot['outcomes']>[number]) => number): void => {

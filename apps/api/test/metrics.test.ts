@@ -36,6 +36,14 @@ describe('formatPrometheus', () => {
     expect(text).toContain('launch_auditor_commit_age_seconds NaN');
   });
 
+  it('emits report freshness, lag and coverage when provided', () => {
+    const text = formatPrometheus({ ...SNAPSHOT, newestDetReportAgeSec: 30, newestDetReportLagSec: 7200, detCoverage1to2h: 0 });
+    expect(text).toContain('launch_auditor_det_report_age_seconds 30');
+    expect(text).toContain('launch_auditor_det_report_lag_seconds 7200');
+    expect(text).toContain('launch_auditor_det_coverage_1to2h 0');
+    expect(formatPrometheus(SNAPSHOT)).not.toContain('det_report_age');
+  });
+
   it('emits per-label outcome backlog series only when provided', () => {
     expect(formatPrometheus(SNAPSHOT)).not.toContain('launch_auditor_outcomes_pending_due');
     const text = formatPrometheus({

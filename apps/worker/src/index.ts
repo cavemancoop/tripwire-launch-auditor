@@ -4,7 +4,7 @@ import {
   poolCreationSources,
   setGetLogsMaxRange,
 } from '@launch-auditor/chain';
-import { probeGetLogsRange } from '@launch-auditor/rpc-budget';
+import { getBudgetedClient, PRIORITY, probeGetLogsRange } from '@launch-auditor/rpc-budget';
 import type { PublicClient } from 'viem';
 import { runAlertLoop } from './alerts';
 import { startAssessWorker } from './assess';
@@ -109,7 +109,11 @@ async function main(): Promise<void> {
     console.log('[commit] loop disabled (COMMIT_REGISTRY_ADDRESS / GAS_WALLET_PRIVATE_KEY not set)');
   }
 
-  void runOutcomesLoop(client, signal);
+  // Outcomes get their own client at PRIORITY.outcomes. Until 2026-09-16 every
+  // loop shared the watcher-priority client, so raising resolver batch and
+  // concurrency competed as an equal with T+10m report generation instead of
+  // yielding to it (the documented order is watcher > commit > outcomes).
+  void runOutcomesLoop(getBudgetedClient(env.rpcUrl, { priority: PRIORITY.outcomes }), signal);
   // BENCHMARK_FILE, if set, must be an absolute path (or shared-relative-to-cwd
   // path both processes agree on) — leave it unset and runScorerLoop anchors to
   // the repo root, which is what the API's default also anchors to.
