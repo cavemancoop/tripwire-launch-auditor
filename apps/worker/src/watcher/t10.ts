@@ -289,6 +289,18 @@ export async function runT10ForLaunch(
   }
 }
 
+/**
+ * 2026-09-16: BullMQ workers default to concurrency 1 — undocumented here, so
+ * this ran one launch's T+10m job at a time. At ~4 launches/min that was
+ * marginal even before today's other RPC-scheduler changes added contention;
+ * once per-job latency rose, a backlog formed (the newest det_v0 report was
+ * for a launch 6.8h old while reports were still being written every few
+ * seconds — FIFO processing of an hours-deep queue, not a stall). Every job
+ * still goes through the shared PRIORITY.watcher client, so raising this
+ * lets the scheduler serve more of them concurrently at the top priority
+ * rather than one at a time; it does not change how they're prioritized
+ * against outcomes/deepdive/backfill.
+ */
 export function startFeaturesWorker(client: PublicClient): Worker {
   const connection = parseRedisUrl(loadEnv().redisUrl);
   return new Worker(
@@ -298,6 +310,6 @@ export function startFeaturesWorker(client: PublicClient): Worker {
         await runT10ForLaunch(client, job.data.launchId as string);
       }
     },
-    { connection },
+    { connection, concurrency: Number(process.env.FEATURES_CONCURRENCY || 8) },
   );
 }

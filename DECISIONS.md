@@ -2,6 +2,33 @@
 
 Standing choices that aren't obvious from the code. Newest first.
 
+## Report generation was serialized; fixed a 6.8h backlog (2026-09-16)
+
+**Found while verifying the wording pass:** the new `/metrics` freshness
+gauges showed `det_coverage_1to2h: 0%` and the newest `det_v0` report's launch
+was 6.8 hours old, while reports were still being written every few seconds —
+a deep FIFO backlog, not a stall.
+
+**Root cause:** `startFeaturesWorker` (T+10m report generation, the job every
+single launch goes through) never set BullMQ's `concurrency` option, so it
+defaulted to **1** — one launch processed at a time, unlike `startAssessWorker`
+which already set `concurrency: 2`. At ~4 launches/min this was marginal even
+before today; it is not new to today's RPC-budget changes, just newly visible
+because the freshness gauges didn't exist before this session.
+
+**Fixed:** `FEATURES_CONCURRENCY` (default 8, env-overridable). Every job still
+runs through the shared `PRIORITY.watcher` client, so this raises how many run
+at once, not their priority against outcomes/deepdive/backfill.
+
+**Also fixed in the same pass:** `apps/api` had no `RH_RPC_URL`, so
+`GET /v1/funding` silently reported `configured:false` and `/v1/proof`'s
+on-chain confirmation silently degraded to `null`. Set as
+`${{worker.RH_RPC_URL}}` (Railway variable reference — the value itself was
+never typed or printed here).
+
+**Also noted, not yet acted on:** Postgres volume is at 449/500 MB (90%).
+Needs a decision from Cooper before it fills — see the remaining-work list.
+
 ## Locked the two spending endpoints (2026-09-16)
 
 `POST /v1/deepdive/{token}` and the MCP `request_deepdive` tool were open to

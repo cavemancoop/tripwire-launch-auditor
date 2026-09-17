@@ -1598,3 +1598,21 @@ separation from putting a session on Railway.
 - `curl -sI -X POST $API/v1/deepdive/0x...` -> 401 without a key; 202 with
   `-H "x-api-key: $DESIGN_PARTNER_API_KEYS"`.
 
+## 2026-09-16 — fixed a 6.8h report-generation backlog; api RPC + alerts channel
+
+### Fixed
+- `startFeaturesWorker`: BullMQ concurrency was undocumented and defaulted to
+  1 (unlike assess's explicit 2). `FEATURES_CONCURRENCY` (default 8) lets
+  T+10m report generation run several launches in parallel.
+- `apps/api` had no `RH_RPC_URL`; `GET /v1/funding` and `/v1/proof`'s on-chain
+  confirmation were silently degraded. Set via Railway reference to worker's.
+
+### Changed (ops, Railway)
+- `TELEGRAM_ALERTS_CHANNEL_ID` set to the new private ops channel.
+
+### Verify
+- `curl -s $API/metrics | grep det_coverage_1to2h` climbs back toward 1 over
+  the following ~30-60 min as the backlog clears; `det_report_lag_seconds`
+  drops from ~24,500 toward the T+10m target (~600s).
+- `curl -s $API/v1/funding` returns `configured:true` with activation #58.
+
