@@ -2,6 +2,32 @@
 
 Standing choices that aren't obvious from the code. Newest first.
 
+## Property 2 wired in: daily budget follows on-chain accrual (2026-09-16)
+
+**Cooper's call:** now that funding is human-gated (he decides when/how much
+CREDIT reaches the agent's wallet), sizing the *daily spend* from real accrual
+is safe to build now rather than reword as unbuilt. Agreed — the total pool
+was already bounded at the funding step; this only changes how much of it the
+agent may spend today.
+
+**Built:** `dailyDeepdiveBudget()` (spec §8, `min(dailyCap, 50% of trailing-24h
+accrual, balance − reserve)`) was written in M5b but never called — confirmed
+dead code by both the earlier grep and Codex. Now: `trailingCreditsUsd()`
+sums on-chain `Activated` events with the agent's wallet as beneficiary over a
+rolling 24h (any funder — operator or the agent's own future activations), and
+`defaultLoadBudget` feeds that into the real gate. Falls back to the flat
+`DEEPDIVE_DAILY_CAP_USD` when `ORBIO_CREDIT_ADDRESS` isn't set (unaffected:
+local dev, or before this shipped) or on an RPC error (logged, not silent).
+
+**The consequence, stated plainly:** the window is rolling, not a balance. A
+single $20 activation ages out of the trailing-24h sum ~24h after it happened,
+even though the account may still hold real balance — so without further
+funding or the wallet's own staking, this cap trends toward $0 about a day
+after Cooper's last activation, and deep-dives throttle down. That is spec §8
+working as written ("throughput visibly follows token activity"), not a bug,
+but it means the account likely needs a top-up before 10 days pass with nobody
+watching it. Flagged to Cooper directly, not just here.
+
 ## Report generation was serialized; fixed a 6.8h backlog (2026-09-16)
 
 **Found while verifying the wording pass:** the new `/metrics` freshness

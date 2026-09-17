@@ -1,13 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { recoverMessageAddress } from 'viem';
+import { pad, parseUnits, recoverMessageAddress, type PublicClient } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import {
+  activatedTodayUsd,
   activationDecision,
   assertAllowedCall,
   deriveOrbioApiKey,
   describeKey,
   estimateBlockAt,
   orbioKeyMessage,
+  trailingCreditsUsd,
   type ActivationInputs,
 } from '../src/metabolism/credit-wallet';
 
@@ -107,5 +109,78 @@ describe('estimateBlockAt', () => {
   });
   it('returns head for a target in the future', () => {
     expect(estimateBlockAt(2_000_000, head, ref)).toBe(1_000_000n);
+  });
+});
+
+// 2026-09-16: property 2 reads Activated events directly. beneficiary is
+// indexed as bytes32 (the address left-padded), not address — getting this
+// wrong means the filter silently matches nothing and the daily budget always
+// reads as $0 accrued, closing the deep-dive gate for no visible reason.
+describe('trailingCreditsUsd / activatedTodayUsd — Activated event scans', () => {
+  const AGENT = '0x9b4EDe199198ca3D41A9a7D2997606BaCd30BA03' as const;
+  const OPERATOR = '0x4cb72456e82aeDd8b1ef0F08D03Cc6bFf96c6291' as const;
+
+  function fakeClient(logsByBeneficiary: Record<string, { from: string; amount: bigint }[]>) {
+    const calls: Array<{ args: unknown; fromBlock: bigint; toBlock: bigint }> = [];
+    const HEAD = 2_000_000n;
+    const nowSec = BigInt(Math.floor(Date.now() / 1000));
+    const client = {
+      // 1 block/sec, so estimateBlockAt's interpolation from these two points
+      // lands trailingCreditsUsd's real (Date.now()-based) 24h target correctly.
+      getBlock: async ({ blockNumber }: { blockNumber?: bigint } = {}) => {
+        const number = blockNumber ?? HEAD;
+        return { number, timestamp: nowSec - (HEAD - number) };
+      },
+      getContractEvents: async ({ args, fromBlock, toBlock }: { args: { from?: string; beneficiary?: string }; fromBlock: bigint; toBlock: bigint }) => {
+        calls.push({ args, fromBlock, toBlock });
+        const key = args.beneficiary ?? args.from ?? '';
+        const rows = logsByBeneficiary[key] ?? [];
+        return rows
+          .filter((r) => !args.from || r.from.toLowerCase() === args.from.toLowerCase())
+          .map((r) => ({ args: { amount: r.amount } }));
+      },
+    } as unknown as PublicClient;
+    return { client, calls };
+  }
+
+  it('filters by the padded bytes32 beneficiary, not the raw address', async () => {
+    const paddedAgent = pad(AGENT.toLowerCase() as `0x${string}`, { size: 32 });
+    const { client, calls } = fakeClient({
+      [paddedAgent]: [
+        { from: OPERATOR, amount: parseUnits('20', 6) },
+        { from: AGENT, amount: parseUnits('5', 6) },
+      ],
+    });
+    // a maxRange spanning the whole scan keeps this test to one chunk, so the
+    // fake's per-chunk log list (it doesn't itself filter by block range) isn't double-counted
+    const total = await trailingCreditsUsd(client, '0xe33322da1380e61e5ae5dfb21e7f62924c73004c', AGENT, 999_999_999n);
+    expect(total).toBe(25);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.args).toEqual({ beneficiary: paddedAgent });
+  });
+
+  it('activatedTodayUsd filters by the plain from address (not the beneficiary)', async () => {
+    const { client, calls } = fakeClient({
+      [AGENT]: [
+        { from: AGENT, amount: parseUnits('3', 6) },
+        { from: OPERATOR, amount: parseUnits('100', 6) }, // would inflate the total if the filter leaked
+      ],
+    });
+    const total = await activatedTodayUsd(client, '0xe33322da1380e61e5ae5dfb21e7f62924c73004c', AGENT, 999_999_999n);
+    expect(total).toBe(3);
+    expect(calls[0]!.args).toEqual({ from: AGENT });
+  });
+
+  it('chunks the scan at maxRange and sums across chunks', async () => {
+    const paddedAgent = pad(AGENT.toLowerCase() as `0x${string}`, { size: 32 });
+    const { client, calls } = fakeClient({ [paddedAgent]: [{ from: OPERATOR, amount: parseUnits('1', 6) }] });
+    await trailingCreditsUsd(client, '0xe33322da1380e61e5ae5dfb21e7f62924c73004c', AGENT, 100n);
+    expect(calls.length).toBeGreaterThan(1);
+    for (const c of calls) expect(c.toBlock - c.fromBlock).toBeLessThan(100n);
+  });
+
+  it('a 24h window with no accrual returns 0, not an error', async () => {
+    const { client } = fakeClient({});
+    expect(await trailingCreditsUsd(client, '0xe33322da1380e61e5ae5dfb21e7f62924c73004c', AGENT, 9_999n)).toBe(0);
   });
 });

@@ -1616,3 +1616,22 @@ separation from putting a session on Railway.
   drops from ~24,500 toward the T+10m target (~600s).
 - `curl -s $API/v1/funding` returns `configured:true` with activation #58.
 
+## 2026-09-16 — property 2: daily deep-dive budget follows on-chain accrual
+
+### Added
+- `trailingCreditsUsd()` (credit-wallet.ts): Σ on-chain `Activated` events
+  with the agent's wallet as beneficiary, rolling 24h window.
+- `dynamicDailyCapUsd()` / updated `defaultLoadBudget` (deepdive/run.ts): calls
+  the existing (previously dead) `dailyDeepdiveBudget()` with that figure;
+  falls back to the flat `DEEPDIVE_DAILY_CAP_USD` if unconfigured or on error.
+
+### Verify
+- `pnpm verify` green (credit-wallet.test.ts: beneficiary is bytes32-padded,
+  not address — the bug that would silently zero every accrual read).
+- worker log on a skip: `budget: ... (24h credit accrual $X.XX, bound by
+  credit_share|daily_cap|key_reserve)`.
+
+### Consequence (see DECISIONS.md)
+Without further funding, this cap trends toward $0 ~24h after the last
+CREDIT activation into the agent's wallet, even with balance remaining.
+

@@ -9,7 +9,10 @@ import { prisma } from '@launch-auditor/db';
 import { Worker } from 'bullmq';
 import { loadEnv, type WorkerEnv } from '../env';
 import { QUEUE_NAMES, parseRedisUrl } from '../queues';
-import { deepdiveRunGate } from '../metabolism/budget';
+import { getBudgetedClient, PRIORITY } from '@launch-auditor/rpc-budget';
+import { privateKeyToAccount } from 'viem/accounts';
+import { deepdiveRunGate, dailyDeepdiveBudget } from '../metabolism/budget';
+import { trailingCreditsUsd } from '../metabolism/credit-wallet';
 import { readOAuthBlob, loadEncryptionKey, tokenStorePath } from '../metabolism/token-store';
 import { totalSpendUsd } from '../metabolism/spend-ledger';
 import { persistLaunchReports } from '../report';
@@ -46,6 +49,10 @@ export interface RunDeepdiveDeps {
     /** M5c — optional so an injected fake can return the pre-M5c shape */
     providerSpendTodayUsd?: number;
     billingStatus?: string | null;
+    /** property 2 (2026-09-16) — optional so an injected fake can return the flat-cap shape */
+    dailyCapUsd?: number;
+    trailingCreditsUsd?: number | null;
+    bindingConstraint?: string;
   }>;
   persist?: typeof persistLaunchReports;
   recordSpend?: typeof recordDeepdiveSpend;
@@ -96,6 +103,46 @@ function targetFromLaunch(l: Launch): DeepdiveTarget {
   };
 }
 
+/**
+ * Property 2 (spec §0.1): the daily deep-dive cap as a function of credits
+ * accrued in the trailing 24h, not a fixed number — live since 2026-09-16.
+ * Reads on-chain `Activated` events into the agent's account; falls back to
+ * the flat `DEEPDIVE_DAILY_CAP_USD` when the CREDIT address or the agent
+ * wallet isn't configured (local dev, or before this was wired in), so this
+ * is additive, never a new way to fail closed.
+ *
+ * Consequence, deliberately: with no new funding, `trailingCreditsUsd` — and
+ * so this cap — trends toward 0 about 24h after the last activation, even
+ * while real balance remains. That is the property working as specified
+ * (spec §8: "throughput visibly follows token activity"), not a bug.
+ */
+async function dynamicDailyCapUsd(
+  env: WorkerEnv,
+  spendableUsd: number,
+): Promise<{ dailyCapUsd: number; trailingCreditsUsd: number | null; bindingConstraint: string }> {
+  const creditAddr = process.env.ORBIO_CREDIT_ADDRESS as `0x${string}` | undefined;
+  if (!creditAddr || !env.gasWalletPrivateKey) {
+    return { dailyCapUsd: env.deepdiveDailyCapUsd, trailingCreditsUsd: null, bindingConstraint: 'daily_cap' };
+  }
+  try {
+    const wallet = privateKeyToAccount(env.gasWalletPrivateKey).address;
+    const pub = getBudgetedClient(env.rpcUrl, { priority: PRIORITY.deepdive });
+    const trailing = await trailingCreditsUsd(pub, creditAddr, wallet, 9_999n);
+    const b = dailyDeepdiveBudget({
+      dailyCapUsd: env.deepdiveDailyCapUsd,
+      trailingCreditsUsd: trailing,
+      keyRemainingUsd: spendableUsd + env.metabolismReserveUsd, // dailyDeepdiveBudget re-subtracts the reserve
+      reserveUsd: env.metabolismReserveUsd,
+    });
+    return { dailyCapUsd: b.budgetUsd, trailingCreditsUsd: trailing, bindingConstraint: b.bindingConstraint };
+  } catch (err) {
+    // an RPC hiccup here must not take down deep-dive entirely — fall back,
+    // and say so, rather than silently using a number nobody can explain.
+    console.warn('[deepdive] dynamicDailyCapUsd failed, using the flat cap:', err instanceof Error ? err.message : err);
+    return { dailyCapUsd: env.deepdiveDailyCapUsd, trailingCreditsUsd: null, bindingConstraint: 'daily_cap' };
+  }
+}
+
 async function defaultLoadBudget(
   env: WorkerEnv,
   now: Date,
@@ -104,6 +151,9 @@ async function defaultLoadBudget(
   providerSpendTodayUsd: number;
   spendableUsd: number;
   billingStatus: string | null;
+  dailyCapUsd: number;
+  trailingCreditsUsd: number | null;
+  bindingConstraint: string;
 }> {
   const dayStart = startOfUtcDay(now);
   const [todaySpendUsd, providerAgg, snap] = await Promise.all([
@@ -127,11 +177,16 @@ async function defaultLoadBudget(
   const snapAt = snap?.createdAt?.getTime() ?? 0;
   const stale = now.getTime() - snapAt > staleAfterMs;
 
+  const dyn = await dynamicDailyCapUsd(env, spendableUsd);
+
   return {
     todaySpendUsd,
     providerSpendTodayUsd: providerAgg._sum.providerDeltaUsd ?? 0,
     spendableUsd,
     billingStatus: stale ? 'stale' : (snap?.billingStatus ?? null),
+    dailyCapUsd: dyn.dailyCapUsd,
+    trailingCreditsUsd: dyn.trailingCreditsUsd,
+    bindingConstraint: dyn.bindingConstraint,
   };
 }
 
@@ -179,13 +234,16 @@ export async function runDeepdive(
   const budget = await loadBudget(env, now);
   const gate = deepdiveRunGate({
     capPerRunUsd: env.deepdiveCapPerRunUsd,
-    dailyCapUsd: env.deepdiveDailyCapUsd,
+    dailyCapUsd: budget.dailyCapUsd ?? env.deepdiveDailyCapUsd,
     todaySpendUsd: budget.todaySpendUsd,
     providerSpendTodayUsd: budget.providerSpendTodayUsd,
     spendableUsd: budget.spendableUsd,
     billingStatus: budget.billingStatus,
   });
-  if (!gate.allowed) return { ran: false, reason: `budget: ${gate.reason}` };
+  if (!gate.allowed) {
+    const credit = budget.trailingCreditsUsd != null ? ` (24h credit accrual $${budget.trailingCreditsUsd.toFixed(2)}, bound by ${budget.bindingConstraint})` : '';
+    return { ran: false, reason: `budget: ${gate.reason}${credit}` };
+  }
 
   const packetClient = deps.packetClient ?? (rpc() as unknown as PacketClient);
   const packet = await buildTargetPacket(packetClient, targetFromLaunch(launch), input.reportBlock);

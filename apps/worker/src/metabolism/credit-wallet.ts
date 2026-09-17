@@ -1,4 +1,4 @@
-import { decodeEventLog, parseAbi, parseUnits, formatUnits, type Hex, type PublicClient, type WalletClient } from 'viem';
+import { decodeEventLog, pad, parseAbi, parseUnits, formatUnits, type Hex, type PublicClient, type WalletClient } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 
 /**
@@ -101,21 +101,52 @@ export async function creditHeldUsd(pub: PublicClient, credit: Hex, wallet: Hex)
   return Number(formatUnits(raw, 6));
 }
 
-/** Σ CREDIT this wallet activated since UTC midnight, from its own on-chain Activated events. */
-export async function activatedTodayUsd(pub: PublicClient, credit: Hex, wallet: Hex, maxRange: bigint): Promise<number> {
+/** Σ `Activated.amount` matching `args`, from `sinceSec` (UTC) to head, chunked at `maxRange`. */
+async function sumActivatedSince(
+  pub: PublicClient,
+  credit: Hex,
+  sinceSec: number,
+  args: { from?: Hex; beneficiary?: Hex },
+  maxRange: bigint,
+): Promise<number> {
   const head = await pub.getBlock();
   const ref = await pub.getBlock({ blockNumber: head.number > 10_000n ? head.number - 10_000n : 0n });
-  const now = new Date();
-  const midnight = Math.floor(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) / 1000);
-  let from = estimateBlockAt(midnight, head, ref);
+  let from = estimateBlockAt(sinceSec, head, ref);
   let total = 0n;
   while (from <= head.number) {
     const to = from + maxRange - 1n > head.number ? head.number : from + maxRange - 1n;
-    const logs = await pub.getContractEvents({ address: credit, abi: CREDIT_ABI, eventName: 'Activated', args: { from: wallet }, fromBlock: from, toBlock: to });
+    const logs = await pub.getContractEvents({ address: credit, abi: CREDIT_ABI, eventName: 'Activated', args, fromBlock: from, toBlock: to });
     for (const l of logs) total += l.args.amount ?? 0n;
     from = to + 1n;
   }
   return Number(formatUnits(total, 6));
+}
+
+/** Σ CREDIT this wallet activated since UTC midnight, from its own on-chain Activated events. */
+export async function activatedTodayUsd(pub: PublicClient, credit: Hex, wallet: Hex, maxRange: bigint): Promise<number> {
+  const now = new Date();
+  const midnight = Math.floor(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) / 1000);
+  return sumActivatedSince(pub, credit, midnight, { from: wallet }, maxRange);
+}
+
+/**
+ * Property 2 (spec §0.1 / §8): credits accrued in the trailing 24h. On-chain
+ * since 2026-09-16 — Σ CREDIT activated with `wallet` as beneficiary in the
+ * last 24h, from any funder (the operator or the agent itself). A rolling
+ * window, not UTC-midnight: a single funding event ages out ~24h after it
+ * happened, which is the property working as specified, not a bug — without
+ * further funding or the wallet's own staking, the derived daily budget
+ * trends toward 0 a day after the last activation.
+ */
+export async function trailingCreditsUsd(pub: PublicClient, credit: Hex, wallet: Hex, maxRange: bigint): Promise<number> {
+  // beneficiary is indexed as bytes32 (the address left-padded), not address
+  return sumActivatedSince(
+    pub,
+    credit,
+    Math.floor(Date.now() / 1000) - 86_400,
+    { beneficiary: pad(wallet.toLowerCase() as Hex, { size: 32 }) },
+    maxRange,
+  );
 }
 
 export interface ActivationReceipt {
