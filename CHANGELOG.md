@@ -1722,3 +1722,53 @@ CREDIT activation into the agent's wallet, even with balance remaining.
 - After deploy: `curl -s $API/v1/benchmark` should show a `det_v0.1` row
   starting to accumulate `n` once T+10m reports and their outcomes resolve.
 
+## 2026-09-17 (same night) — incident: the det_v0.1 deploy above broke report writes for ~6 minutes
+
+### What happened
+`@map("det_v0.1")` on the new `ForecasterKind` enum value made Prisma Client
+reject every det_v0.1 write client-side (`Invalid value for argument
+'forecaster'. Expected ForecasterKind.`) — Prisma validates enum arguments
+against the schema identifier (`det_v0_1`), not the `@map`-ped DB value.
+`apps/worker/src/watcher/t10.ts` catches and logs per-launch rather than
+crashing, so the watcher/outcomes/telegram/commit loops all kept running
+normally throughout — this was silent unless you were tailing worker logs.
+
+**Confirmed impact** (via `railway logs --service worker --deployment`, full
+window from deploy to fix): exactly 20 launches hit the error, one time each.
+For each: `heuristic_v1` and `det_v0` reports persisted fine (upserted before
+the loop reached `det_v0.1` and threw) — no data lost there. `det_v0.1`'s own
+report row, and `ensureOutcomeRows` (called once after the loop, for all
+three drafts together, never reached) were both skipped. Nothing else was
+affected — no crash-loop, no impact on unrelated launches.
+
+Affected `launchId`s (for the eventual backfill — re-run
+`buildLaunchReports(client, launchId, 'launch')` +
+`persistLaunchReports(drafts)` for each; same deterministic block pin as the
+original attempt, so the existing `det_v0`/`heuristic_v1` rows upsert as a
+no-op and only the missing `det_v0.1` row + outcome-grid rows get created):
+
+```
+cmu50phmu03zcql2ashz2ofbu  cmu50phti03zeql2auyhjr1av  cmu50prcw03zjql2adr5o7yev
+cmu50py2o03znql2a3fyqrypa  cmu50q7mg040oql2acuzch06g  cmu50q7qr040qql2au4d9aw9t
+cmu50r9kj041nql2a3rjy84va  cmu50sif70447ql2awusb4lv9  cmu50t1bm044iql2ahxdtwxd8
+cmu50t4kf044lql2atq50mrnb  cmu50t7ti044oql2as5fb68v2  cmu50tb3y0457ql2aholvuyvs
+cmu50thhc045bql2athc0k97n  cmu50u0ff046fql2atz2i85ed  cmu50u0jh046hql2aguo39m0s
+cmu50u0my046jql2azsufv5fw  cmu50u3t8046mql2ase7opdtn  cmu50u3vl046oql2adiojwlxv
+cmu50umsg0492ql2acheqllh7  cmu50uq0g0495ql2a60dn9sv4
+```
+
+Not scripted against production unreviewed right before a long gap — left as
+a bounded, documented follow-up (20 launches, no data loss, nothing time
+-sensitive breaks by waiting).
+
+### Fixed
+- `74d0be2` — see the entry above for the actual fix (rename the enum value,
+  fix `assemble.ts` to use `det_v0_1`).
+
+### Verify
+- `railway logs --service worker --deployment` — 0 occurrences of "Invalid
+  value for argument" since `74d0be2` deployed (confirmed over a 200-line /
+  ~45s window post-deploy).
+- `curl -s $API/metrics` — `det_coverage_1to2h: 1`, `watcher_staleness: ~3.6s`,
+  `commit_age: ~270s` — all nominal, no cascading damage.
+
