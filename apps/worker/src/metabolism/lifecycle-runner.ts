@@ -26,6 +26,7 @@
 import { Prisma, prisma } from '@launch-auditor/db';
 import type { Hex } from 'viem';
 import { loadEnv } from '../env';
+import { recordFailure } from '../failures';
 import {
   buildLifecycleEntry,
   GENESIS_HASH,
@@ -837,6 +838,7 @@ export async function runLifecycleLoop(
         } catch (e) {
           // eslint-disable-next-line no-console
           console.error('[metabolism] revoke_key failed', e instanceof Error ? e.message : e);
+          await recordFailure('metabolism.revoke_key_failed', e);
         }
         updateOAuthBlob(storePath, encKey, {
           gatewayKey: null,
@@ -879,6 +881,7 @@ export async function runLifecycleLoop(
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[metabolism] tick error', err instanceof Error ? err.message : err);
+      await recordFailure('metabolism.tick_error', err);
       await dropConn();
     }
     await new Promise((res) => setTimeout(res, intervalMs));

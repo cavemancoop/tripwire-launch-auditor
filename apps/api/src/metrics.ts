@@ -22,6 +22,10 @@ export interface MetricsSnapshot {
   newestDetReportLagSec?: number | null;
   /** share of launches from 1–2h ago that have a det_v0 report (coverage over eligible launches) */
   detCoverage1to2h?: number | null;
+  /** M10 — per-catch-site failure counts (packages/db: CatchSiteFailure), the
+   *  systemic fix for silently-swallowed errors in the worker's long-running
+   *  loops. Optional so older readers work. */
+  catchFailures?: Array<{ site: string; count: number; ageSec: number | null }>;
 }
 
 export type MetricsReader = () => Promise<MetricsSnapshot>;
@@ -56,6 +60,8 @@ export const prismaMetricsReader: MetricsReader = async () => {
       _count: { _all: true },
     }),
   ]);
+
+  const catchFailureRows = await prisma.catchSiteFailure.findMany({ orderBy: { site: 'asc' } });
 
   const [newestDet, eligible, eligibleWithDet] = await Promise.all([
     prisma.report.findFirst({
@@ -94,6 +100,11 @@ export const prismaMetricsReader: MetricsReader = async () => {
       pendingDue: count(due, label),
       deferred: count(deferred, label),
       resolved24h: count(resolved, label),
+    })),
+    catchFailures: catchFailureRows.map((r) => ({
+      site: r.site,
+      count: r.count,
+      ageSec: age(now, r.lastAt),
     })),
   };
 };
@@ -147,6 +158,21 @@ export function formatPrometheus(m: MetricsSnapshot): string {
   series('launch_auditor_outcomes_pending_due', 'PENDING outcomes whose horizon has passed, per label', (o) => o.pendingDue);
   series('launch_auditor_outcomes_deferred', 'Horizon-due PENDING outcomes currently retrying after a transient failure, per label', (o) => o.deferred);
   series('launch_auditor_outcomes_resolved_24h', 'Outcomes resolved in the trailing 24h, per label', (o) => o.resolved24h);
+
+  if (m.catchFailures?.length) {
+    lines.push(
+      '# HELP launch_auditor_catch_site_failures_total Cumulative failures caught and logged at each named catch site (a loop kept running, not a crash)',
+    );
+    lines.push('# TYPE launch_auditor_catch_site_failures_total counter');
+    for (const f of m.catchFailures) {
+      lines.push(`launch_auditor_catch_site_failures_total{site="${f.site}"} ${f.count}`);
+    }
+    lines.push('# HELP launch_auditor_catch_site_failure_age_seconds Seconds since the last failure at each catch site');
+    lines.push('# TYPE launch_auditor_catch_site_failure_age_seconds gauge');
+    for (const f of m.catchFailures) {
+      lines.push(`launch_auditor_catch_site_failure_age_seconds{site="${f.site}"} ${f.ageSec === null ? 'NaN' : f.ageSec}`);
+    }
+  }
 
   return lines.join('\n') + '\n';
 }

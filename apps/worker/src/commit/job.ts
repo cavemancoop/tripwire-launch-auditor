@@ -3,6 +3,7 @@ import { Prisma, prisma } from '@launch-auditor/db';
 import { getBudgetedClient, PRIORITY } from '@launch-auditor/rpc-budget';
 import { decodeEventLog, type Hex, type PublicClient, type TransactionReceipt } from 'viem';
 import { loadEnv, type WorkerEnv } from '../env';
+import { recordFailure } from '../failures';
 import {
   ARTIFACT_KIND,
   ARTIFACT_KIND_BY_LABEL,
@@ -386,6 +387,7 @@ export async function runCommitLoop(signal: StopSignal): Promise<void> {
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[commit] loop error', err instanceof Error ? err.message : err);
+      await recordFailure('commit.loop_error', err);
     }
     await new Promise((res) => setTimeout(res, tickMs));
   }

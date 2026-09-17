@@ -1772,3 +1772,43 @@ a bounded, documented follow-up (20 launches, no data loss, nothing time
 - `curl -s $API/metrics` — `det_coverage_1to2h: 1`, `watcher_staleness: ~3.6s`,
   `commit_age: ~270s` — all nominal, no cascading damage.
 
+## 2026-09-17 — per-catch-site failure counters on /metrics (M10)
+
+The systemic fix for silently-swallowed errors — the same bug class as the
+2-day pool-derivation stall, the 6.8h report backlog, and the det_v0.1 enum
+incident two entries up: a `catch` block in a long-running loop logs and
+keeps going (correct — one bad launch/token shouldn't stop the sweep), but a
+console line nobody is tailing is invisible until someone goes looking.
+
+### Added
+- `packages/db/prisma/schema.prisma` + migration
+  `20260917074722_m10_catch_site_failures`: `CatchSiteFailure` table (`site`
+  primary key, `count`, `lastMessage`, `lastAt`) — same "Postgres is the
+  transport between api/worker" reasoning as `BenchmarkSnapshot`.
+- `apps/worker/src/failures.ts`: `recordFailure(site, err)` — upserts the
+  counter, fails safe (a DB hiccup recording a failure never masks or throws
+  over the original error), and no-ops under `process.env.VITEST` so `pnpm
+  verify` stays fully offline (a real Prisma call against an unreachable
+  `localhost:5432` took ~4s to fail per test that hit it — measured on
+  `telegram-poster.test.ts` before adding the guard).
+- Wired into the 15 catch sites across the worker's long-running loops that
+  were logging-and-continuing with nothing on `/metrics`: `watcher.
+  pool_abandoned` / `ingest_error` / `poll_error`, `t10.primary_pool_check` /
+  `report_assembly`, `outcomes.resolve_failed` / `sweep_error`, `metabolism.
+  revoke_key_failed` / `tick_error`, `telegram.post_failed` / `sweep_error`,
+  `commit.loop_error`, `deepdive.run_failed` / `sweep_error`, `scorer.
+  snapshot_failed`. Deliberately left out routine retry/deferred bookkeeping
+  that already has its own visibility (e.g. `outcomes` deferred counts are
+  already a `/metrics` series) — the goal is unexpected failures, not
+  expected retry churn re-counted as if it were one.
+- `apps/api/src/metrics.ts`: `launch_auditor_catch_site_failures_total{site}`
+  (counter) and `launch_auditor_catch_site_failure_age_seconds{site}` (gauge,
+  `NaN` semantics match every other unavailable gauge here) — only emitted
+  when at least one site has ever failed.
+
+### Verify
+- `pnpm verify` green.
+- `curl -s $API/metrics | grep catch_site` — empty until something actually
+  fails (nothing has, post-incident); the det_v0.1 gap-repair script (next
+  section) is a convenient way to exercise it if you want to see it populate.
+

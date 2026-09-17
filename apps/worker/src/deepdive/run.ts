@@ -8,6 +8,7 @@ import { getChainConfig } from '@launch-auditor/chain';
 import { prisma } from '@launch-auditor/db';
 import { Worker } from 'bullmq';
 import { loadEnv, type WorkerEnv } from '../env';
+import { recordFailure } from '../failures';
 import { QUEUE_NAMES, parseRedisUrl } from '../queues';
 import { getBudgetedClient, PRIORITY } from '@launch-auditor/rpc-budget';
 import { privateKeyToAccount } from 'viem/accounts';
@@ -378,6 +379,7 @@ export async function sweepDeepdiveEligible(
       out.failed += 1;
       // eslint-disable-next-line no-console
       console.error(`[deepdive] ${l.id} failed:`, err instanceof Error ? err.message : err);
+      await recordFailure('deepdive.run_failed', err);
     }
   }
   if (skipReasons.size > 0) {
@@ -436,6 +438,7 @@ export async function runDeepdiveLoop(
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[deepdive] sweep error', err instanceof Error ? err.message : err);
+      await recordFailure('deepdive.sweep_error', err);
     }
     await new Promise((res) => setTimeout(res, intervalMs));
   }

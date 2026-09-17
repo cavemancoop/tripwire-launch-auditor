@@ -59,6 +59,21 @@ describe('formatPrometheus', () => {
     const text = formatPrometheus({ ...SNAPSHOT, idsOrPhantomFlagged: true });
     expect(text).toContain('launch_auditor_ids_or_phantom_flagged 1');
   });
+
+  it('emits per-site catch-failure counters only when provided', () => {
+    expect(formatPrometheus(SNAPSHOT)).not.toContain('launch_auditor_catch_site_failures_total');
+    const text = formatPrometheus({
+      ...SNAPSHOT,
+      catchFailures: [
+        { site: 't10.report_assembly', count: 20, ageSec: 300 },
+        { site: 'watcher.poll_error', count: 1, ageSec: null },
+      ],
+    });
+    expect(text).toContain('launch_auditor_catch_site_failures_total{site="t10.report_assembly"} 20');
+    expect(text).toContain('launch_auditor_catch_site_failure_age_seconds{site="t10.report_assembly"} 300');
+    expect(text).toContain('launch_auditor_catch_site_failures_total{site="watcher.poll_error"} 1');
+    expect(text).toContain('launch_auditor_catch_site_failure_age_seconds{site="watcher.poll_error"} NaN');
+  });
 });
 
 describe('GET /metrics', () => {

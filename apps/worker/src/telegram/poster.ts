@@ -6,6 +6,7 @@
  */
 import { getChainConfig } from '@launch-auditor/chain';
 import { prisma } from '@launch-auditor/db';
+import { recordFailure } from '../failures';
 import type { StopSignal } from '../watcher/poller';
 
 export interface TelegramCandidateRow {
@@ -138,6 +139,7 @@ export async function postQualifiedLaunches(deps: PosterDeps): Promise<PosterSwe
       failed += 1;
       // eslint-disable-next-line no-console
       console.error(`[telegram] post failed for ${row.tokenAddress}:`, err instanceof Error ? err.message : err);
+      await recordFailure('telegram.post_failed', err);
     }
   }
   return { candidates: rows.length, posted, failed };
@@ -170,6 +172,7 @@ export async function runTelegramPosterLoop(
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[telegram] sweep error', err instanceof Error ? err.message : err);
+      await recordFailure('telegram.sweep_error', err);
     }
     await new Promise((res) => setTimeout(res, intervalMs));
   }

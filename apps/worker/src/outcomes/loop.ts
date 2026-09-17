@@ -1,4 +1,5 @@
 import { Prisma, prisma, type $Enums } from '@launch-auditor/db';
+import { recordFailure } from '../failures';
 import { DeadlineError, withDeadline } from '../watcher/retry';
 import { resolveOneOutcome, type OutcomeRow, type ResolveClient } from './resolve';
 
@@ -242,6 +243,7 @@ export async function sweepDueOutcomes(
         `[outcomes] ${row.label}@${row.horizon} ${row.tokenAddress} failed:`,
         err instanceof Error ? err.message : err,
       );
+      await recordFailure('outcomes.resolve_failed', err);
     }
   };
 
@@ -304,6 +306,7 @@ export async function runOutcomesLoop(
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[outcomes] sweep error', err instanceof Error ? err.message : err);
+      await recordFailure('outcomes.sweep_error', err);
     }
     await new Promise((res) => setTimeout(res, intervalMs));
   }

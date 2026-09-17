@@ -542,3 +542,23 @@ model BenchmarkSnapshot {
 
   @@map("benchmark_snapshots")
 }
+
+// ──────────────────── Catch-site failure counters (M10) ───────────────────
+// The systemic fix for silently-swallowed errors: every long-running loop's
+// catch block already logs and continues (by design — one bad launch/token
+// shouldn't stop the sweep), but a console line nobody is tailing is
+// invisible. This is the same bug class that caused the 2-day pool-derivation
+// stall and the 6.8h report backlog (both eventually caught by staring at
+// logs, not by anything on /metrics) -- and the det_v0.1 enum incident
+// (2026-09-17, CHANGELOG.md) that found this file's own predecessor gap.
+// `site` is a short, stable, dot-namespaced id (e.g. "t10.report_assembly");
+// api and worker are separate Railway services with separate filesystems, so
+// Postgres is the transport, same reasoning as BenchmarkSnapshot above.
+model CatchSiteFailure {
+  site        String   @id
+  count       Int      @default(0)
+  lastMessage String?
+  lastAt      DateTime @updatedAt
+
+  @@map("catch_site_failures")
+}

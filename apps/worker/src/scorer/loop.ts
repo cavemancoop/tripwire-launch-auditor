@@ -16,6 +16,7 @@ import { dirname, join } from 'node:path';
 import { prisma } from '@launch-auditor/db';
 import type { Benchmark } from '@launch-auditor/scoring';
 import { runScorer, type RunScorerOptions } from './benchmark';
+import { recordFailure } from '../failures';
 import type { StopSignal } from '../watcher/poller';
 
 /**
@@ -98,6 +99,7 @@ export async function runScorerLoop(
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[scorer] snapshot failed', err instanceof Error ? err.message : err);
+      await recordFailure('scorer.snapshot_failed', err);
     }
     await new Promise((res) => setTimeout(res, intervalMs));
   }

@@ -2,6 +2,7 @@ import { getChainConfig, getGetLogsMaxRange } from '@launch-auditor/chain';
 import { Prisma, prisma } from '@launch-auditor/db';
 import { Worker } from 'bullmq';
 import { erc20Abi, type Hex, type PublicClient } from 'viem';
+import { recordFailure } from '../failures';
 import { computeTokenAgeAtPool } from './freshness';
 
 const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
@@ -113,6 +114,7 @@ export async function runT10ForLaunch(
     } catch (err) {
       // eslint-disable-next-line no-console
       console.warn(`[t10] ${launchId} primary-pool check failed: ${err instanceof Error ? err.message : err}`);
+      await recordFailure('t10.primary_pool_check', err);
     }
   }
 
@@ -285,6 +287,7 @@ export async function runT10ForLaunch(
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error(`[t10] ${launchId}: report assembly failed`, err instanceof Error ? err.message : err);
+      await recordFailure('t10.report_assembly', err);
     }
   }
 }

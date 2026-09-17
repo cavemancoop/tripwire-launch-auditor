@@ -1,5 +1,6 @@
 import { getGetLogsMaxRange } from '@launch-auditor/chain';
 import type { PublicClient } from 'viem';
+import { recordFailure } from '../failures';
 import { loadEnv } from '../env';
 import { POOLS_STREAM, getCursor, setCursor } from './cursor';
 import { detectPools, type DetectedPool } from './detect';
@@ -106,12 +107,14 @@ function logIngestFailure(dp: DetectedPool, err: unknown, abandoned: boolean): v
   if (abandoned) {
     // eslint-disable-next-line no-console
     console.error(`[watcher] ABANDONING pool at ${where} after repeated failure — recover with \`pnpm watcher:replay --from ${dp.blockNumber}\`: ${head}`);
+    void recordFailure('watcher.pool_abandoned', err);
   } else if (isTransientRpcError(err)) {
     // eslint-disable-next-line no-console
     console.warn(`[watcher] transient ingest miss at ${where}, will retry: ${head}`);
   } else {
     // eslint-disable-next-line no-console
     console.error(`[watcher] ingest error at ${where}: ${head}`);
+    void recordFailure('watcher.ingest_error', err);
   }
 }
 
@@ -161,6 +164,7 @@ export async function runPoller(client: PublicClient, signal: StopSignal): Promi
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[watcher] poll error', err instanceof Error ? err.message : err);
+      await recordFailure('watcher.poll_error', err);
     }
     await new Promise((res) => setTimeout(res, pollIntervalMs));
   }
