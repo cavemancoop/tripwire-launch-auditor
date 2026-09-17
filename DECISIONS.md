@@ -2,6 +2,52 @@
 
 Standing choices that aren't obvious from the code. Newest first.
 
+## Pre-judging pass: reversed on the backfill import, held the line on det_v1 (2026-09-17)
+
+Judging is 2026-09-20. Standing rule restated: anything touching a public
+claim gets fixed before then; everything else is deferred with a date.
+
+**Backfill/retrospective — reversed the earlier plan.** A prior HANDOFF filed
+"import the backfill as retrospective=true" as post-judging cleanup, on the
+assumption that having zero retrospective rows in the public benchmark was a
+gap to close. On review, that's backwards: the spec's anti-cherry-picking
+claim ("live commits from day one prove no cherry-picking," §7) is proven by
+the live rows existing at all — every one of them was precommitted before
+its outcome. Importing backfill three days before judging doesn't strengthen
+that claim, it's the only thing that could weaken it (a data migration into
+production, right before the number that matters gets read). "100% live,
+zero backfilled rows" is the rarer, stronger property. The dashboard's "+N
+retro" badge explanation read like a missing feature when it showed nothing
+— fixed as copy, not data: the benchmark panel and DEMO.md now say directly
+that it contains only live, precommitted forecasts. No import, no migration,
+no risk. Decision: **do not import the backfill before judging.**
+
+**det_v1 — documented as an unmet promise, not built.** Spec §4 commits to
+fitting real weights (not just intercept recalibration) once a cell passes
+300 resolved outcomes. Six of seven cells now clear that bar by 2–11x
+(`TRADING_ALIVE@24h` n=3,452). Not shipping it isn't a time-crunch excuse:
+fitting `det_v1` on the same live outcomes it would then be scored against
+makes the benchmark in-sample and meaningless. An honest fit requires a
+holdout — fit on data up to time T, score only forecasts issued after T —
+which means `det_v1` would arrive at judging with zero graded outcomes
+regardless, exactly where `llm_deepdive_v0` sits today. Documented in
+DEMO.md's "not yet proven" section with that reasoning, on the theory that
+an unmet spec promise stated outright is evidence of discipline, not a gap
+to hide. If a session opens up post-judging: fit on the retrospective
+backfill data only (out-of-sample by construction, zero leakage) and ship
+labeled "fit on retrospective data, zero live grades" — optional, not
+blocking.
+
+**Two items checked against "does this touch a public claim" before being
+filed as deferrable — one did.** `qualify.liqUsd` (≥$2,000 liquidity
+qualifies for the qualified lane) was never implemented, only the ≥25-buyer
+gate is live — and unlike the per-creator quota flag (confirmed displayed
+only in an internal CLI script, `scripts/recent.ts`, never on the public
+dashboard — correctly stays deferred), the $2,000 figure **is** published,
+in `launch-auditor-spec-v0.2.md` §3.1 and its config table. Spec text
+corrected in place to describe actual live behavior, with an inline note on
+what's spec'd-but-not-wired. One-line doc fix, not a code change.
+
 ## det_v0.1: promote four cells, hold SELL_IMPAIRED (2026-09-17)
 
 **Decision.** Applied 4 of the 6 rates from the 2026-09-09 re-featured backfill
