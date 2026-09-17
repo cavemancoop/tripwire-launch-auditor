@@ -1650,3 +1650,23 @@ CREDIT activation into the agent's wallet, even with balance remaining.
 - `curl -s $API/v1/lifecycle?limit=1` — `budget.creditShareUsd` present and
   non-undefined once `ORBIO_AGENT_ACCOUNT`/`ORBIO_CREDIT_ADDRESS` are set.
 
+## 2026-09-16 (same night) — keep-warm: property 2 can no longer deadlock
+
+### Fixed
+- `activationDecision` (credit-wallet.ts) gains a time-based trigger:
+  activate even on a healthy balance once `CREDIT_ACTIVATE_KEEP_WARM_HOURS`
+  (default 20) has passed since the agent's last self-activation. Without
+  this, once the trailing-24h accrual window went cold the whole daily
+  budget latched at $0 with no way back — balance stops moving once spend
+  stops, so the old low-balance trigger could never fire again either.
+- Sourced from the local lifecycle log (Postgres), not an on-chain scan —
+  an earlier draft of this fix scanned 30 days of Activated events every 60s
+  tick, which would have reintroduced exactly the RPC contention fixed
+  earlier tonight. Caught before it shipped.
+
+### Verify
+- `pnpm verify` green (8 new tests: fires despite healthy balance, respects
+  the daily cap and the pending guard, custom window, no-CREDIT refusal).
+- worker log on a keep-warm fire: `[metabolism] activated $X.XX CREDIT ->
+  AI balance ... — keep-warm: ...h since last activation >= 20h`.
+

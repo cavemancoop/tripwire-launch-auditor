@@ -462,13 +462,30 @@ export async function runLifecycleLoop(
           lowWaterUsd: Number(process.env.CREDIT_ACTIVATE_LOW_WATER_USD || 2),
           chunkUsd: Number(process.env.CREDIT_ACTIVATE_CHUNK_USD || 5),
           dailyCapUsd: Number(process.env.CREDIT_ACTIVATE_DAILY_CAP_USD || env.deepdiveDailyCapUsd),
+          // property 2's accrual window closes at 24h; refresh it before then
+          // regardless of balance, or a cold window can never self-heal (see
+          // the keep-warm note on ActivationInputs). Margin, not a schedule.
+          keepWarmAfterMs: Number(process.env.CREDIT_ACTIVATE_KEEP_WARM_HOURS || 20) * 3_600_000,
         }
       : null;
   let lastActivation: { at: number; balanceBefore: number; amountUsd: number } | null = null;
   if (activation) {
     // eslint-disable-next-line no-console
-    console.log(`[metabolism] CREDIT activation on for ${activation.wallet} · low-water $${activation.lowWaterUsd} · chunk $${activation.chunkUsd} · cap $${activation.dailyCapUsd}/day`);
+    console.log(`[metabolism] CREDIT activation on for ${activation.wallet} · low-water $${activation.lowWaterUsd} · chunk $${activation.chunkUsd} · cap $${activation.dailyCapUsd}/day · keep-warm ${activation.keepWarmAfterMs / 3_600_000}h`);
   }
+  // The last SELF-activation this agent recorded (Postgres, not a chain scan —
+  // cheap on every tick). An operator activation (like the funding one) isn't
+  // captured here, so this can under-count how "warm" the window really is;
+  // that only makes the agent activate a little earlier than the bare
+  // minimum, never later, which is the safe direction to be wrong in.
+  const lastSelfActivationAt = async (): Promise<number | null> => {
+    const row = await prisma.lifecycleLog.findFirst({
+      where: { reason: { startsWith: 'activated $' } },
+      orderBy: { createdAt: 'desc' },
+      select: { createdAt: true },
+    });
+    return row ? row.createdAt.getTime() : null;
+  };
 
   let conn: OrbioConnection | null = null;
   const dropConn = async (): Promise<void> => {
@@ -509,7 +526,11 @@ export async function runLifecycleLoop(
         if (lastActivation && !pending) lastActivation = null;
         const pub = getBudgetedClient(env.rpcUrl, { priority: PRIORITY.commit }) as unknown as PublicClient;
         const held = await creditHeldUsd(pub, activation.addresses.credit, activation.wallet);
-        const needsCheck = !pending && held > 0 && read.balanceUsd < activation.lowWaterUsd;
+        // cheap DB read (not RPC) — safe to do whenever the wallet holds CREDIT at all
+        const msSinceLastActivation = !pending && held > 0 ? Date.now() - ((await lastSelfActivationAt()) ?? -Infinity) : null;
+        const lowBalance = read.balanceUsd < activation.lowWaterUsd;
+        const coldWindow = msSinceLastActivation !== null && msSinceLastActivation >= activation.keepWarmAfterMs;
+        const needsCheck = !pending && held > 0 && (lowBalance || coldWindow);
         const today = needsCheck
           ? await activatedTodayUsd(pub, activation.addresses.credit, activation.wallet, 9_999n)
           : 0;
@@ -521,6 +542,8 @@ export async function runLifecycleLoop(
           activatedTodayUsd: today,
           dailyCapUsd: activation.dailyCapUsd,
           pending,
+          msSinceLastActivation,
+          keepWarmAfterMs: activation.keepWarmAfterMs,
         });
         if (d.activate) {
           // mark pending before sending: a timeout must not become a second activation

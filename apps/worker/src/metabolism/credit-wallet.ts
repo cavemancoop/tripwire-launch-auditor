@@ -56,16 +56,30 @@ export interface ActivationInputs {
   dailyCapUsd: number;
   /** an earlier activation has not shown up in the API balance yet */
   pending: boolean;
+  /** ms since the wallet's last Activated event, or null if it has never activated */
+  msSinceLastActivation: number | null;
+  /** force an activation once this much time has passed, balance regardless
+   *  (default 20h). Property 2's daily budget is min(cap, 50% of trailing-24h
+   *  accrual, balance) — if accrual hits $0 the whole budget is $0 even with
+   *  real balance left, spending stops, balance stops moving, and the
+   *  low-water trigger below can never fire again. Measured 2026-09-16: at
+   *  ~$0.5-0.8/day actual usage the default $5 chunk / $2 low-water wouldn't
+   *  need topping up for 4-5 days — long enough for the window to go cold and
+   *  deadlock first. A margin before the 24h cutoff, not a fixed schedule. */
+  keepWarmAfterMs?: number;
 }
 
 export type ActivationDecision = { activate: false; reason: string } | { activate: true; amountUsd: number; reason: string };
 
 const usd = (n: number): string => `$${n.toFixed(2)}`;
+const DEFAULT_KEEP_WARM_MS = 20 * 3_600_000;
 
 /** Pure: should the agent turn some of its CREDIT into AI balance this tick, and how much? */
 export function activationDecision(i: ActivationInputs): ActivationDecision {
   if (i.pending) return { activate: false, reason: 'previous activation not yet reflected in the API balance' };
-  if (i.apiBalanceUsd >= i.lowWaterUsd) {
+  const keepWarmMs = i.keepWarmAfterMs ?? DEFAULT_KEEP_WARM_MS;
+  const stale = i.msSinceLastActivation === null || i.msSinceLastActivation >= keepWarmMs;
+  if (i.apiBalanceUsd >= i.lowWaterUsd && !stale) {
     return { activate: false, reason: `API balance ${usd(i.apiBalanceUsd)} ≥ activation low-water ${usd(i.lowWaterUsd)}` };
   }
   if (i.creditHeldUsd <= 0) return { activate: false, reason: 'wallet holds no CREDIT to activate' };
@@ -75,10 +89,13 @@ export function activationDecision(i: ActivationInputs): ActivationDecision {
   }
   const amountUsd = Math.floor(Math.min(i.chunkUsd, i.creditHeldUsd, capLeft) * 1e6) / 1e6;
   if (amountUsd < 0.01) return { activate: false, reason: `activatable amount ${usd(amountUsd)} too small` };
+  const why = stale
+    ? `keep-warm: ${i.msSinceLastActivation === null ? 'never activated' : `${(i.msSinceLastActivation / 3_600_000).toFixed(1)}h since last activation`} ≥ ${(keepWarmMs / 3_600_000).toFixed(0)}h (property 2's accrual window would otherwise go cold)`
+    : `API balance ${usd(i.apiBalanceUsd)} < low-water ${usd(i.lowWaterUsd)}`;
   return {
     activate: true,
     amountUsd,
-    reason: `API balance ${usd(i.apiBalanceUsd)} < low-water ${usd(i.lowWaterUsd)}; activating ${usd(amountUsd)} of ${usd(i.creditHeldUsd)} CREDIT held`,
+    reason: `${why}; activating ${usd(amountUsd)} of ${usd(i.creditHeldUsd)} CREDIT held`,
   };
 }
 

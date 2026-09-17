@@ -2,6 +2,37 @@
 
 Standing choices that aren't obvious from the code. Newest first.
 
+## Found and fixed: property 2 could deadlock a real balance to $0 forever (2026-09-16, same night)
+
+**Found answering Cooper's own question** ("how much CREDIT do we need for
+10 days unattended?"). Property 2 makes the daily deep-dive budget
+`min(cap, 50% of trailing-24h accrual, balance)`. If accrual hits $0 — which
+it does ~24h after the last activation, unconditionally, since the window is
+a hard cutoff not a decay — the whole budget is $0 *even with real balance
+left*. Spending then stops, balance stops moving, and the agent's own
+self-activation (`CREDIT_ACTIVATE=1`) only triggers on *low balance* — which
+now never happens. Once the window goes cold there was no path back to warm
+except a human noticing. At the account's measured usage (~$0.5-0.8/day) the
+default $5 chunk / $2 low-water wouldn't need topping up for 4-5 days —
+comfortably enough time for the window to go cold first.
+
+**Fixed:** `activationDecision` gains a keep-warm trigger — activate (still
+capped by the same daily cap) once `CREDIT_ACTIVATE_KEEP_WARM_HOURS` (default
+20, a 4h margin before the 24h cutoff) has passed since the last self-
+activation, balance regardless. Sourced from the local lifecycle log
+(Postgres, not a chain scan — cheap every tick), which only sees the agent's
+*own* activations; an operator activation the agent doesn't know about just
+means it self-activates a bit earlier than the bare minimum, never later —
+the safe direction to be wrong in.
+
+**What this means for "how much CREDIT do we need":** the mechanism only
+works if the gas wallet holds *unactivated* CREDIT tokens for it to draw on —
+Cooper's $20 was activated directly (his CREDIT, beneficiary = gas wallet),
+so the wallet itself still holds $0 in plain CREDIT and the keep-warm trigger
+has nothing to activate from yet. For genuinely unattended operation, some
+CREDIT needs to be sent to the gas wallet as tokens (not pre-activated) —
+see the reply to Cooper for a concrete number.
+
 ## Dashboard's budget display fixed to match the real gate (2026-09-16, same night)
 
 Caught before Cooper went offline: `apps/api/src/budget-display.ts` is a

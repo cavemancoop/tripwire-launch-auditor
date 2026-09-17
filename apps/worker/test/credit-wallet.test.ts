@@ -77,6 +77,7 @@ describe('activationDecision', () => {
     activatedTodayUsd: 0,
     dailyCapUsd: 5,
     pending: false,
+    msSinceLastActivation: 0, // "just activated" — not stale, isolates the low-balance trigger in these tests
   };
   const d = (over: Partial<ActivationInputs>) => activationDecision({ ...base, ...over });
 
@@ -96,6 +97,57 @@ describe('activationDecision', () => {
   it('does nothing above low-water or with no CREDIT', () => {
     expect(d({ apiBalanceUsd: 2 })).toMatchObject({ activate: false });
     expect(d({ creditHeldUsd: 0 })).toMatchObject({ activate: false });
+  });
+});
+
+// 2026-09-16: property 2's daily budget is min(cap, 50% of trailing-24h
+// accrual, balance). If accrual hits $0 the whole budget is $0 even with real
+// balance left — spending stops, so balance stops moving, so the low-balance
+// trigger above can never fire again. A time-based trigger is the only thing
+// that can break that deadlock once it happens.
+describe('activationDecision — keep-warm (deadlock prevention)', () => {
+  const base: ActivationInputs = {
+    apiBalanceUsd: 15, // healthy — would never trigger on balance alone
+    creditHeldUsd: 20,
+    lowWaterUsd: 2,
+    chunkUsd: 5,
+    activatedTodayUsd: 0,
+    dailyCapUsd: 5,
+    pending: false,
+    msSinceLastActivation: 0,
+  };
+  const d = (over: Partial<ActivationInputs>) => activationDecision({ ...base, ...over });
+  const HOUR = 3_600_000;
+
+  it('does not activate on a healthy balance well within the keep-warm window', () => {
+    expect(d({ msSinceLastActivation: 5 * HOUR })).toMatchObject({ activate: false });
+  });
+
+  it('activates anyway once the keep-warm window is reached, despite a healthy balance', () => {
+    const r = d({ msSinceLastActivation: 20 * HOUR });
+    expect(r).toMatchObject({ activate: true, amountUsd: 5 });
+    expect(r.activate && r.reason).toMatch(/keep-warm/);
+  });
+
+  it('never activated before (null) is treated as maximally stale', () => {
+    expect(d({ msSinceLastActivation: null })).toMatchObject({ activate: true, amountUsd: 5 });
+  });
+
+  it('a custom keep-warm window is honored', () => {
+    expect(d({ msSinceLastActivation: 10 * HOUR, keepWarmAfterMs: 8 * HOUR })).toMatchObject({ activate: true });
+    expect(d({ msSinceLastActivation: 6 * HOUR, keepWarmAfterMs: 8 * HOUR })).toMatchObject({ activate: false });
+  });
+
+  it('still refuses with no CREDIT held, even if maximally stale', () => {
+    expect(d({ msSinceLastActivation: null, creditHeldUsd: 0 })).toMatchObject({ activate: false });
+  });
+
+  it('still respects the daily activation cap on a keep-warm trigger', () => {
+    expect(d({ msSinceLastActivation: 20 * HOUR, activatedTodayUsd: 5 })).toMatchObject({ activate: false });
+  });
+
+  it('pending still wins over a stale window', () => {
+    expect(d({ msSinceLastActivation: 20 * HOUR, pending: true })).toMatchObject({ activate: false });
   });
 });
 
