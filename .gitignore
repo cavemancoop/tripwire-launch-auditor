@@ -26,3 +26,7 @@ packages/db/src/generated/
 
 # Word/Office lock files (created while a document is open)
 ~$*
+
+# marketing/creative drafts don't belong in the code repo — kept at
+# ../orbio agent building/Tripwire commercial.docx instead
+/Tripwire commercial.docx

@@ -15,6 +15,29 @@ from an on-chain CREDIT activation, each one a public transaction (dashboard →
 
 Full spec: [`launch-auditor-spec-v0.2.md`](./launch-auditor-spec-v0.2.md).
 
+## Summary (200 words)
+
+Text for an external submission form or one-pager — stays inside what's
+actually provable today.
+
+> Launch Auditor watches every new token on Robinhood Chain, computes
+> deterministic manipulation and exit-risk features within seconds, and
+> publishes separate probabilities for five mechanically defined outcomes —
+> insider exit, sell impairment, liquidity impairment, 80% drawdown, still
+> trading — at fixed horizons. Every forecast is signed and its hash
+> committed on-chain before the outcome can be known; an open-source scorer
+> later grades it against chain data and against public baselines, including
+> the existing scanners' own verdicts. The product is not the warning but the
+> track record.
+>
+> The agent authenticates with a key derived by signing a message with its
+> own wallet — no browser session, no minted-then-revoked key, nothing that
+> expires. It reads its balance from the gateway's API, sizes its daily
+> research budget from CREDIT accrued on-chain in the trailing 24 hours, and
+> writes every state change to a signed lifecycle log — it never holds or
+> converts money. Anyone holding $ORBIO can clone the repo, authorize once,
+> and run their own instance.
+
 ## Layout
 
 ```
