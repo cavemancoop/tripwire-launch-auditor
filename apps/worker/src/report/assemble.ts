@@ -119,7 +119,7 @@ export async function buildLaunchReports(
   const forecasters: { name: string; version: string; probs: Partial<Record<OutcomeKey, number>> }[] = [
     { name: 'heuristic_v1', version: 'v1', probs: heuristicV1(inputs).probabilities },
     { name: 'det_v0', version: detV0(inputs).version, probs: detV0(inputs).probabilities },
-    { name: 'det_v0.1', version: detV0_1(inputs).version, probs: detV0_1(inputs).probabilities },
+    { name: 'det_v0_1', version: detV0_1(inputs).version, probs: detV0_1(inputs).probabilities },
   ];
 
   const drafts: ReportDraft[] = [];

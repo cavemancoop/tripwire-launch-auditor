@@ -63,7 +63,7 @@ enum ForecasterKind {
   base_rate
   heuristic_v1
   det_v0
-  det_v0_1 @map("det_v0.1")
+  det_v0_1
   det_v1
   llm_deepdive_v0
   scanhood
