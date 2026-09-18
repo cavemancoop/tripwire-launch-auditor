@@ -1877,3 +1877,34 @@ selection, the raw feature vector, or outcome evidence.
   `primaryPool`, `feature`, and `outcomes[]` matching what `/v1/benchmark`'s
   cells for that token were built from.
 
+
+## 2026-09-18 — outage: Chainstack monthly RU quota exhausted (~13h); budget lowered
+
+### What happened
+From ~09:37Z every RPC call returned "You've reached your monthly quota of
+Request Units". Watcher, commits, outcome resolution and deep-dives all
+stopped (`watcher_staleness_seconds` reached 46,105). The M10 per-catch-site
+counters showed it (`watcher.poll_error`, `commit.loop_error`,
+`outcomes.resolve_failed`, `metabolism.tick_error` all firing), but nothing
+alerted a human; it was found while deploying M11. Cause: `RPC_BUDGET_RPM`
+was raised 500 → 3000 on 09-15 without checking the monthly quota
+(DECISIONS.md flagged that at the time). With ~200k PENDING outcomes the
+worker saturates whatever ceiling it's given, so 3000/min used up 20M RU in
+about 3 days.
+
+### Changed (ops, no code)
+- Chainstack plan upgraded 20M → 80M RU/month (Cooper).
+- `RPC_BUDGET_RPM` on worker 3000 → **1000**: ~1.4M requests/day, about a
+  month of headroom on the remaining quota. The scheduler still serves
+  watcher and commits first, so the live feed isn't slowed; only the outcome
+  backlog drains more slowly.
+
+### Verify
+- `curl -s $API/metrics | grep -E 'watcher_staleness|commit_age'` both under
+  ~60s; the feed's newest `launchAt` is minutes old, not hours.
+- Check RU burn in the Chainstack console after 24h: at ~2M RU/day the plan
+  lasts the cycle.
+
+### Open
+- `watcher_staleness_seconds > N` should page someone (Telegram alerts
+  channel), since the counters alone didn't get anyone to look.
