@@ -1885,8 +1885,10 @@ From ~09:37Z every RPC call returned "You've reached your monthly quota of
 Request Units". Watcher, commits, outcome resolution and deep-dives all
 stopped (`watcher_staleness_seconds` reached 46,105). The M10 per-catch-site
 counters showed it (`watcher.poll_error`, `commit.loop_error`,
-`outcomes.resolve_failed`, `metabolism.tick_error` all firing), but nothing
-alerted a human; it was found while deploying M11. Cause: `RPC_BUDGET_RPM`
+`outcomes.resolve_failed`, `metabolism.tick_error` all firing), and the alert
+loop (`alerts.ts`, watcher-stalled + commit-lag checks,
+`TELEGRAM_ALERTS_CHANNEL_ID` set) should have posted to the ops channel. It was
+noticed ~13h later while deploying M11. Cause: `RPC_BUDGET_RPM`
 was raised 500 → 3000 on 09-15 without checking the monthly quota
 (DECISIONS.md flagged that at the time). With ~200k PENDING outcomes the
 worker saturates whatever ceiling it's given, so 3000/min used up 20M RU in
@@ -1906,5 +1908,6 @@ about 3 days.
   lasts the cycle.
 
 ### Open
-- `watcher_staleness_seconds > N` should page someone (Telegram alerts
-  channel), since the counters alone didn't get anyone to look.
+- Check the Telegram ops channel for a watcher-stalled alert around 10:00Z
+  on 09-18. If it's there, the alert worked and nobody was watching the
+  channel. If it isn't, the alert loop has a bug.
