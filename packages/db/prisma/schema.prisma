@@ -61,6 +61,7 @@ enum OutcomeStatus {
 /// Forecasters scored side by side (spec §2).
 enum ForecasterKind {
   base_rate
+  base_rate_fixed
   heuristic_v1
   det_v0
   det_v0_1

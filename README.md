@@ -227,6 +227,7 @@ deferred — see spec §9, "payments only if time remains"). Base URL: `http://l
 |---|---|
 | `GET /v1/launches?limit=` | Live launch feed: latest non-retrospective launches with their `det_v0` forecast + commit-proof pointer. |
 | `GET /v1/report/:token` | Every forecaster's latest forecast for a token, with evidence and proof status. |
+| `GET /v1/launch/:token` | The inputs behind those forecasts: primary-pool evidence (pool kind/address/fee, `poolFeeSuspect`, `tokenAgeAtPoolSec`), the raw feature vector + provenance, and every outcome row (status/value/evidence/coverage). Added M11b so the published benchmark can be reproduced from public data, not just asserted (Codex Phase A #2 / B #2). |
 | `POST /v1/assess/:token` | Enqueues one on-demand report for an already-indexed token, any age. *Scope note:* the spec's "daily re-scores for 7 days" is the recurring/event-aware re-scoring layer (v0.3 Watch, spec §10.1) — not built; this triggers a single immediate report. |
 | `POST /v1/deepdive/:token` | Enqueues an on-demand `llm_deepdive_v0` run. |
 | `GET /v1/benchmark` | The public benchmark table (all forecasters, sample sizes). Served from a snapshot the worker recomputes every 5 minutes (`data/benchmark.json`) — the API does no scoring compute itself. Shape (M8): `{ generatedAt, all, live }`, both full `Benchmark` objects (`scope: 'both'` vs `'live'`); the dashboard diffs a cell's `n` between the two to badge how much of it is retrospective (backfill). |
@@ -256,7 +257,10 @@ fetches the API client-side. Panels, in the order spec §0.1 prioritizes them:
    direct Blockscout link to its commit proof.
 4. **Benchmark** — `GET /v1/benchmark`, sample sizes, an "insufficient sample"
    badge, a "+N retro" badge per cell, and "beats X p=…" where a claim clears
-   the bar.
+   the bar. `base_rate_fixed` (constant per-cell climatology, added
+   2026-09-17) sits alongside the rolling `base_rate` as the honest floor —
+   the rolling baseline is time-varying and scored below chance live, so a
+   claim against it alone can overstate what a model adds.
 5. **Key lifecycle** — the signed `lifecycle_log` chain, most recent first.
 
 No number here is invented: everything is either a raw API field or a labelled

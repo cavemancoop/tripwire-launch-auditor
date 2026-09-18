@@ -126,17 +126,39 @@ export async function collectScoreRows(opts: CollectOptions = {}): Promise<Score
     }
   }
 
-  // base_rate (one row per resolved obs/outcome)
+  // base_rate_fixed — a constant climatology per outcome key (whole-sample
+  // prevalence, same probability for every observation, no notion of time).
+  // Codex Phase B #3: the rolling base_rate is a same-stream, time-varying
+  // predictor whose live AUROC was ~0.37/0.42, not the ~0.5 a constant
+  // predictor should score. This forecaster is the honest floor that claim
+  // exists to explain against.
+  const fixedBaseRate: Partial<Record<OutcomeKey, number>> = {};
+  for (const [key, arr] of Object.entries(perKey)) {
+    const positives = arr.filter((r) => r.y).length;
+    fixedBaseRate[key as OutcomeKey] = positives / arr.length;
+  }
+
+  // base_rate / base_rate_fixed (one row per resolved obs/outcome)
   for (const e of obs.values()) {
     const source = await launchSource(e.launchId);
     for (const [key, y] of e.labels) {
+      const k = obsKey(e.chainId, e.token, e.anchor);
       rows.push({
-        obsId: obsKey(e.chainId, e.token, e.anchor),
+        obsId: k,
         forecaster: 'base_rate',
         outcomeKey: key,
         trigger: e.trigger,
         source,
         prob: round4(trailingBaseRate(key, e.anchor.getTime())),
+        label: y,
+      });
+      rows.push({
+        obsId: k,
+        forecaster: 'base_rate_fixed',
+        outcomeKey: key,
+        trigger: e.trigger,
+        source,
+        prob: round4(fixedBaseRate[key] ?? 0),
         label: y,
       });
     }

@@ -41,12 +41,13 @@ AUROC, AUPRC, log loss, Brier, Brier Skill Score against the trailing-30-day bas
 
 Forecasters scored side by side:
 1. `base_rate` — trailing 30-day prevalence.
-2. `heuristic_v1` — a fixed rule: creator dev-buy ≥ 5% of supply OR launch-block cluster ≥ 3 wallets OR top-10 non-creator share at T+10m ≥ 40%.
-3. `det_v0` — the deterministic score (§4).
-4. `llm_deepdive_v0` — the LLM forecaster (§5), where run.
-5. `scanhood` and `goplus` — their public scan outputs mapped to [0,1] by a fixed published mapping, fetched at report time and stored (they are baselines and data sources, not enemies).
+2. `base_rate_fixed` (added 2026-09-17, pre-judging review) — a constant climatology: the whole-sample prevalence per (outcome, horizon) cell, same probability for every observation, no time dependence. `base_rate` is a same-stream, time-varying predictor — measured live AUROC of ~0.37/0.42, not the ~0.5 a constant predictor should score, so a gap against `base_rate` alone can overstate what a model adds. `base_rate_fixed` is the honest floor.
+3. `heuristic_v1` — a fixed rule: creator dev-buy ≥ 5% of supply OR launch-block cluster ≥ 3 wallets OR top-10 non-creator share at T+10m ≥ 40%.
+4. `det_v0` — the deterministic score (§4).
+5. `llm_deepdive_v0` — the LLM forecaster (§5), where run.
+6. `scanhood` and `goplus` — their public scan outputs mapped to [0,1] by a fixed published mapping, fetched at report time and stored (they are baselines and data sources, not enemies).
 
-A forecaster "beats" a baseline only with a statistically significant AUROC gap (DeLong test) on ≥ 200 resolved launches. Until then the dashboard says "insufficient sample."
+A forecaster "beats" a baseline only with a statistically significant AUROC gap (DeLong test) on ≥ 200 resolved launches, published alongside the overlap `n` (the paired observations both forecasters had a prediction for — can be smaller than either forecaster's own `n`). Until then the dashboard says "insufficient sample."
 
 ## 3. Pipeline
 

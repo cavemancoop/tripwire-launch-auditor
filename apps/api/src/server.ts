@@ -13,6 +13,9 @@ import { budgetDisplay } from './budget-display';
 import { chainFundingReader, type FundingReader } from './funding';
 import { makeDeepdiveEnqueuer, type DeepdiveEnqueuer } from './deepdive-queue';
 import { loadApiEnv, type ApiEnv } from './env';
+import { prismaLaunchDetailReader, type LaunchDetailReader } from './launch-detail';
+
+export type { LaunchDetailRow, LaunchDetailReader } from './launch-detail';
 import { formatPrometheus, prismaMetricsReader, type MetricsReader } from './metrics';
 import { mountMcp } from './mcp';
 import { verifyProof } from './merkle';
@@ -387,6 +390,7 @@ export interface BuildServerOptions {
   estimatorReader?: EstimatorReader;
   launchFeedReader?: LaunchFeedReader;
   reportReader?: ReportReader;
+  launchDetailReader?: LaunchDetailReader;
   benchmarkReader?: BenchmarkReader;
   proofReader?: ProofReader;
   metricsReader?: MetricsReader;
@@ -406,6 +410,7 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
   const readEstimator = opts.estimatorReader ?? prismaEstimatorReader;
   const readLaunchFeed = opts.launchFeedReader ?? prismaLaunchFeedReader;
   const readReport = opts.reportReader ?? prismaReportReader;
+  const readLaunchDetail = opts.launchDetailReader ?? prismaLaunchDetailReader;
   const readBenchmark = opts.benchmarkReader ?? prismaBenchmarkReader;
   const readProof = opts.proofReader ?? prismaProofReader(env);
   const readMetrics = opts.metricsReader ?? prismaMetricsReader;
@@ -459,6 +464,21 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
     }
     const row = await readReport(token.toLowerCase());
     if (!row) return reply.code(404).send({ error: 'no report for this token yet' });
+    return row;
+  });
+
+  // Codex Phase A #2 / Phase B #2 — free: everything the scorer itself reads
+  // for one token (primary-pool evidence, the raw feature vector +
+  // provenance, every outcome row with its evidence/coverage), so the
+  // published benchmark can be reproduced from public data, not just
+  // asserted. `/v1/report` has the forecasts; this has their inputs.
+  app.get('/v1/launch/:token', async (req, reply) => {
+    const { token } = req.params as { token: string };
+    if (!HEX_ADDR.test(token)) {
+      return reply.code(400).send({ error: 'token must be a 20-byte hex address' });
+    }
+    const row = await readLaunchDetail(token.toLowerCase());
+    if (!row) return reply.code(404).send({ error: 'no launch for this token' });
     return row;
   });
 

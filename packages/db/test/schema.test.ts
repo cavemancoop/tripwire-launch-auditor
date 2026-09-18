@@ -25,7 +25,7 @@ describe('prisma schema', () => {
 
   it('defines the forecasters scored side by side in spec §2', () => {
     const kinds = enumValues('ForecasterKind');
-    for (const k of ['base_rate', 'heuristic_v1', 'det_v0', 'llm_deepdive_v0', 'scanhood', 'goplus']) {
+    for (const k of ['base_rate', 'base_rate_fixed', 'heuristic_v1', 'det_v0', 'llm_deepdive_v0', 'scanhood', 'goplus']) {
       expect(kinds).toContain(k);
     }
   });

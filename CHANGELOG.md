@@ -1812,3 +1812,68 @@ console line nobody is tailing is invisible until someone goes looking.
   fails (nothing has, post-incident); the det_v0.1 gap-repair script (next
   section) is a convenient way to exercise it if you want to see it populate.
 
+## M11a — `base_rate_fixed` climatology baseline + overlap n on comparisons (2026-09-17)
+
+Pre-judging checklist item 6, part 1 (Codex Phase B #3 / #8 in DECISIONS.md).
+Split from part 2 (`GET /v1/launch/:token` — M11b) to stay under the ~200-line
+guideline.
+
+### Added
+- `packages/scoring`: `scoreBenchmark`'s default DeLong baselines gain
+  `base_rate_fixed`; `Comparison` gains `n` (the paired-overlap sample size —
+  can be smaller than either forecaster's own `n`, and was previously only
+  implicit in `y.length` inside `cell()`, never published).
+- `apps/worker/src/scorer/collect.ts`: emits a `base_rate_fixed` `ScoreRow`
+  alongside every `base_rate` row — whole-sample prevalence per (outcome,
+  horizon) cell, computed once, same probability for every observation. The
+  existing `base_rate` is a same-stream, time-varying predictor (Codex Phase B
+  measured its live AUROC at ~0.37/0.42, not the ~0.5 a constant predictor
+  should score); `base_rate_fixed` is the honest floor a claim should really
+  be checked against.
+- `packages/db`: `ForecasterKind` gains `base_rate_fixed` (migration
+  `20260917090000_m11a_base_rate_fixed`) — documentation-only, like the
+  existing `base_rate`/`scanhood`/`goplus` entries; never written to
+  `reports.forecaster`, so no data migration.
+- `launch-auditor-spec-v0.2.md` §2 and README's dashboard-benchmark bullet
+  updated to describe both.
+
+### Verify
+- `pnpm verify` green (packages/scoring: 9 scorer tests incl. `n=0` on a
+  disjoint-overlap comparison, AUROC ≈ 0.5 for a constant predictor against a
+  mixed-label cell, and `base_rate_fixed` appearing as a default baseline;
+  packages/db schema test updated).
+- After deploy: `curl -s $API/v1/benchmark | jq '.all.sections[0].byOutcome["DRAWDOWN_80@24h"][] | select(.forecaster=="base_rate_fixed")'`
+  should appear once the next 5-minute snapshot runs, with `auroc` near 0.5;
+  every comparison entry (`.comparisons[]`) now carries `n`.
+
+### Not done (M11b, same checklist item)
+`GET /v1/launch/:token` — primary-pool evidence, feature vector + provenance,
+outcome rows, so the benchmark can be reproduced from public API data alone
+(Codex Phase A #2 / Phase B #2).
+
+## M11b — `GET /v1/launch/:token` detail endpoint (2026-09-17)
+
+Pre-judging checklist item 6, part 2. Codex Phase A #2 / Phase B #2: "the
+public API cannot reproduce the benchmark" — `/v1/report` has forecasts,
+`/v1/benchmark` has the scored table, but nothing public had primary-pool
+selection, the raw feature vector, or outcome evidence.
+
+### Added
+- `apps/api/src/launch-detail.ts` — `prismaLaunchDetailReader(token)`: one
+  `Launch` row (with `feature` + `outcomes` included), reshaped for the wire —
+  `launchBlock` (bigint) stringified, `Date`s to ISO, the full `Feature`
+  vector minus `id`/`launchId` (so a new feature column is exposed
+  automatically, not hand-listed), every `Outcome` row sorted `(label,
+  horizon)`. Read-only, no auth (same free tier as `/v1/report`).
+- `GET /v1/launch/:token` (`apps/api/src/server.ts`): same 400/404 shape as
+  `/v1/report/:token`; `launchDetailReader` injectable for tests.
+- README endpoint table row.
+
+### Verify
+- `pnpm verify` green (`apps/api/test/launch-detail.test.ts`: serves the
+  injected row, 404 with no launch, 400 on a malformed token, `feature: null`
+  before T+10m/`outcomes: []` before anything resolves).
+- After deploy: `curl -s $API/v1/launch/<a token from /v1/launches>` returns
+  `primaryPool`, `feature`, and `outcomes[]` matching what `/v1/benchmark`'s
+  cells for that token were built from.
+

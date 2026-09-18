@@ -52,6 +52,59 @@ describe('scoreBenchmark', () => {
     expect(cmp.aucDiff! > 0).toBe(true);
     expect(cmp.p! < 0.05).toBe(true);
     expect(cmp.claimAllowed).toBe(true);
+    expect(cmp.n).toBe(240); // overlap n — Codex Phase A #4 wanted this published per comparison
+  });
+
+  it('publishes an insufficient-overlap comparison with n=0, never a bare null', () => {
+    // base_rate_fixed rows exist for this cell but share no obsId with det_v0
+    // — zero overlap, the "insufficient overlap / single class" DeLong branch.
+    const disjoint: ScoreRow[] = [
+      ...rows(20),
+      { obsId: 'other1', forecaster: 'base_rate_fixed', outcomeKey: 'DRAWDOWN_80@24h', trigger: 'launch', source: 'raw', prob: 0.4, label: true },
+      { obsId: 'other2', forecaster: 'base_rate_fixed', outcomeKey: 'DRAWDOWN_80@24h', trigger: 'launch', source: 'raw', prob: 0.4, label: false },
+    ];
+    const all = scoreBenchmark(disjoint).sections.find((s) => s.splitBy === 'all')!;
+    const det = all.byOutcome['DRAWDOWN_80@24h']!.find((c) => c.forecaster === 'det_v0')!;
+    const cmp = det.comparisons.find((c) => c.vs === 'base_rate_fixed')!;
+    expect(cmp.n).toBe(0);
+    expect(cmp.claimAllowed).toBe(false);
+    expect(cmp.note).toMatch(/insufficient overlap/);
+  });
+});
+
+describe('base_rate_fixed — a constant climatology baseline', () => {
+  // Codex Phase B #3: the rolling `base_rate` is same-stream and time-varying,
+  // so its live AUROC came in around 0.37/0.42 instead of the ~0.5 a constant
+  // predictor should score. A forecaster that predicts the exact same
+  // probability for every observation in a cell should score at chance.
+  it('scores at chance (AUROC ~0.5) against a mixed-label cell', () => {
+    const n = 200;
+    const rows: ScoreRow[] = [];
+    for (let i = 0; i < n; i++) {
+      const label = i % 2 === 0;
+      rows.push({
+        obsId: `tok${i}@t`,
+        forecaster: 'base_rate_fixed',
+        outcomeKey: 'DRAWDOWN_80@24h',
+        trigger: 'launch',
+        source: 'raw',
+        prob: 0.5, // the whole-sample prevalence in this fixture is exactly 0.5
+        label,
+      });
+    }
+    const all = scoreBenchmark(rows, { baselines: [] }).sections.find((s) => s.splitBy === 'all')!;
+    const c = all.byOutcome['DRAWDOWN_80@24h']!.find((x) => x.forecaster === 'base_rate_fixed')!;
+    expect(c.auroc).toBe(0.5);
+  });
+
+  it('is one of the default DeLong baselines alongside base_rate and heuristic_v1', () => {
+    const rows: ScoreRow[] = [
+      { obsId: 'a', forecaster: 'det_v0', outcomeKey: 'DRAWDOWN_80@24h', trigger: 'launch', source: 'raw', prob: 0.8, label: true },
+      { obsId: 'a', forecaster: 'base_rate_fixed', outcomeKey: 'DRAWDOWN_80@24h', trigger: 'launch', source: 'raw', prob: 0.3, label: true },
+    ];
+    const all = scoreBenchmark(rows).sections.find((s) => s.splitBy === 'all')!;
+    const det = all.byOutcome['DRAWDOWN_80@24h']!.find((x) => x.forecaster === 'det_v0')!;
+    expect(det.comparisons.map((c) => c.vs)).toContain('base_rate_fixed');
   });
 });
 

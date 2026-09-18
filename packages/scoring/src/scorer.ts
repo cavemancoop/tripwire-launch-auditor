@@ -38,6 +38,8 @@ export interface ScoreRow {
 
 export interface Comparison {
   vs: string;
+  /** paired observations both forecasters have a prediction for — the DeLong sample size, not `n` */
+  n: number;
   aucDiff: number | null;
   z: number | null;
   p: number | null;
@@ -122,7 +124,7 @@ function cell(
     const { pa, pb, y } = alignByObs(rows, bRows);
     const dl = fastDeLong(pa, pb, y);
     if (!dl) {
-      comparisons.push({ vs: base, aucDiff: null, z: null, p: null, claimAllowed: false, note: 'insufficient overlap / single class' });
+      comparisons.push({ vs: base, n: y.length, aucDiff: null, z: null, p: null, claimAllowed: false, note: 'insufficient overlap / single class' });
       continue;
     }
     const enoughPositives = positives >= MIN_POSITIVES_FOR_CLAIMS;
@@ -130,6 +132,7 @@ function cell(
       y.length >= MIN_FOR_CLAIMS && enoughPositives && dl.p < 0.05 && dl.diff > 0;
     comparisons.push({
       vs: base,
+      n: y.length,
       aucDiff: round4(dl.diff),
       z: round4(dl.z),
       p: round4(dl.p),
@@ -194,7 +197,7 @@ function sectionFor(
 /** Build the full benchmark table (spec §2): all rows, then split by trigger, then by source. */
 export function scoreBenchmark(rows: ScoreRow[], opts: ScoreOptions = {}): Benchmark {
   const thresholds = opts.thresholds ?? [0.5];
-  const baselines = opts.baselines ?? ['base_rate', 'heuristic_v1'];
+  const baselines = opts.baselines ?? ['base_rate', 'base_rate_fixed', 'heuristic_v1'];
   const now = (opts.now ?? (() => new Date()))();
 
   const sections: BenchmarkSection[] = [sectionFor('all', 'all', rows, baselines, thresholds)];
