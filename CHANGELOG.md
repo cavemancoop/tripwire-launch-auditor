@@ -1886,9 +1886,11 @@ Request Units". Watcher, commits, outcome resolution and deep-dives all
 stopped (`watcher_staleness_seconds` reached 46,105). The M10 per-catch-site
 counters showed it (`watcher.poll_error`, `commit.loop_error`,
 `outcomes.resolve_failed`, `metabolism.tick_error` all firing), and the alert
-loop (`alerts.ts`, watcher-stalled + commit-lag checks,
-`TELEGRAM_ALERTS_CHANNEL_ID` set) should have posted to the ops channel. It was
-noticed ~13h later while deploying M11. Cause: `RPC_BUDGET_RPM`
+loop worked: "watcher stalled" and "commit lag" were posted to the private ops
+channel at ~09:44Z / 09:47Z, within minutes of the outage starting. They
+arrived at 2:44 AM local and nobody saw them until ~13h later, while M11 was
+being deployed. Both "recovered" messages arrived at ~23:20Z after the quota
+upgrade. Cause: `RPC_BUDGET_RPM`
 was raised 500 → 3000 on 09-15 without checking the monthly quota
 (DECISIONS.md flagged that at the time). With ~200k PENDING outcomes the
 worker saturates whatever ceiling it's given, so 3000/min used up 20M RU in
@@ -1908,6 +1910,8 @@ about 3 days.
   lasts the cycle.
 
 ### Open
-- Check the Telegram ops channel for a watcher-stalled alert around 10:00Z
-  on 09-18. If it's there, the alert worked and nobody was watching the
-  channel. If it isn't, the alert loop has a bug.
+- The alert loop's "already alerted" state is in memory, so the M11 redeploy
+  in the middle of the outage re-sent both alerts (769/771min). Every restart
+  during an incident will re-alert. Minor, but it's noise.
+- An alert at 2:44 AM with nobody on call waits until morning. For an
+  overnight stall, the budget cut is what limits the damage now.
