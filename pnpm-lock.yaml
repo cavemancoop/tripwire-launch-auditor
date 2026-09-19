@@ -74,6 +74,9 @@ importers:
       '@launch-auditor/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@launch-auditor/scoring':
+        specifier: workspace:*
+        version: link:../../packages/scoring
       '@modelcontextprotocol/sdk':
         specifier: 'catalog:'
         version: 1.30.0(zod@4.6.1)

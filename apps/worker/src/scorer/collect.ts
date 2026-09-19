@@ -53,21 +53,29 @@ interface ResolvedObs {
 /** Chain timestamp of a block. Immutable, so cached for the life of the process. */
 export type BlockTimeReader = (blockNumber: bigint) => Promise<Date | null>;
 
-const blockTimeCache = new Map<string, Date>();
-const defaultBlockTimeReader: BlockTimeReader = async (blockNumber) => {
+// Caches the in-flight promise, not just the result: the snapshot loop runs
+// the `both` and `live` passes concurrently, and caching only finished reads
+// made both passes fetch every block on a cold start. Failures are evicted so
+// a later snapshot retries them.
+const blockTimeCache = new Map<string, Promise<Date | null>>();
+const defaultBlockTimeReader: BlockTimeReader = (blockNumber) => {
   const k = blockNumber.toString();
   const hit = blockTimeCache.get(k);
   if (hit) return hit;
   const { rpcUrl } = loadEnv();
-  if (!rpcUrl) return null;
-  try {
-    const block = await getBudgetedClient(rpcUrl, { priority: PRIORITY.outcomes }).getBlock({ blockNumber });
-    const t = new Date(Number(block.timestamp) * 1000);
-    blockTimeCache.set(k, t);
-    return t;
-  } catch {
-    return null; // "missing_time", never a guess
-  }
+  if (!rpcUrl) return Promise.resolve(null);
+  // commit priority, not outcomes: these are one-time reads of commit blocks
+  // (~1 per batch, cached for good), and at outcomes priority a report backlog
+  // at watcher priority starved them — the 19 Sep first snapshot never finished.
+  const p = getBudgetedClient(rpcUrl, { priority: PRIORITY.commit })
+    .getBlock({ blockNumber })
+    .then((block) => new Date(Number(block.timestamp) * 1000))
+    .catch(() => {
+      blockTimeCache.delete(k);
+      return null; // "missing_time", never a guess
+    });
+  blockTimeCache.set(k, p);
+  return p;
 };
 
 export interface CollectOptions {

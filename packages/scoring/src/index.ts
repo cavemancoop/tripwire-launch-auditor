@@ -7,3 +7,4 @@ export * from './metrics';
 export * from './delong';
 export * from './mappings';
 export * from './scorer';
+export * from './eligibility';

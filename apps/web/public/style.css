@@ -269,3 +269,4 @@ footer {
   font-size: 0.78rem;
   padding: 2rem;
 }
+a.dim-link { color: var(--text-faint); font-size: 0.72rem; margin-left: 0.4rem; }

@@ -75,17 +75,17 @@
 
   <section class="panel" id="panel-launches">
     <h2><span class="panel-index">03</span> Live launches</h2>
-    <p class="panel-sub">Latest non-retrospective launches with the <code>det_v0</code> forecast and its commit proof.</p>
+    <p class="panel-sub">Latest launches with the <code>det_v0</code> scores and a receipt for each committed forecast. The scores <em>rank</em> launches, and only on the two outcomes where the benchmark shows they beat the base rate; they are not calibrated probabilities. Drawdown isn't shown because <code>det_v0</code> ranks it backwards.</p>
     <div class="table-wrap">
       <table id="launches-table">
         <thead>
           <tr>
             <th>token</th><th>source</th><th>lane</th><th>launched</th>
-            <th>P(insider exit, 24h)</th><th>P(drawdown&ge;80%, 24h)</th><th>P(still trading, 24h)</th>
+            <th title="det_v0 score, 0–1: higher = riskier. Ranking only, not a probability.">insider exit 24h score</th><th title="det_v0 score, 0–1: higher = more likely still trading. Ranking only, not a probability.">still trading 24h score</th>
             <th>proof</th>
           </tr>
         </thead>
-        <tbody id="launches-body"><tr><td colspan="8" class="empty">loading&hellip;</td></tr></tbody>
+        <tbody id="launches-body"><tr><td colspan="7" class="empty">loading&hellip;</td></tr></tbody>
       </table>
     </div>
   </section>

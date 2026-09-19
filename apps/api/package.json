@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@launch-auditor/db": "workspace:*",
+    "@launch-auditor/scoring": "workspace:*",
     "@modelcontextprotocol/sdk": "catalog:",
     "bullmq": "catalog:",
     "fastify": "catalog:",

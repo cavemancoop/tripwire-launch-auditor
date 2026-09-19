@@ -19,6 +19,9 @@ export type { LaunchDetailRow, LaunchDetailReader } from './launch-detail';
 import { formatPrometheus, prismaMetricsReader, type MetricsReader } from './metrics';
 import { mountMcp } from './mcp';
 import { verifyProof } from './merkle';
+import { prismaReceiptReader, type ReceiptReader } from './receipt';
+
+export type { Receipt, ReceiptReader } from './receipt';
 
 /** One `lifecycle_log` row as served by `GET /v1/lifecycle`. */
 export interface LifecycleApiRow extends LifecycleChainRow {
@@ -393,6 +396,7 @@ export interface BuildServerOptions {
   launchDetailReader?: LaunchDetailReader;
   benchmarkReader?: BenchmarkReader;
   proofReader?: ProofReader;
+  receiptReader?: ReceiptReader;
   metricsReader?: MetricsReader;
   fundingReader?: FundingReader;
   /** injectable for tests — defaults to a BullMQ producer on the `deepdive` queue */
@@ -413,6 +417,7 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
   const readLaunchDetail = opts.launchDetailReader ?? prismaLaunchDetailReader;
   const readBenchmark = opts.benchmarkReader ?? prismaBenchmarkReader;
   const readProof = opts.proofReader ?? prismaProofReader(env);
+  const readReceipt = opts.receiptReader ?? prismaReceiptReader(env);
   const readMetrics = opts.metricsReader ?? prismaMetricsReader;
   const readFunding = opts.fundingReader ?? chainFundingReader(env);
 
@@ -565,6 +570,21 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
     const row = await readProof(hash.toLowerCase());
     if (!row) return reply.code(404).send({ error: 'unknown report hash' });
     return row;
+  });
+
+  // 2026-09-19 audit fix 3 — free: one forecast provable end to end. The exact
+  // canonical bytes that were hashed, the EIP-712 signature over that hash,
+  // the Merkle proof, the commit's chain block time, and each outcome for the
+  // same anchor with its eligibility. `pnpm verify:receipt <hash>` checks it
+  // without trusting this server.
+  app.get('/v1/receipt/:hash', async (req, reply) => {
+    const { hash } = req.params as { hash: string };
+    if (!HEX_HASH.test(hash)) {
+      return reply.code(400).send({ error: 'hash must be a 32-byte hex value' });
+    }
+    const receipt = await readReceipt(hash.toLowerCase());
+    if (!receipt) return reply.code(404).send({ error: 'unknown report hash' });
+    return receipt;
   });
 
   // spec §9 — free: the signed key-lifecycle log (spec §8), plus (M5c) the

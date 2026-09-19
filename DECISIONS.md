@@ -872,8 +872,32 @@ without touching normal operation.
 signed, committed bytes. Changing them would make the record lie about what
 was committed. Replays stay as signed and are only classified at scoring time.
 
-**Census.** Published by the deployed scorer as `benchmark.exclusions`. Numbers
-recorded below once observed on production.
+**Census — observed on production** (`9c33b3d`, snapshot 2026-09-19T08:42:53Z,
+anonymous `GET /v1/benchmark`, `live.exclusions`, det_v0 pairs):
+
+| Cell | Eligible | Replay | Late |
+|---|---:|---:|---:|
+| TRADING_ALIVE@24h | 4,940 | 489 | 1 |
+| INSIDER_EXIT@6h | 2,132 | 363 | 263 |
+| LIQ_IMPAIRED@24h | 1,552 | 1,282 | 242 |
+| DRAWDOWN_80@24h | 1,166 | 75 | 1 |
+| INSIDER_EXIT@24h | 646 | 209 | 0 |
+| SELL_IMPAIRED@1h | 532 | 68 | 101 |
+| SELL_IMPAIRED@24h | 121 | 50 | 0 |
+
+3,144 of 14,233 scored det_v0 pairs (22%) were ineligible; 608 were committed
+after their horizon had already ended. Every benchmark figure published before
+this snapshot included them.
+
+**What survives on eligible rows:** det_v0 beats both base rates on
+INSIDER_EXIT@24h (AUROC 0.765, n=646, 74 pos) and TRADING_ALIVE@24h (0.652,
+n=4,940, 178 pos). INSIDER_EXIT@6h (0.619) now beats only the constant floor,
+not the rolling base rate — the earlier "three cells" claim is two. Drawdown,
+liquidity and 1h sell stay inverted. ScanHood, with its late fetches excluded,
+beats both base rates and the heuristic on DRAWDOWN_80@24h (0.631, n=356) and
+LIQ_IMPAIRED@24h (0.584, n=915): on those outcomes an existing scanner does
+better than our model. LLM: n=429 at 0.457 on INSIDER_EXIT@24h, no evidence of
+added discrimination.
 
 ## Decisions A–E, settled with Fable (2026-09-19)
 

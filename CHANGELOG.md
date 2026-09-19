@@ -2014,3 +2014,50 @@ other. The M12c benchmark/dashboard work is included here, since it touches the 
   has counts per class. That is the census; record it in DECISIONS.md.
   `LIQ_IMPAIRED@24h` `det_v0` has no `claimAllowed` comparison. The LLM
   SELL_IMPAIRED@24h cell (n<100) shows `auroc: null`.
+
+## Tier 2 (19 Sep audit, fix 3) — a receipt for every forecast, verifiable offline (2026-09-19)
+
+`/v1/proof` showed a hash was in a committed batch; it didn't show that the
+displayed forecast produced that hash. The audit's DEMO step 3 also failed:
+the proof cell linked the batch transaction, which many reports share.
+
+### Added
+- `GET /v1/receipt/:hash` (`apps/api/src/receipt.ts`) returns:
+  - the exact canonical bytes that were hashed;
+  - the EIP-712 domain, types and message, plus the signature and signer;
+  - the Merkle proof and root;
+  - the commit's **chain** block time, read by `getBlock` and cached, never
+    the DB's receipt-recording time;
+  - the lag from the anchor;
+  - every outcome for the same anchor, with its eligibility class.
+- `pnpm verify:receipt <hash> [--rpc URL] [--api URL | --file receipt.json]`
+  (`apps/api/scripts/verify-receipt.ts`, checks in `src/verify-receipt.ts`)
+  recomputes keccak256(bytes) and recovers the signer from a message rebuilt
+  from the **bytes' own fields**, not the receipt's `eip712.message`. It folds
+  the Merkle proof, finds the root in the registry's `BatchCommitted` event at
+  that block via any RPC (default: public ordofi), reads the block timestamp,
+  and re-derives each outcome's eligibility from it. No DB, no operator
+  credentials.
+- The eligibility rule moved to `packages/scoring` (`eligibility.ts`) so the
+  scorer and the receipt classify identically; the API now depends on it.
+
+### Changed
+- Dashboard proof cell: "receipt ↗" (with the verify command in its tooltip)
+  first, the shared "batch tx ↗" second.
+- Live launches table: the two cells `det_v0` ranks well on, shown as 0–1
+  **scores** labelled "ranking only". No percentages, and the drawdown column
+  is removed, matching the feed (decision A).
+- Scorer block-time reads: in-flight promise cache (the concurrent `both` and
+  `live` passes were each fetching every block) and commit priority. At
+  outcomes priority, the post-outage T+10m backlog at watcher priority starved
+  them, and the first Tier 1 snapshot didn't finish in 20 min.
+
+### Verify
+- `pnpm verify` green (`apps/api/test/receipt.test.ts`, 10 tests: a genuine
+  signed receipt passes; edited bytes fail hash and signature; a doctored
+  `eip712.message` changes nothing; a wrong signer fails; a bad proof fails;
+  eligibility is re-derived from chain time over a lying server label; the
+  route returns 400/404/200).
+- After deploy, logged out:
+  `pnpm verify:receipt <a committed det_v0 reportHash>` prints PASS for hash,
+  signature, merkle, on-chain root and block time.

@@ -68,7 +68,8 @@ async function getJson(path) {
   return res.json();
 }
 
-const pct = (v) => (v === null || v === undefined ? 'n/a' : `${Math.round(v * 100)}%`);
+/** det_v0 scores rank; they aren't calibrated, so no percent sign. */
+const score = (v) => (v === null || v === undefined ? 'n/a' : v.toFixed(3));
 const usd = (v, digits = 2) => (v === null || v === undefined || Number.isNaN(v) ? 'n/a' : `$${v.toFixed(digits)}`);
 const short = (addr) => (addr ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : 'n/a');
 const fmtDate = (iso) => (iso ? new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'n/a');
@@ -213,16 +214,24 @@ function renderFunding(f) {
 
 // ── Live launches ────────────────────────────────────────────────────────
 
-function proofCell(proof) {
+/**
+ * The receipt proves *this* forecast — its signed bytes, signature, Merkle
+ * proof, commit block time and outcomes — where the tx alone only shows a
+ * batch root that many reports share.
+ */
+function proofCell(proof, reportHash) {
   if (!proof || !proof.committed) return '<span class="badge dim">not committed</span>';
-  if (!proof.txHash) return '<span class="badge warn">committed, no tx yet</span>';
-  return `<a href="${EXPLORER_BASE}/tx/${proof.txHash}" target="_blank" rel="noopener">tx ↗</a>`;
+  const receipt = reportHash
+    ? `<a href="${getApiBase()}/v1/receipt/${reportHash}" target="_blank" rel="noopener" title="Signed report bytes, signature, Merkle proof, commit block time and outcomes. Check it offline with: pnpm verify:receipt ${reportHash}">receipt ↗</a>`
+    : '';
+  if (!proof.txHash) return `${receipt} <span class="badge warn">no tx yet</span>`;
+  return `${receipt} <a class="dim-link" href="${EXPLORER_BASE}/tx/${proof.txHash}" target="_blank" rel="noopener" title="The batch transaction — shared by every report in this Merkle batch">batch tx ↗</a>`;
 }
 
 function renderLaunches(rows) {
   const body = document.getElementById('launches-body');
   if (rows.length === 0) {
-    body.innerHTML = '<tr><td colspan="8" class="empty">no launches yet</td></tr>';
+    body.innerHTML = '<tr><td colspan="7" class="empty">no launches yet</td></tr>';
     return;
   }
   body.innerHTML = rows
@@ -233,10 +242,9 @@ function renderLaunches(rows) {
         <td>${l.source}</td>
         <td>${l.lane}</td>
         <td>${fmtDate(l.launchAt)}</td>
-        <td>${pct(d.pInsiderExit24h)}</td>
-        <td>${pct(d.pDrawdown8024h)}</td>
-        <td>${pct(d.pTradingAlive24h)}</td>
-        <td>${proofCell(l.proof)}</td>
+        <td>${score(d.pInsiderExit24h)}</td>
+        <td>${score(d.pTradingAlive24h)}</td>
+        <td>${proofCell(l.proof, d.reportHash)}</td>
       </tr>`;
     })
     .join('');
