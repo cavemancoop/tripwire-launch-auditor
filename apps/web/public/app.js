@@ -160,15 +160,21 @@ function renderMetabolism(lifecycle) {
     ${b.balanceStale ? `<p class="note" style="color:var(--warn)">Balance last confirmed ${balanceAgeLabel(lifecycle)}; research continues under the daily cap and the local spend ledger.</p>` : ''}
   `;
 
-  const check = { verified: lifecycle.verified, startsAtGenesis: lifecycle.startsAtGenesis, brokenAt: lifecycle.brokenAt };
   const spanMs = entries.length ? new Date(entries[entries.length - 1].at).getTime() - new Date(entries[0].at).getTime() : 0;
   const spanDays = spanMs / 86_400_000;
+  let maxGapMs = 0;
+  for (let i = 1; i < entries.length; i += 1) {
+    maxGapMs = Math.max(maxGapMs, Date.parse(entries[i].at) - Date.parse(entries[i - 1].at));
+  }
+  const forks = lifecycle.forks || [];
   document.getElementById('continuity-body').innerHTML = `
     ${entries.length === 0
       ? '<div class="kv"><span class="k">chain</span><span class="v">no signed rows yet — nothing to verify</span></div>'
-      : `<div class="kv"><span class="k">chain verified</span><span class="v">${check.verified ? 'yes' : 'BROKEN at ' + check.brokenAt}</span></div>
-    <div class="kv"><span class="k">starts at genesis</span><span class="v">${check.startsAtGenesis ? 'yes' : 'no'}</span></div>`}
+      : `<div class="kv"><span class="k">rows unaltered</span><span class="v">${chainLabel(lifecycle)}</span></div>
+    <div class="kv"><span class="k">window</span><span class="v">${lifecycle.startsAtGenesis ? 'from genesis' : `newest ${entries.length} rows, not from genesis`}</span></div>
+    <div class="kv"><span class="k">longest gap between rows</span><span class="v">${maxGapMs >= 3_600_000 ? (maxGapMs / 3_600_000).toFixed(1) + ' h' : Math.round(maxGapMs / 60_000) + ' min'}</span></div>`}
     <div class="kv"><span class="k">log span held</span><span class="v">${spanDays.toFixed(2)} days (${entries.length} rows)</span></div>
+    ${forks.length ? `<p class="note">${forks.length} fork${forks.length === 1 ? '' : 's'}: two signed rows name the same parent. That happens when two worker containers overlap during a deploy; no row was changed. Each row still verifies against its parent.</p>` : ''}
     <p class="note">The agent's API key is a signature from its own wallet, so no sign-in expires. This describes what the signed log currently covers, not a guarantee of what comes next.</p>
   `;
 }
@@ -214,7 +220,7 @@ function renderFunding(f) {
     <div class="kv"><span class="k">agent account</span><span class="v"><a href="${EXPLORER_BASE}/address/${f.account}" target="_blank" rel="noopener">${short(f.account)} ↗</a></span></div>
     <div class="kv"><span class="k">activated in total</span><span class="v">${usd(f.totalActivatedUsd)} (operator ${usd(f.byOperatorUsd)} · agent ${usd(f.byAgentUsd)})</span></div>
     ${rows || '<p class="note">No activations yet.</p>'}
-    <p class="note">CREDIT the agent holds but hasn't activated can only become its own AI balance. The worker's call allowlist permits <code>CREDIT.activate</code> and <code>Staking.claim</code> and nothing that transfers tokens out (<code>apps/worker/src/metabolism/credit-wallet.ts</code>).</p>
+    <p class="note">The worker's code only ever activates the CREDIT the agent holds: its call allowlist permits <code>CREDIT.activate</code> and <code>Staking.claim</code> and refuses transfers (<code>apps/worker/src/metabolism/credit-wallet.ts</code>). That's an application check, not a restriction on the wallet itself — whoever holds the wallet key could sign anything.</p>
   `;
 }
 
@@ -328,12 +334,19 @@ function coverageLine(c, excl) {
   return `<div class="note">${lines.join('<br>')}</div>`;
 }
 
+/** "intact" / "intact, 2 forks" / "BROKEN at N" — a fork is two signed rows sharing a parent, not an altered row. */
+function chainLabel(lifecycle) {
+  if (!lifecycle.verified) return `BROKEN at row ${lifecycle.brokenAt}`;
+  const f = (lifecycle.forks || []).length;
+  return f ? `intact, ${f} fork${f === 1 ? '' : 's'}` : 'intact, one chain';
+}
+
 // ── Lifecycle timeline ───────────────────────────────────────────────────
 
 function renderLifecycle(lifecycle) {
   const { entries } = lifecycle;
   document.getElementById('chain-status').textContent =
-    `${entries.length} rows · chain ${lifecycle.verified ? 'verified' : 'BROKEN at ' + lifecycle.brokenAt} · genesis ${lifecycle.startsAtGenesis ? 'yes' : 'no'}`;
+    `${entries.length} rows · ${chainLabel(lifecycle)} · ${lifecycle.startsAtGenesis ? 'from genesis' : 'newest rows only'}`;
 
   const body = document.getElementById('lifecycle-body');
   const recent = entries.slice(-30).reverse();

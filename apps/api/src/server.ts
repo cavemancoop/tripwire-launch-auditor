@@ -645,7 +645,12 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
       count: entries.length,
       limit,
       genesisHash: GENESIS_HASH,
-      verified: check.linked,
+      // verified = no row altered and no missing parent. Forks (two signed rows
+      // sharing a parent, from two writers during a deploy overlap) are listed,
+      // not hidden, and `linear` says whether the window is a single chain.
+      verified: check.intact,
+      linear: check.linked,
+      forks: check.forks,
       startsAtGenesis: check.startsAtGenesis,
       brokenAt: check.brokenAt,
       entries,

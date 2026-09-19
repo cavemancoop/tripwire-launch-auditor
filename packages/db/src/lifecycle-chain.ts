@@ -42,10 +42,14 @@ export interface LifecycleChainRow extends Omit<LifecycleBody, 'prevHash'> {
 export interface LifecycleChainCheck {
   /** every row's bodyHash recomputes AND its prevHash equals the previous row's bodyHash */
   linked: boolean;
+  /** no row altered and no missing parent — forks allowed (every body recomputes, every prevHash names a row in the window) */
+  intact: boolean;
+  /** rows whose parent is an intact earlier row rather than the previous one — concurrent writers, not tampering */
+  forks: number[];
   /** the first row's prevHash is the genesis hash (i.e. this is the whole chain, not a window) */
   startsAtGenesis: boolean;
   length: number;
-  /** index of the first row that fails, or null */
+  /** index of the first row that doesn't hash or whose parent is missing, or null (forks aren't breaks) */
   brokenAt: number | null;
 }
 
@@ -71,18 +75,30 @@ function bodyOf(r: LifecycleChainRow, prevHash: Hex): LifecycleBody {
 export function verifyLifecycleRows(rows: LifecycleChainRow[]): LifecycleChainCheck {
   let linked = true;
   let brokenAt: number | null = null;
+  const forks: number[] = [];
+  const seenBodies = new Set<string>();
   for (let i = 0; i < rows.length; i += 1) {
     const r = rows[i]!;
     const prevHash = (r.prevHash ?? GENESIS_HASH) as Hex;
     const bodyOk = lifecycleBodyHash(bodyOf(r, prevHash)) === r.bodyHash;
     const linkOk = i === 0 ? true : r.prevHash === rows[i - 1]!.bodyHash;
-    if (!bodyOk || !linkOk) {
+    if (!linkOk) linked = false;
+    if (!bodyOk) {
       linked = false;
       if (brokenAt === null) brokenAt = i;
+    } else if (!linkOk) {
+      // links to an intact earlier row, not the one before it: two signed rows
+      // share a parent (two writers at once, e.g. deploy overlap). No row was
+      // altered — but a parent that doesn't exist at all is a real break.
+      if (r.prevHash && seenBodies.has(r.prevHash)) forks.push(i);
+      else if (brokenAt === null) brokenAt = i;
     }
+    if (r.bodyHash) seenBodies.add(r.bodyHash);
   }
   return {
     linked,
+    intact: brokenAt === null,
+    forks,
     startsAtGenesis: rows.length === 0 || (rows[0]!.prevHash ?? GENESIS_HASH) === GENESIS_HASH,
     length: rows.length,
     brokenAt,

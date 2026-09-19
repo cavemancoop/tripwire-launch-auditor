@@ -313,13 +313,35 @@ export interface LifecyclePersistRecord {
 
 export type LifecyclePersist = (record: LifecyclePersistRecord) => Promise<{ id: string }>;
 
-const prismaPersist: LifecyclePersist = async (record) => {
-  const row = await prisma.lifecycleLog.create({
-    data: record as Prisma.LifecycleLogUncheckedCreateInput,
-    select: { id: true },
+/** The chain moved on since this writer last looked — another writer appended first. */
+export class HeadMovedError extends Error {
+  constructor(readonly head: Hex) {
+    super(`lifecycle head moved to ${head}`);
+  }
+}
+
+/** Arbitrary constant: one advisory-lock key for every lifecycle_log writer. */
+const LIFECYCLE_LOCK_KEY = 4663_0001;
+
+/**
+ * Appends under a Postgres advisory lock, checking the row's prevHash against
+ * the real head inside the same transaction. During a deploy the old and new
+ * worker containers both run for a while; with only an in-memory head they
+ * each appended onto the same parent and forked the chain (2026-09-19, rows
+ * 230/231). Now the second writer gets HeadMovedError and re-chains.
+ */
+const prismaPersist: LifecyclePersist = async (record) =>
+  prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(${LIFECYCLE_LOCK_KEY})`;
+    const last = await tx.lifecycleLog.findFirst({ orderBy: { createdAt: 'desc' }, select: { bodyHash: true } });
+    const head = (last?.bodyHash as Hex | undefined) ?? GENESIS_HASH;
+    if (head !== record.prevHash) throw new HeadMovedError(head);
+    const row = await tx.lifecycleLog.create({
+      data: record as Prisma.LifecycleLogUncheckedCreateInput,
+      select: { id: true },
+    });
+    return { id: row.id };
   });
-  return { id: row.id };
-};
 
 /**
  * Appends hash-chained, agent-signed rows to `lifecycle_log`. Keeps the running
@@ -350,6 +372,17 @@ export class LifecycleLogWriter {
   }
 
   async append(input: LifecycleRowInput): Promise<PersistedLifecycleRow> {
+    try {
+      return await this.appendOnce(input);
+    } catch (err) {
+      if (!(err instanceof HeadMovedError)) throw err;
+      // another writer appended first: chain onto its row, re-sign, try once more
+      this.prevHash = err.head;
+      return this.appendOnce(input);
+    }
+  }
+
+  private async appendOnce(input: LifecycleRowInput): Promise<PersistedLifecycleRow> {
     const at = new Date();
     const entry = buildLifecycleEntry(
       {

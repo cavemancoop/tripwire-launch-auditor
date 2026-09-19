@@ -4,6 +4,7 @@ import { privateKeyToAccount } from 'viem/accounts';
 import { GENESIS_HASH, verifyLifecycleRows, type LifecycleChainRow } from '@launch-auditor/db';
 import {
   decideLifecycle,
+  HeadMovedError,
   LifecycleLogWriter,
   restrictToObserve,
   type LifecycleConfig,
@@ -302,6 +303,54 @@ describe('LifecycleLogWriter — hash chain + agent signature', () => {
     const check = verifyLifecycleRows(rows);
     expect(check.linked).toBe(false);
     expect(check.brokenAt).toBe(1);
+  });
+
+  // 2026-09-19: during a deploy the old and new worker both appended onto row
+  // 229, forking the chain; the dashboard read "BROKEN" though no row changed.
+  it('reports a fork — two signed rows sharing a parent — as intact, not broken', async () => {
+    const { recs } = await writeChain();
+    const rows = recs.map(toChainRow);
+    // a second writer that also saw row 0 as the head
+    const other: LifecyclePersistRecord[] = [];
+    const w2 = new LifecycleLogWriter(AGENT, rows[0]!.bodyHash as `0x${string}`, async (rec) => {
+      other.push(rec);
+      return { id: 'x' };
+    });
+    await w2.append({ isSnapshot: true, prevState: 'NO_KEY', newState: 'NO_KEY', reason: 'second writer', balanceUsd: 20, reserveUsd: 3 });
+    const forked = [rows[0]!, rows[1]!, toChainRow(other[0]!), rows[2]!];
+    const check = verifyLifecycleRows(forked);
+    expect(check.intact).toBe(true);
+    expect(check.linked).toBe(false);
+    expect(check.forks).toEqual([2, 3]);
+    expect(check.brokenAt).toBeNull();
+  });
+
+  it('still reports a break when a row links to a parent that does not exist', async () => {
+    const { recs } = await writeChain();
+    const rows = recs.map(toChainRow);
+    const gapped = [rows[0]!, rows[2]!]; // row 1 deleted: row 2's parent is missing
+    const check = verifyLifecycleRows(gapped);
+    expect(check.intact).toBe(false);
+    expect(check.brokenAt).toBe(1);
+  });
+
+  it('re-chains onto the real head when another writer appended first', async () => {
+    const recs: LifecyclePersistRecord[] = [];
+    const realHead = `0x${'cd'.repeat(32)}` as const;
+    let first = true;
+    const writer = new LifecycleLogWriter(AGENT, GENESIS_HASH, async (rec) => {
+      if (first) {
+        first = false;
+        throw new HeadMovedError(realHead);
+      }
+      recs.push(rec);
+      return { id: '1' };
+    });
+    await writer.append({ isSnapshot: true, prevState: 'ACTIVE', newState: 'ACTIVE', reason: 'tick', balanceUsd: 20, reserveUsd: 3 });
+    expect(recs).toHaveLength(1);
+    expect(recs[0]!.prevHash).toBe(realHead);
+    expect(writer.head).toBe(recs[0]!.bodyHash);
+    expect(verifyLifecycleRows(recs.map(toChainRow)).brokenAt).toBeNull();
   });
 
   it('a window that does not start at genesis still links internally', async () => {

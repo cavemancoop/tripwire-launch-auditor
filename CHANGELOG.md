@@ -2140,3 +2140,42 @@ Removed or qualified the absolutes the audit listed:
   → the T+10m anchor and eligibility rule; "authorizes the MCP" → a wallet
   holding CREDIT. "nothing expires … the only human action possible" now names
   what the agent still depends on (RPC, funding, gas, the operator-held key).
+
+## 2026-09-19 — lifecycle chain forked during deploys; now serialized, and forks told apart from breaks
+
+### Found (logged-out walkthrough at `2c4ccd6`)
+The Key lifecycle panel read "chain BROKEN at 232 · genesis no". Rows 230
+(02:47:34Z) and 231 (02:48:11Z) both name row 229 as their parent: during the
+Tier 1 deploy the old and new worker containers each appended from their own
+in-memory head. Row 470 is the same thing at a later deploy. Every row still
+hashes and every parent exists, so nothing was altered, but the chain is a
+tree, not a line. The same window also shows **no lifecycle rows from 02:48Z
+to 04:51Z**. The runner didn't tick for about 2h, most likely the same RPC
+starvation that held up the scorer that night. Not yet confirmed.
+
+### Fixed
+- Writer (`lifecycle-runner.ts`): `prismaPersist` appends inside a transaction
+  holding a Postgres advisory lock and checks the row's `prevHash` against the
+  real head. On a mismatch it throws `HeadMovedError`, and the writer chains
+  onto the real head, re-signs, and retries once. Two containers now
+  interleave instead of forking.
+- Verifier (`packages/db/lifecycle-chain.ts`): a row whose parent is an intact
+  earlier row is a **fork**, listed in `forks[]`. A row that doesn't hash, or
+  names a missing parent, is still `brokenAt`. `/v1/lifecycle` returns
+  `verified` = intact (no row altered, no missing parent), `linear` and
+  `forks`.
+- Dashboard: "rows unaltered: intact, 2 forks" with the deploy-overlap
+  explanation; "newest 500 rows, not from genesis" instead of a bare "genesis
+  no"; and "longest gap between rows", so the 2h silence shows.
+- Funding note: "can only become its own AI balance" → the worker's code path
+  only activates; an application check, not a wallet restriction (Fable).
+- Live launches note: the newest rows are always pending (scores at T+10m,
+  commit a few minutes later).
+
+### Verify
+- `pnpm verify` green. `lifecycle-runner.test.ts` covers a fork → intact with
+  forks [2, 3]; a deleted row → still broken; a writer re-chaining after
+  `HeadMovedError`.
+- After deploy: the Key lifecycle panel reads "intact, 2 forks". The forks
+  shouldn't increase across the next deploy (if both containers overlap, rows
+  interleave).
