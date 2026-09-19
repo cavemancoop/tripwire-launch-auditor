@@ -191,6 +191,13 @@ imports, x402 or the film.
   Sep had a single resolved outcome. The resolver works oldest first through
   a ~200k backlog.
 
+## Follow-up after your second read (2026-09-19)
+
+- **`/v1/launches` is paged.** Follow `nextCursor` via `?before=` until null to walk every live launch. The cursor is `(launchBlock, launchId)`, newest first. A test walks a corpus with ties inside blocks and gets each launch exactly once.
+- **`COMMIT_REGISTRY_ADDRESS` is set on the API.** Receipts now carry `commit.registry`. This also re-enabled `/v1/proof`'s on-chain confirmation, which is why every proof you fetched said `onChainConfirmed: null`.
+- **The backlog is stated up front.** The benchmark panel opens with "Graded so far: 17,407 of 267,069 outcomes whose horizon has passed (6.5%)". `DEMO.md` has a section on it: 239,609 due and ungraded, 640 graded in 24h, 11,760 recorded failures and their sources.
+- **No model or feature work before judging**, per your advice.
+
 ## Still open
 
 | Item | Owner | Why it matters |
@@ -201,7 +208,6 @@ imports, x402 or the film.
 | Chain-head-to-cursor lag, committed-coverage and report-age distribution on `/metrics`; alerts on failure counters and on backlog | Claude, not started | Your fixes 4/8. The watcher metric still measures cursor recency, not distance from head. |
 | Alert delivery retry (a failed send still advances `lastBad`); persist alert state across restarts (a deploy mid-incident re-alerts) | Claude, not started | Your fix 8 |
 | Reserve capacity for current reports during a replay (the T+10m backlog at watcher priority starved outcomes and scorer reads for hours) | Claude, not started | Your fix 4 |
-| `/v1/launches` pagination beyond the newest 200 | Claude, not started | A complete public reconstruction path |
 | Bucket analysis of the inverted cells by T+10m liquidity; the applicability rule is planned post-judging (`DECISIONS.md`) | post-judging | Not a claim fix |
 | Film: labels and destination (point to panel 00 / benchmark, not only Telegram) | Cooper | Your video notes |
 | Lifecycle runner 2h silence 02:48–04:51Z on 19 Sep: probably RPC starvation after the outage, not confirmed | Claude | Continuity claim |

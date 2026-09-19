@@ -277,6 +277,13 @@ function renderBenchmark(snapshot) {
   }
   const coverage = snapshot.coverage || {};
   const exclusions = bench.exclusions || {};
+  // The resolver's backlog is the main operational risk: state it before any metric.
+  const cells = Object.values(coverage);
+  const graded = cells.reduce((a, c) => a + (c.resolved || 0), 0);
+  const due = cells.reduce((a, c) => a + (c.resolved || 0) + (c.pendingDue || 0) + (c.unresolvable || 0), 0);
+  const backlog = due
+    ? `<p class="note" style="color:var(--warn)">Graded so far: ${graded.toLocaleString('en-US')} of ${due.toLocaleString('en-US')} outcomes whose horizon has passed (${((100 * graded) / due).toFixed(1)}%). The resolver can't keep up, so everything below describes a small subset that isn't a random sample. Current rate and failure counts are on <code>/metrics</code>.</p>`
+    : '';
 
   const rows = [];
   for (const [outcome, cells] of Object.entries(all.byOutcome)) {
@@ -296,7 +303,7 @@ function renderBenchmark(snapshot) {
     });
   }
 
-  wrap.innerHTML = `<table>
+  wrap.innerHTML = `${backlog}<table>
     <thead><tr><th>outcome</th><th>forecaster</th><th>n</th><th>positives</th><th>auroc</th><th>brier skill</th><th></th></tr></thead>
     <tbody>${rows.join('') || '<tr><td colspan="7" class="empty">no cells yet</td></tr>'}</tbody>
   </table>${snapshot.resolutionPolicy ? `<p class="note">${snapshot.resolutionPolicy}</p>` : ''}`;

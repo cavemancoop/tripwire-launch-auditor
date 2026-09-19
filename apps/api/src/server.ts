@@ -189,6 +189,10 @@ export interface LaunchFeedRow {
   source: string;
   lane: string;
   launchAt: string | null;
+  /** block of the pool-creation tx — the feed's sort key */
+  launchBlock: string;
+  /** internal launch id — breaks ties within one block; part of the page cursor */
+  launchId: string;
   detV0: {
     pInsiderExit24h: number | null;
     pDrawdown8024h: number | null;
@@ -198,12 +202,33 @@ export interface LaunchFeedRow {
   proof: { committed: boolean; txHash?: string | null; committedAt?: string | null };
 }
 
-export type LaunchFeedReader = (limit: number) => Promise<LaunchFeedRow[]>;
+/** Position after which the next page starts: newest-first by (launchBlock, launchId). */
+export interface LaunchCursor {
+  block: bigint;
+  id: string;
+}
 
-const prismaLaunchFeedReader: LaunchFeedReader = async (limit) => {
+export type LaunchFeedReader = (limit: number, before?: LaunchCursor) => Promise<LaunchFeedRow[]>;
+
+/** Opaque to clients: base64url of "<launchBlock>:<launchId>". */
+export function encodeLaunchCursor(c: LaunchCursor): string {
+  return Buffer.from(`${c.block}:${c.id}`).toString('base64url');
+}
+
+export function decodeLaunchCursor(s: string): LaunchCursor | null {
+  const m = /^(\d{1,20}):([A-Za-z0-9_-]{1,64})$/.exec(Buffer.from(s, 'base64url').toString('utf8'));
+  return m ? { block: BigInt(m[1]!), id: m[2]! } : null;
+}
+
+const prismaLaunchFeedReader: LaunchFeedReader = async (limit, before) => {
   const launches = await prisma.launch.findMany({
-    where: { retrospective: false },
-    orderBy: { launchAt: 'desc' },
+    where: {
+      retrospective: false,
+      ...(before
+        ? { OR: [{ launchBlock: { lt: before.block } }, { launchBlock: before.block, id: { lt: before.id } }] }
+        : {}),
+    },
+    orderBy: [{ launchBlock: 'desc' }, { id: 'desc' }],
     take: limit,
   });
   if (launches.length === 0) return [];
@@ -224,6 +249,8 @@ const prismaLaunchFeedReader: LaunchFeedReader = async (limit) => {
       source: l.source,
       lane: l.lane,
       launchAt: l.launchAt?.toISOString() ?? null,
+      launchBlock: l.launchBlock.toString(),
+      launchId: l.id,
       detV0: r
         ? {
             pInsiderExit24h: r.pInsiderExit24h,
@@ -465,13 +492,24 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
     return formatPrometheus(m);
   });
 
-  // spec §9 — free: the live feed. Every non-retrospective launch with its
-  // latest det_v0 forecast and commit-proof pointer.
-  app.get('/v1/launches', async (req) => {
-    const q = req.query as { limit?: string };
+  // spec §9 — free: the live feed, newest first, with each launch's latest
+  // det_v0 forecast and commit pointer. Paged with an opaque cursor so a third
+  // party can walk the whole live corpus, not just the newest 200 (19 Sep
+  // audit): follow `nextCursor` via `?before=` until it is null.
+  app.get('/v1/launches', async (req, reply) => {
+    const q = req.query as { limit?: string; before?: string };
     const limit = clampLimit(Number(q.limit ?? 50), 200);
-    const launches = await readLaunchFeed(limit);
-    return { count: launches.length, launches };
+    let before: LaunchCursor | undefined;
+    if (q.before) {
+      const c = decodeLaunchCursor(q.before);
+      if (!c) return reply.code(400).send({ error: 'before must be a nextCursor from a previous page' });
+      before = c;
+    }
+    const launches = await readLaunchFeed(limit, before);
+    const last = launches[launches.length - 1];
+    const nextCursor =
+      launches.length === limit && last ? encodeLaunchCursor({ block: BigInt(last.launchBlock), id: last.launchId }) : null;
+    return { count: launches.length, launches, nextCursor };
   });
 
   // spec §9 — free tier during the contest: every forecaster's latest

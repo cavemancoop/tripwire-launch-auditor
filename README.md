@@ -240,7 +240,7 @@ deferred — see spec §9, "payments only if time remains"). Base URL: `http://l
 
 | Endpoint | What it does |
 |---|---|
-| `GET /v1/launches?limit=` | Live launch feed: latest non-retrospective launches with their `det_v0` forecast + commit-proof pointer. |
+| `GET /v1/launches?limit=&before=` | Live launch feed, newest first, with each launch's `det_v0` forecast and commit pointer. Paged: follow `nextCursor` as `?before=` until it is null to walk every live launch. |
 | `GET /v1/report/:token` | Every forecaster's latest forecast for a token, with evidence and proof status. |
 | `GET /v1/launch/:token` | The inputs behind those forecasts: primary-pool evidence (pool kind/address/fee, `poolFeeSuspect`, `tokenAgeAtPoolSec`), the raw feature vector + provenance, and every outcome row (status/value/evidence/coverage). Added M11b so the published benchmark can be reproduced from public data, not just asserted (Codex Phase A #2 / B #2). |
 | `POST /v1/assess/:token` | Enqueues one on-demand report for an already-indexed token, any age. *Scope note:* the spec's "daily re-scores for 7 days" is the recurring/event-aware re-scoring layer (v0.3 Watch, spec §10.1) — not built; this triggers a single immediate report. |

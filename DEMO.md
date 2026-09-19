@@ -95,7 +95,7 @@ On the eligible rows:
   rank launches; they aren't probabilities. The feed shows rank tiers, never
   percentages.
 - **Graded rows aren't a random sample.** The resolver has a backlog of about
-  200k pending outcomes. It works oldest first, and grades three of the five
+  239k horizon-due pending outcomes (19 Sep). It works oldest first, and grades three of the five
   labels for qualified launches only. None of 400 feed posts from 17–18 Sep had
   a resolved outcome yet. Each outcome on the page shows graded, pending and
   unresolvable counts, and the policy is stated under the table.
@@ -138,12 +138,28 @@ refit after seeing these results.
 
 Details and verification steps for each are in `CHANGELOG.md`.
 
+## The main operational risk: the resolver can't keep up
+
+As of 19 Sep ~09:45Z, **239,609** outcomes are past their horizon and still
+ungraded. The resolver graded **640** in the previous 24 hours. Of all
+outcomes whose horizon has passed, **6.5% are graded** (17,407 of 267,069).
+This is shown above the benchmark table. At this rate most forecasts will
+never be graded, and the benchmark describes a small subset that isn't a
+random sample.
+
+The failure counters on `/metrics` total **11,760** since they were added on
+17 Sep. Most are from the 18 Sep outage: 6,390 failed outcome resolutions,
+2,984 watcher poll errors, 921 failed deep-dives, 706 commit-loop errors and
+655 lifecycle tick errors. None of this is hidden; it's the first thing to
+fix after judging.
+
 ## Verify it yourself
 
 ```bash
 API=https://api-production-6a84.up.railway.app
 curl -s $API/v1/receipt/<reportHash>      # one forecast: signed bytes, signature, proof, chain time, outcomes
 pnpm verify:receipt <reportHash>          # checks that receipt without trusting the server
+curl -s "$API/v1/launches?limit=200"       # every live launch, newest first; follow nextCursor via ?before=
 curl -s $API/v1/launch/<token>            # the scorer's inputs: primary pool, features + provenance, outcome rows
 curl -s $API/v1/benchmark                 # every cell: eligible rows, exclusions by class, coverage, policy
 curl -s $API/v1/funding                   # every CREDIT activation, with tx hashes
@@ -153,7 +169,6 @@ pnpm install && pnpm verify               # the offline test suite (contract tes
 ```
 
 **Known gaps:**
-- The public feed endpoint only lists the newest 200 launches.
 - Probabilities aren't calibrated, and `det_v1` (a real refit) is held until
   it can be fitted before a cutoff and scored only after it.
 - The source repository has to be public for judges to inspect it.

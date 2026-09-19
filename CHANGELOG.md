@@ -2195,3 +2195,32 @@ starvation that held up the scorer that night. Not yet confirmed.
 - Dashboard footer: "Committed before outcome" → "Counted forecasts were
   committed before their outcome window closed", plus "scores rank". The Key
   lifecycle subtitle now reads "each row folds its parent's; forks are shown".
+
+## 2026-09-19 — auditor follow-up: corpus pagination, registry on the API, backlog up front
+
+### Changed
+- `GET /v1/launches` is paged: an opaque `nextCursor` (base64url of
+  `launchBlock:launchId`), followed via `?before=` until it's null. The feed is
+  ordered newest first by `(launchBlock, id)`, not `launchAt`, which can be
+  null. Rows carry `launchBlock` and `launchId`. A malformed cursor → 400.
+  The test walks a 30-launch corpus in pages of 4 with three-way ties inside
+  each block, and gets every launch exactly once.
+- API deployment: `COMMIT_REGISTRY_ADDRESS` is now set (a Railway reference to
+  the worker's value). Receipts carried `"registry": null`, and
+  `/v1/proof`'s on-chain confirmation had been skipped since M9 — the audit saw
+  `onChainConfirmed: null` on every proof. One variable, both fixed.
+- Benchmark panel headline: "Graded so far: X of Y outcomes whose horizon has
+  passed", computed from the snapshot's own coverage (currently 17,407 of
+  267,069, 6.5%).
+- `DEMO.md` has a section on the main operational risk: 239,609 due and
+  ungraded, 640 graded in the last 24h, 11,760 recorded failures and what they
+  were.
+
+### Verify
+- `pnpm verify` green (api 76).
+- After deploy, logged out:
+  - `curl -s "$API/v1/launches?limit=2"` has `nextCursor`, and following it
+    returns the next two;
+  - `curl -s $API/v1/receipt/<hash> | jq .commit.registry` is the registry
+    address;
+  - `/v1/proof/<hash>` has `onChainConfirmed: true`.

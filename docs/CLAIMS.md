@@ -83,6 +83,5 @@ this week" (CHANGELOG entries dated 2026-09-18/19).
 ## Known open items at this baseline
 
 - The repository is private (C7).
-- `/v1/launches` lists only the newest 200.
 - The lifecycle runner had a 13.7 h gap (18 Sep outage) and 2 forks
   (18–19 Sep deploys, since prevented).
