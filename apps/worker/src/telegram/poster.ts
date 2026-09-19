@@ -163,7 +163,8 @@ export function formatTelegramMessage(
   lines.push(
     `Ranking only: these scores are not calibrated probabilities. Benchmark: ${api ? `${api}/v1/benchmark` : 'see the dashboard'}`,
   );
-  if (api) lines.push(`Verify this forecast: ${api}/v1/proof/${row.reportHash}`);
+  // the receipt proves *this* forecast's signed bytes, not just batch membership
+  if (api) lines.push(`Verify this forecast: ${api}/v1/receipt/${row.reportHash}`);
   lines.push(
     row.txHash
       ? `Batch anchor (many reports, one Merkle root): ${explorer}/tx/${row.txHash}`
