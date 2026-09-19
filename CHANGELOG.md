@@ -2244,3 +2244,24 @@ starvation that held up the scorer that night. Not yet confirmed.
 - `docs/CLAIMS.md` C7, audit-response finding 2 and DEMO.md now point at the
   public repo. The history rewrite to remove the docx from *this* repo is
   dropped: this repo stays private, and no commit hashes change.
+
+## 2026-09-19 — production database password rotated; public repo synced
+
+- **Password.** The Postgres password had appeared in an operator chat. It was
+  changed inside Postgres (`ALTER USER`, now a fresh SCRAM hash) through the SSH
+  tunnel, and set on the Postgres service's `POSTGRES_PASSWORD` via
+  `--stdin`. `PGPASSWORD` and every service's `DATABASE_URL` are Railway
+  references and picked it up. api, worker and web were redeployed at 11:00Z.
+  The value was generated locally, never printed, and deleted afterwards.
+- **Checked:**
+  - after the redeploy the worker wrote new lifecycle rows and ingested new
+    launches;
+  - the API served DB-backed data;
+  - there were no authentication errors in either service's logs;
+  - the lifecycle log stayed intact across the triple redeploy (no new fork).
+- **Note:** Postgres's `pg_hba` trusts local (127.0.0.1) connections, which
+  include Railway's SSH tunnel. Tunnel access is gated by the Railway login and
+  a registered SSH key, not the DB password. Network clients need the password
+  (`scram-sha-256`). There's no public TCP proxy.
+- **Public repo:** `fb530d1` mirrors the dashboard badge fix, so its code is
+  again identical (by blob hash) to the deployed `5ac8e8f`.
