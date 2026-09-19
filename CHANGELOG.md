@@ -1915,3 +1915,39 @@ about 3 days.
   during an incident will re-alert. Minor, but it's noise.
 - An alert at 2:44 AM with nobody on call waits until morning. For an
   overnight stall, the budget cut is what limits the damage now.
+
+## M12b — the public feed posts rank tiers, not probabilities (2026-09-19)
+
+Fable's decision A (19 Sep). The benchmark supports two things about
+`det_v0`: it beats both base rates at *ranking* insider exit (24h) and still
+trading (24h), and its probabilities are miscalibrated on every cell (negative
+Brier Skill). The feed was posting rounded probabilities ("100% / 100% / 0%")
+on three cells, including drawdown, where `det_v0` ranks backwards.
+
+### Changed — `apps/worker/src/telegram/poster.ts`
+- Two rows only: insider exit within 24h and still trading at 24h, each as a
+  rank tier (top 10% / top 25% / middle half / bottom 25%) against `det_v0`
+  scores of qualified launches anchored in the 24h before this one (ties count
+  half). Fewer than 20 peers → "not ranked". Drawdown is no longer posted.
+- Footer: "Ranking only: these scores are not calibrated probabilities",
+  linking `/v1/benchmark` when `PUBLIC_API_BASE_URL` is set.
+- A report whose batch committed more than 30 minutes after its T+10m anchor
+  is never posted. During the 18 Sep outage, catch-up reports built hours late
+  were going out as "New qualified launch". Candidates are limited to reports
+  anchored in the last hour, so skipped ones age out instead of blocking the
+  queue.
+- "committed before outcome" → "Committed N min after its T+10m anchor", the
+  measured lag, which anyone can check against the batch tx.
+- README: the "never double-posts" wording (Codex §3.7) corrected to
+  best-effort deduplication.
+
+### Verify
+- `pnpm verify` green (`telegram-poster.test.ts`: 15 tests — tier buckets,
+  ties, the peer minimum, no probability or drawdown text, freshness boundary
+  at 30 min, stale rows not consuming the per-sweep limit).
+- After deploy, the next post in the public channel has two tier rows, the
+  footer, and a commit lag under 30 min. Worker log lines read
+  `[telegram] swept N: … posted · … stale · … failed`.
+- Not yet checked against live data: how spread out `det_v0` scores are among
+  qualified launches. If most tie, most posts land in "middle half". Check
+  this in the tunnel session alongside M12a.

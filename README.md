@@ -270,9 +270,20 @@ however many samples the log currently holds, and says so).
 The free feed is a worker loop (`apps/worker/src/telegram/poster.ts`): every
 `TELEGRAM_POSTER_INTERVAL_MS` it posts each qualified-launch `det_v0` report
 (once it has a commit, so the proof link resolves) to `TELEGRAM_CHANNEL_ID` via
-`TELEGRAM_BOT_TOKEN`, and stamps the report's `telegramPostedAt` so a restart
-never double-posts. Unset either env var and the poster logs once that it's
+`TELEGRAM_BOT_TOKEN`, and stamps the report's `telegramPostedAt` after the send.
+That's best-effort deduplication: a crash between the send and the stamp can
+repeat one post. Unset either env var and the poster logs once that it's
 disabled and does nothing — it never spams a channel nobody configured.
+
+What a post says (M12b) is limited to what the benchmark supports. `det_v0`
+beats both base rates at *ranking* insider exit (24h) and still trading (24h),
+and its probabilities are miscalibrated on every cell. So a post shows a rank
+tier on those two cells (top 10% / top 25% / middle half / bottom 25%) against
+the qualified launches anchored in the previous 24h, with at least 20 peers or
+"not ranked". It never shows a raw probability, and drawdown isn't posted
+because `det_v0` ranks it backwards. A report whose batch committed more than
+30 minutes after its T+10m anchor is not posted at all. Each post states its
+measured commit lag instead of an unqualified "committed before outcome".
 
 ## Deploy (M9, Railway)
 
