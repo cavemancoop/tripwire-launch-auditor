@@ -2121,3 +2121,22 @@ the proof cell linked the batch transaction, which many reports share.
   that result against a direct run of the worker functions.
 - After deploy, logged out: panel 00 renders the receipt, and the budget card
   shows "today's effective cap" with its binding term.
+
+## Tier 3 (19 Sep audit, fix 7) — copy matches what production shows (2026-09-19)
+
+Removed or qualified the absolutes the audit listed:
+- **Dashboard hero:** no longer "every new token launch" or "exact
+  probabilities". It says scores rank launches and are not calibrated. The
+  tagline says "forecasts", not "oracle".
+- **README intro:** claims are now the eligibility rule, the receipt command
+  and "not calibrated". The earlier "every dollar of compute it has ever spent
+  came from CREDIT activations" was untrue before 16 Sep; it now says "since
+  16 Sep".
+- **200-word summary:** rewritten (198 words). It carries the 22% census, the
+  two surviving wins, the inverted cells, the scanner doing better, and the LLM
+  null result. "Authorize once" and "never holds or converts money" are gone.
+- **Fork-and-run:** "authorize once" → point it at a wallet holding CREDIT.
+- **Spec §0/§0.1:** "Oracle" → "Forecasts"; "within seconds"/"every forecast"
+  → the T+10m anchor and eligibility rule; "authorizes the MCP" → a wallet
+  holding CREDIT. "nothing expires … the only human action possible" now names
+  what the agent still depends on (RPC, funding, gas, the operator-held key).

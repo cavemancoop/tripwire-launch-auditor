@@ -1,17 +1,29 @@
 # Tripwire Launch Auditor
 
-Precommitted exit-risk oracle for Robinhood Chain (chain 4663). For every new token
-launch it computes deterministic manipulation / exit-risk features within seconds,
-publishes probabilities for five mechanically-defined outcomes (eleven outcome×horizon
-cells in total), signs and commits the
-forecast on-chain **before** the outcome can be known, and later grades every forecast
-with an open-source scorer against those outcomes and against public baselines.
+Precommitted exit-risk forecasts for Robinhood Chain (chain 4663). For each new token
+launch the watcher detects, it computes deterministic manipulation / exit-risk features
+from the first ten minutes and publishes scores for five mechanically-defined outcomes
+(eleven outcome×horizon cells). It signs each report and commits its hash on-chain,
+normally within minutes of that T+10m anchor. It later grades the forecasts with an
+open-source scorer against those outcomes and against public baselines.
 
-What it claims: the forecast existed before the outcome; the scorer is reproducible;
-the baseline comparison is public. What it does **not** claim: that it pays for itself,
-that no human touched the server, or that a forecast is correct because it was committed.
-What it claims about the agent's own account: every dollar of compute it has ever spent came
-from an on-chain CREDIT activation, each one a public transaction (dashboard → Funding).
+What it claims:
+- A counted forecast was committed on-chain within 30 minutes of its anchor and before
+  its outcome window closed. Forecasts committed later are excluded from every claim
+  and counted separately (`DECISIONS.md`, 2026-09-19).
+- The scorer is reproducible.
+- Any single forecast can be checked without trusting this server:
+  `pnpm verify:receipt <reportHash>`.
+- The baseline comparison is public.
+
+What it does **not** claim:
+- that the scores are calibrated probabilities (they rank launches);
+- that it pays for itself;
+- that no human touched the server;
+- that a forecast is correct because it was committed.
+
+Since 16 Sep, the agent's compute has been funded by CREDIT activated into its own
+on-chain account, each activation a public transaction (dashboard → Funding).
 
 Full spec: [`launch-auditor-spec-v0.2.md`](./launch-auditor-spec-v0.2.md).
 
@@ -20,23 +32,25 @@ Full spec: [`launch-auditor-spec-v0.2.md`](./launch-auditor-spec-v0.2.md).
 Text for an external submission form or one-pager — stays inside what's
 actually provable today.
 
-> Tripwire Launch Auditor watches every new token on Robinhood Chain, computes
-> deterministic manipulation and exit-risk features within seconds, and
-> publishes separate probabilities for five mechanically defined outcomes —
-> insider exit, sell impairment, liquidity impairment, 80% drawdown, still
-> trading — at fixed horizons. Every forecast is signed and its hash
-> committed on-chain before the outcome can be known; an open-source scorer
-> later grades it against chain data and against public baselines, including
-> the existing scanners' own verdicts. The product is not the warning but the
-> track record.
+> Tripwire Launch Auditor scores new token launches on Robinhood Chain for five
+> mechanically defined outcomes: insider exit, sell impairment, liquidity
+> impairment, 80% drawdown and still trading, ten minutes after each pool
+> appears. Each report is signed and its hash committed on-chain,
+> normally within minutes. Anyone can check one without trusting our server.
 >
-> The agent authenticates with a key derived by signing a message with its
-> own wallet — no browser session, no minted-then-revoked key, nothing that
-> expires. It reads its balance from the gateway's API, sizes its daily
-> research budget from CREDIT accrued on-chain in the trailing 24 hours, and
-> writes every state change to a signed lifecycle log — it never holds or
-> converts money. Anyone holding $ORBIO can clone the repo, authorize once,
-> and run their own instance.
+> An open-source scorer grades forecasts against chain data and public
+> baselines, including existing scanners. It counts only forecasts committed
+> within 30 minutes of their anchor and before the outcome window closed, a
+> rule added when outage replays committed hours late turned up in 22% of
+> scored rows. On the rows that count, the model beats both base
+> rates at ranking insider exit and whether a token is still trading. It ranks drawdown and liquidity loss backwards, where an existing
+> scanner does better. The LLM deep-dive shows no added discrimination yet. The
+> scores rank launches; they are not calibrated probabilities.
+>
+> The agent's research budget is drawn from CREDIT activated into its own
+> on-chain account, capped at half of what arrived in the last 24 hours. Its API
+> key is a wallet signature, so there is no session to expire. The operator
+> funds it; each activation is public.
 
 ## Layout
 
@@ -182,7 +196,8 @@ pnpm db:migrate
 ## Fork-and-run (spec §8.1)
 
 This is the property the Orbio red-team test (spec §0.1) actually checks: anyone
-holding $ORBIO can clone this repo, authorize once, and run their own instance —
+holding $ORBIO can clone this repo, point it at a wallet holding CREDIT (earned by
+staking ORBIO), and run their own instance —
 with **no card, no top-up from a fiat rail, no payment rail**. Three steps, end to end
 (this deployed instance's own funding is disclosed on the dashboard's Metabolism →
 Funding panel — see [DEMO.md](./DEMO.md)):
