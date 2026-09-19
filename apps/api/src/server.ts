@@ -131,6 +131,18 @@ const prismaEstimatorReader: EstimatorReader = async () => {
   };
 };
 
+/** Deep-dive spend since 00:00 UTC — the same window and sources the worker's gate uses. */
+export type TodaySpendReader = (now: Date) => Promise<{ ledgerUsd: number; providerUsd: number }>;
+
+const prismaTodaySpendReader: TodaySpendReader = async (now) => {
+  const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const [ledger, provider] = await Promise.all([
+    prisma.metabolismSpend.aggregate({ _sum: { costUsd: true }, where: { at: { gte: dayStart } } }),
+    prisma.metabolismEpoch.aggregate({ _sum: { providerDeltaUsd: true }, where: { at: { gte: dayStart } } }),
+  ]);
+  return { ledgerUsd: ledger._sum.costUsd ?? 0, providerUsd: provider._sum.providerDeltaUsd ?? 0 };
+};
+
 export type LifecycleReader = (limit: number) => Promise<LifecycleApiRow[]>;
 
 const DEFAULT_LIMIT = 200;
@@ -391,6 +403,7 @@ export interface BuildServerOptions {
   /** injectable for tests — defaults to a Prisma-backed reader */
   lifecycleReader?: LifecycleReader;
   estimatorReader?: EstimatorReader;
+  todaySpendReader?: TodaySpendReader;
   launchFeedReader?: LaunchFeedReader;
   reportReader?: ReportReader;
   launchDetailReader?: LaunchDetailReader;
@@ -412,6 +425,7 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
 
   const readLifecycle = opts.lifecycleReader ?? prismaLifecycleReader;
   const readEstimator = opts.estimatorReader ?? prismaEstimatorReader;
+  const readTodaySpend = opts.todaySpendReader ?? prismaTodaySpendReader;
   const readLaunchFeed = opts.launchFeedReader ?? prismaLaunchFeedReader;
   const readReport = opts.reportReader ?? prismaReportReader;
   const readLaunchDetail = opts.launchDetailReader ?? prismaLaunchDetailReader;
@@ -600,29 +614,31 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
       ? Math.min(MAX_LIMIT, Math.max(1, Math.trunc(parsed)))
       : DEFAULT_LIMIT;
 
-    const [entries, estimator, funding] = await Promise.all([
+    const [entries, estimator, funding, today] = await Promise.all([
       readLifecycle(limit),
       readEstimator(),
       // property 2 (2026-09-16): same cached on-chain read /v1/funding uses.
-      // A failure here must not take the whole lifecycle endpoint down —
-      // fall back to no credit_share term, exactly like an unconfigured instance.
+      // A failure here must not take the whole lifecycle endpoint down — the
+      // display then reports the flat-cap fallback, as the worker does.
       readFunding().catch(() => null),
+      readTodaySpend(new Date()),
     ]);
     const check = verifyLifecycleRows(entries);
 
+    // the worker reads the latest snapshot with a balance, not the latest row
+    const withBalance = [...entries].reverse().find((e) => e.balanceUsd != null);
     const latest = entries[entries.length - 1];
     const budget = budgetDisplay({
       dailyCapUsd: env.deepdiveDailyCapUsd,
       capPerRunUsd: env.deepdiveCapPerRunUsd,
-      creditShareUsd: funding?.configured ? funding.trailingCreditsUsd * 0.5 : undefined,
-      spentTrailing24hUsd: Math.max(estimator.providerSpend24hUsd, estimator.estimatedSpend24hUsd),
+      trailingCreditsUsd: funding?.configured ? funding.trailingCreditsUsd : undefined,
+      todaySpendUsd: today.ledgerUsd,
+      providerSpendTodayUsd: today.providerUsd,
       // null, not 0, when no balance has ever been read: the worker falls back
-      // to the daily cap in that case and keeps running, so reporting 0 here
-      // printed "next run allows up to $0.00 / binding constraint: zero" on the
-      // panel while deep-dives were actually being scored at $0.20 a time.
-      keyRemainingUsd: latest?.keyRemainingUsd ?? latest?.balanceUsd ?? null,
+      // to the daily cap in that case and keeps running.
+      balanceUsd: withBalance?.balanceUsd ?? null,
       reserveUsd: env.metabolismReserveUsd,
-      billingStatus: latest?.billingStatus ?? estimator.latest?.billingStatus ?? null,
+      billingStatus: withBalance?.billingStatus ?? latest?.billingStatus ?? estimator.latest?.billingStatus ?? null,
     });
 
     return {

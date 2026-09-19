@@ -143,15 +143,21 @@ function renderMetabolism(lifecycle) {
   grid.appendChild(metric('Billing status', latest?.billingStatus ?? 'n/a', latest?.newState ?? 'no reading yet'));
 
   const b = budget;
+  const BINDING = { daily_cap: 'configured ceiling', credit_share: 'half of CREDIT activated in the last 24h', key_reserve: 'balance above reserve', zero: 'nothing left' };
   document.getElementById('budget-body').innerHTML = `
-    <div class="kv"><span class="k">daily cap</span><span class="v">${usd(b.dailyCapUsd)}</span></div>
-    <div class="kv"><span class="k">spent, trailing 24h</span><span class="v">${usd(b.spentTrailing24hUsd)}</span></div>
+    <div class="kv"><span class="k">configured ceiling</span><span class="v">${usd(b.dailyCapUsd)}</span></div>
+    <div class="kv"><span class="k">today's effective cap</span><span class="v">${usd(b.effectiveDailyCapUsd)} · ${BINDING[b.effectiveCapBinding] ?? b.effectiveCapBinding}</span></div>
+    <div class="kv"><span class="k">spent since 00:00 UTC</span><span class="v">${usd(b.spentTodayUsd)}</span></div>
     <div class="kv"><span class="k">remaining today</span><span class="v">${usd(b.remainingTodayUsd)}</span></div>
-    <div class="kv"><span class="k">spendable on key</span><span class="v">${usd(b.spendableKeyUsd)}</span></div>
     <div class="kv"><span class="k">next run allows up to</span><span class="v">${usd(b.maxRunCostUsd)}</span></div>
-    <div class="kv"><span class="k">binding constraint</span><span class="v">${b.bindingConstraint}</span></div>
+    <p class="note">Computed with the worker's own gate and spend window. ${
+      b.capSource === 'credit_linked'
+        ? 'The cap follows on-chain CREDIT: at most half of what was activated into the agent\'s account in the trailing 24h.'
+        : 'CREDIT activations could not be read, so the flat configured ceiling applies — the worker falls back the same way.'
+    }${b.allowed ? '' : ` Not running now: ${b.reason}.`}</p>
     ${b.gateClosedByBilling ? '<p class="note" style="color:var(--bad)">Gate closed — billing status is anomaly or phantom.</p>' : ''}
-    ${b.balanceStale ? `<p class="note" style="color:var(--warn)">Balance last confirmed ${balanceAgeLabel(lifecycle)} — the Orbio MCP session bounds key management, not spending, so research continues under the daily cap and the local ledger.</p>` : ''}
+    ${b.balanceUnknown ? '<p class="note" style="color:var(--warn)">No balance has been read yet; the daily ceiling stands in for it, as in the worker.</p>' : ''}
+    ${b.balanceStale ? `<p class="note" style="color:var(--warn)">Balance last confirmed ${balanceAgeLabel(lifecycle)}; research continues under the daily cap and the local spend ledger.</p>` : ''}
   `;
 
   const check = { verified: lifecycle.verified, startsAtGenesis: lifecycle.startsAtGenesis, brokenAt: lifecycle.brokenAt };
@@ -351,7 +357,49 @@ function renderLifecycle(lifecycle) {
 
 // ── Boot ─────────────────────────────────────────────────────────────────
 
+// ── Pinned example ───────────────────────────────────────────────────────
+
+/**
+ * Feed post 884 (2026-09-15): picked from the 113 completed, fully eligible
+ * forecasts in the 12–16 Sep feed archive because it resolved the cell det_v0
+ * is best at (insider exit). It illustrates the mechanism; it is not evidence
+ * of skill, since one hit says little when most launches score above 0.99.
+ */
+const PINNED_EXAMPLE = '0xbe1e685a69a34249a45bed2a31bda873c0765cf32abb8a41ab906ec768c7e915';
+
+async function renderExample() {
+  const body = document.getElementById('example-body');
+  try {
+    const r = await getJson(`/v1/receipt/${PINNED_EXAMPLE}`);
+    const c = JSON.parse(r.canonicalJson);
+    const n = (x) => Number(x).toLocaleString('en-US');
+    const rows = r.outcomes
+      .filter((o) => ['INSIDER_EXIT', 'TRADING_ALIVE', 'LIQ_IMPAIRED', 'DRAWDOWN_80'].includes(o.label) && ['6h', '24h'].includes(o.horizon))
+      .map((o) => {
+        const key = `${o.label}@${o.horizon}`;
+        const p = c.probabilities?.[key];
+        const result = o.status === 'RESOLVED' ? (o.value ? 'yes' : 'no') : o.status.toLowerCase();
+        return `<tr><td>${key}</td><td>${p == null ? 'n/a' : p.toFixed(3)}</td><td>${result}</td><td>${o.eligibility}</td></tr>`;
+      })
+      .join('');
+    body.innerHTML = `
+      <div class="kv"><span class="k">token</span><span class="v"><a href="${EXPLORER_BASE}/token/${c.tokenAddress}" target="_blank" rel="noopener">${short(c.tokenAddress)} ↗</a></span></div>
+      <div class="kv"><span class="k">forecast anchored (T+10m block)</span><span class="v">${new Date(c.reportTime).toISOString().replace('.000Z', 'Z')}</span></div>
+      <div class="kv"><span class="k">committed on-chain (block time)</span><span class="v">${r.commit.blockTime?.replace('.000Z', 'Z') ?? 'unknown'} · ${n(r.commit.lagFromAnchorSec)} s later · <a href="${EXPLORER_BASE}/tx/${r.commit.txHash}" target="_blank" rel="noopener">tx ↗</a></span></div>
+      <div class="kv"><span class="k">signed by</span><span class="v">${short(r.signer)} (EIP-712)</span></div>
+      <div class="table-wrap" style="margin-top:0.7rem;max-height:none"><table>
+        <thead><tr><th>outcome</th><th>det_v0 score</th><th>happened?</th><th>counts toward claims</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+      <p class="note">An insider exit did happen, and <code>det_v0</code> scored it 0.996. That's one example of the mechanism, not evidence of skill: most launches score above 0.99, and the scores rank launches rather than being probabilities. Whether the ranking works is answered by the benchmark (04) on every eligible forecast. It was picked from 113 completed, fully eligible forecasts in the 12–16 Sep feed archive because it resolved the outcome <code>det_v0</code> is best at. Its research budget came from on-chain CREDIT (Funding, under 01).</p>
+      <p class="note">Check it yourself: <code>pnpm verify:receipt ${r.reportHash}</code> recomputes the hash from these exact bytes, recovers the signer, folds the Merkle proof and reads the commit from chain · <a href="${getApiBase()}/v1/receipt/${r.reportHash}" target="_blank" rel="noopener">raw receipt ↗</a></p>`;
+  } catch (err) {
+    body.innerHTML = `<p class="note">Receipt unavailable right now (${err instanceof Error ? err.message : err}).</p>`;
+  }
+}
+
 async function loadAll() {
+  void renderExample();
   const statusDot = document.getElementById('api-status');
   try {
     const [lifecycle, launches, benchmark, funding] = await Promise.all([

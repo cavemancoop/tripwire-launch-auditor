@@ -1,132 +1,91 @@
+import { dailyDeepdiveBudget, deepdiveRunGate } from '@launch-auditor/db';
 import { describe, expect, it } from 'vitest';
-import { budgetDisplay } from '../src/budget-display';
+import { budgetDisplay, type BudgetDisplayInputs } from '../src/budget-display';
 
-const BASE = {
+const BASE: BudgetDisplayInputs = {
   dailyCapUsd: 5,
   capPerRunUsd: 0.2,
-  spentTrailing24hUsd: 0,
-  keyRemainingUsd: 10,
+  todaySpendUsd: 0,
+  providerSpendTodayUsd: 0,
+  balanceUsd: 10,
   reserveUsd: 3,
 };
 
-describe('budgetDisplay', () => {
-  it('binds on cap_per_run when the per-run cap is the smallest candidate', () => {
-    const b = budgetDisplay(BASE);
-    expect(b.maxRunCostUsd).toBe(0.2);
-    expect(b.bindingConstraint).toBe('cap_per_run');
-  });
+describe('budgetDisplay — the same calculation as the worker gate', () => {
+  // 2026-09-19 audit counterexample. Live state: $5 configured cap, $1 CREDIT
+  // share (2 CREDIT activated in 24h), $25.42 balance, $0.20 per-run cap.
+  // After $0.90 spent the worker allows $0.10; the old display said $0.20 and
+  // "$4.10 remaining".
+  const audit: BudgetDisplayInputs = {
+    dailyCapUsd: 5,
+    capPerRunUsd: 0.2,
+    todaySpendUsd: 0.9,
+    providerSpendTodayUsd: 0,
+    balanceUsd: 25.42,
+    reserveUsd: 0.5,
+    trailingCreditsUsd: 2,
+  };
 
-  it('binds on daily_cap when today\'s remaining budget is smaller than the per-run cap', () => {
-    const b = budgetDisplay({ ...BASE, spentTrailing24hUsd: 4.9 });
+  it('allows $0.10 after $0.90 spent, exactly as the worker does', () => {
+    const b = budgetDisplay(audit);
+    expect(b.effectiveDailyCapUsd).toBe(1);
+    expect(b.effectiveCapBinding).toBe('credit_share');
     expect(b.remainingTodayUsd).toBe(0.1);
     expect(b.maxRunCostUsd).toBe(0.1);
-    expect(b.bindingConstraint).toBe('daily_cap');
+    expect(b.capSource).toBe('credit_linked');
   });
 
-  it('binds on spendable_key when the key has less left than the reserve plus the other caps allow', () => {
-    const b = budgetDisplay({ ...BASE, keyRemainingUsd: 3.1, capPerRunUsd: 5, dailyCapUsd: 5 });
-    expect(b.spendableKeyUsd).toBe(0.1);
-    expect(b.maxRunCostUsd).toBe(0.1);
-    expect(b.bindingConstraint).toBe('spendable_key');
+  it('agrees with a direct run of the worker functions', () => {
+    const spendable = audit.balanceUsd! - audit.reserveUsd;
+    const cap = dailyDeepdiveBudget({ dailyCapUsd: 5, trailingCreditsUsd: 2, keyRemainingUsd: audit.balanceUsd!, reserveUsd: 0.5 }).budgetUsd;
+    const gate = deepdiveRunGate({ capPerRunUsd: 0.2, dailyCapUsd: cap, todaySpendUsd: 0.9, providerSpendTodayUsd: 0, spendableUsd: spendable });
+    const b = budgetDisplay(audit);
+    expect([b.remainingTodayUsd, b.maxRunCostUsd, b.allowed]).toEqual([gate.remainingTodayUsd, gate.maxRunCostUsd, gate.allowed]);
   });
 
-  it('reports zero when the key is at or under reserve', () => {
-    const b = budgetDisplay({ ...BASE, keyRemainingUsd: 2, reserveUsd: 3 });
-    expect(b.spendableKeyUsd).toBe(0);
+  it('checks the cap against the larger of ledger and provider spend', () => {
+    const b = budgetDisplay({ ...audit, todaySpendUsd: 0.2, providerSpendTodayUsd: 0.95 });
+    expect(b.spentTodayUsd).toBe(0.95);
+    expect(b.remainingTodayUsd).toBe(0.05);
+  });
+
+  it('says so when CREDIT is unreadable and the flat cap applies — as the worker falls back', () => {
+    const b = budgetDisplay({ ...BASE });
+    expect(b.capSource).toBe('flat_fallback');
+    expect(b.effectiveDailyCapUsd).toBe(5);
+    expect(b.creditShareUsd).toBeNull();
+  });
+
+  it('refuses a run once the effective cap is spent, with the worker reason', () => {
+    const b = budgetDisplay({ ...audit, todaySpendUsd: 1 });
+    expect(b.allowed).toBe(false);
     expect(b.maxRunCostUsd).toBe(0);
-    expect(b.bindingConstraint).toBe('zero');
+    expect(b.reason).toMatch(/daily cap/);
   });
 
-  it('closes the gate to zero on anomaly or phantom billing status regardless of the numbers', () => {
-    const anomaly = budgetDisplay({ ...BASE, billingStatus: 'anomaly' });
-    const phantom = budgetDisplay({ ...BASE, billingStatus: 'phantom' });
-    expect(anomaly.maxRunCostUsd).toBe(0);
-    expect(anomaly.gateClosedByBilling).toBe(true);
-    expect(phantom.maxRunCostUsd).toBe(0);
-    expect(phantom.gateClosedByBilling).toBe(true);
+  it('refuses at or under the reserve', () => {
+    const b = budgetDisplay({ ...BASE, balanceUsd: 2, reserveUsd: 3 });
+    expect(b.allowed).toBe(false);
+    expect(b.spendableUsd).toBe(0);
+    expect(b.maxRunCostUsd).toBe(0);
   });
 
-  it('does not close the gate on exact / aggregate_only / unavailable billing status', () => {
-    for (const status of ['exact', 'aggregate_only', 'unavailable', null, undefined]) {
-      const b = budgetDisplay({ ...BASE, billingStatus: status });
-      expect(b.gateClosedByBilling).toBe(false);
-    }
-  });
-});
-
-describe('budgetDisplay — staleness is reported, not enforced', () => {
-  // Mirrors the worker gate: a lapsed Orbio session means nobody has re-read
-  // the balance, not that anything is wrong. The gateway key bills fine
-  // without a live session, so spending continues under the caps.
-  it('does not close the gate for a stale balance, but flags it', () => {
-    const b = budgetDisplay({ ...BASE, billingStatus: 'stale' });
-    expect(b.gateClosedByBilling).toBe(false);
-    expect(b.balanceStale).toBe(true);
-    expect(b.maxRunCostUsd).toBeGreaterThan(0);
-  });
-
-  it('still closes the gate for the compromise signals', () => {
+  it('closes on anomaly or phantom billing, and only those', () => {
     for (const s of ['anomaly', 'phantom']) {
       const b = budgetDisplay({ ...BASE, billingStatus: s });
       expect(b.gateClosedByBilling).toBe(true);
-      expect(b.maxRunCostUsd).toBe(0);
-      expect(b.balanceStale).toBe(false);
+      expect(b.allowed).toBe(false);
+    }
+    for (const s of ['exact', 'aggregate_only', 'unavailable', 'stale', null, undefined]) {
+      expect(budgetDisplay({ ...BASE, billingStatus: s }).gateClosedByBilling).toBe(false);
     }
   });
-});
 
-describe('budgetDisplay — credit_share (property 2, 2026-09-16)', () => {
-  // The dashboard must not silently keep showing the flat dailyCapUsd once
-  // the real gate is bound by accrual instead — that's exactly the
-  // dashboard-contradicts-the-system bug the previous test group exists to
-  // prevent, just for the newer term.
-  it('is absent from the candidates entirely when not provided — old behavior unchanged', () => {
-    const b = budgetDisplay(BASE);
-    expect(b.creditShareUsd).toBeUndefined();
-    expect(b.bindingConstraint).not.toBe('credit_share');
-  });
-
-  it('binds on credit_share when it is the smallest candidate', () => {
-    const b = budgetDisplay({ ...BASE, capPerRunUsd: 5, dailyCapUsd: 5, keyRemainingUsd: 100, creditShareUsd: 0.1 });
-    expect(b.maxRunCostUsd).toBe(0.1);
-    expect(b.bindingConstraint).toBe('credit_share');
-    expect(b.creditShareUsd).toBe(0.1);
-  });
-
-  it('a large credit_share does not override a smaller daily_cap or cap_per_run', () => {
-    const b = budgetDisplay({ ...BASE, creditShareUsd: 1000 });
-    expect(b.bindingConstraint).toBe('cap_per_run');
-    expect(b.creditShareUsd).toBe(1000); // still echoed, even when it isn't binding
-  });
-
-  it('a zero credit_share (funding aged out of the 24h window) closes the gate to zero', () => {
-    const b = budgetDisplay({ ...BASE, creditShareUsd: 0 });
-    expect(b.maxRunCostUsd).toBe(0);
-    expect(b.bindingConstraint).toBe('zero');
-  });
-});
-
-describe('budgetDisplay — an unread balance is not an empty one', () => {
-  // The worker falls back to the daily cap when no lifecycle snapshot exists
-  // and keeps running. Reporting 0 here printed "next run allows up to $0.00 /
-  // binding constraint: zero" on the panel while deep-dives were being scored
-  // at $0.20 each — the dashboard contradicting the system it describes.
-  it('falls back to the daily cap rather than claiming zero', () => {
-    const b = budgetDisplay({ ...BASE, keyRemainingUsd: null });
-    expect(b.balanceUnknown).toBe(true);
-    expect(b.maxRunCostUsd).toBeGreaterThan(0);
-    expect(b.bindingConstraint).not.toBe('zero');
-  });
-
-  it('a known balance is unaffected', () => {
-    const b = budgetDisplay({ ...BASE, keyRemainingUsd: 10 });
-    expect(b.balanceUnknown).toBe(false);
-    expect(b.spendableKeyUsd).toBe(7); // 10 - 3 reserve
-  });
-
-  it('an unread balance still respects the daily cap', () => {
-    const b = budgetDisplay({ ...BASE, keyRemainingUsd: null, spentTrailing24hUsd: 5 });
-    expect(b.remainingTodayUsd).toBe(0);
-    expect(b.maxRunCostUsd).toBe(0);
+  it('reports a stale balance and a never-read balance, without inventing zero', () => {
+    expect(budgetDisplay({ ...BASE, billingStatus: 'stale' }).balanceStale).toBe(true);
+    const unknown = budgetDisplay({ ...BASE, balanceUsd: null });
+    expect(unknown.balanceUnknown).toBe(true);
+    expect(unknown.spendableUsd).toBe(5); // the worker treats the daily cap as spendable
+    expect(unknown.maxRunCostUsd).toBe(0.2);
   });
 });

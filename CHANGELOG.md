@@ -2081,3 +2081,43 @@ the proof cell linked the batch transaction, which many reports share.
 - M12b feed format observed on production (`a2603e7`): 20/20 visible posts use
   rank tiers, ranked against 813 peers, commit lag 0–6 min, tiers spread
   across all four buckets.
+
+## Tier 2 (19 Sep audit, fixes 4 + 6) — a pinned verified example; one budget calculation (2026-09-19)
+
+### Added — dashboard panel 00, "One forecast, checked end to end"
+- Fetches `/v1/receipt/<hash>` for feed post 884 (`0xbe1e685a…e7c915`,
+  15 Sep): the token, the T+10m anchor, the commit's chain block time
+  (330 s later, with the tx), the signer, and the four headline outcomes with
+  score / what happened / eligibility. An insider exit happened, and `det_v0`
+  scored it 0.996.
+- It was picked from the 113 completed, fully eligible forecasts found by
+  scanning 614 public feed posts from 12–16 Sep, because it resolved the cell
+  `det_v0` is best at. The panel says it's an illustration, not evidence:
+  most launches score above 0.99, and the benchmark (04) is the evidence.
+  Scanning 400 posts from 17–18 Sep found **none** with any resolved outcome;
+  the resolver works through its backlog oldest first.
+- Shows the `pnpm verify:receipt` command and the raw receipt.
+
+### Changed — the budget display runs the worker's gate
+- `dailyDeepdiveBudget` and `deepdiveRunGate` moved verbatim to
+  `packages/db/src/deepdive-budget.ts`. The worker re-exports them (imports
+  unchanged) and the API's `budgetDisplay` now calls them. There is no
+  hand-kept copy to drift from.
+- Same spend window as the worker: `max(Σ ledger, Σ provider epochs)` since
+  00:00 UTC (new injectable `todaySpendReader`), not the trailing 24h.
+- The display shows the configured ceiling, today's effective cap
+  (`min(ceiling, ½ trailing CREDIT, spendable)`) and what binds it, spend since
+  midnight UTC, remaining, next-run max, the gate's own reason when it's
+  closed, `balanceUnknown`, and `capSource`: `credit_linked`, or
+  `flat_fallback` when CREDIT can't be read (disclosed, as the worker falls
+  back the same way).
+- The display's doc comment no longer says the agent "never holds or converts
+  money". Its wallet holds CREDIT.
+
+### Verify
+- `pnpm verify` green (api 74). `budget-display.test.ts` covers the audit
+  counterexample: $5 ceiling, 2 CREDIT → $1 share, $25.42 balance, $0.90
+  spent → effective cap $1, remaining $0.10, next run $0.10. It also checks
+  that result against a direct run of the worker functions.
+- After deploy, logged out: panel 00 renders the receipt, and the budget card
+  shows "today's effective cap" with its binding term.

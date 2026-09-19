@@ -3,6 +3,8 @@ import { GENESIS_HASH, lifecycleBodyHash } from '@launch-auditor/db';
 import { buildServer, type EstimatorSummary, type LifecycleApiRow } from '../src/server';
 import type { ApiEnv } from '../src/env';
 
+const ZERO_SPEND = async () => ({ ledgerUsd: 0, providerUsd: 0 });
+
 const BASE_ENV: ApiEnv = {
   rpcUrl: '',
   chainId: 4663,
@@ -57,7 +59,7 @@ describe('GET /v1/lifecycle', () => {
   it('serves the signed chain and verifies it', async () => {
     const rows = chain(3);
     const reader = vi.fn(async () => rows);
-    const app = buildServer({ lifecycleReader: reader, estimatorReader: async () => EMPTY_ESTIMATOR });
+    const app = buildServer({ todaySpendReader: ZERO_SPEND, lifecycleReader: reader, estimatorReader: async () => EMPTY_ESTIMATOR });
 
     const res = await app.inject({ method: 'GET', url: '/v1/lifecycle' });
     expect(res.statusCode).toBe(200);
@@ -76,7 +78,7 @@ describe('GET /v1/lifecycle', () => {
   it('reports verified:false when a served row is tampered', async () => {
     const rows = chain(3);
     rows[1] = { ...rows[1]!, reason: 'tampered after signing' };
-    const app = buildServer({ lifecycleReader: async () => rows, estimatorReader: async () => EMPTY_ESTIMATOR });
+    const app = buildServer({ todaySpendReader: ZERO_SPEND, lifecycleReader: async () => rows, estimatorReader: async () => EMPTY_ESTIMATOR });
 
     const body = (await app.inject({ method: 'GET', url: '/v1/lifecycle' })).json();
     expect(body.verified).toBe(false);
@@ -86,7 +88,7 @@ describe('GET /v1/lifecycle', () => {
 
   it('clamps ?limit and passes it to the reader', async () => {
     const reader = vi.fn(async () => chain(1));
-    const app = buildServer({ lifecycleReader: reader, estimatorReader: async () => EMPTY_ESTIMATOR });
+    const app = buildServer({ todaySpendReader: ZERO_SPEND, lifecycleReader: reader, estimatorReader: async () => EMPTY_ESTIMATOR });
 
     await app.inject({ method: 'GET', url: '/v1/lifecycle?limit=99999' });
     expect(reader).toHaveBeenCalledWith(1000);
@@ -97,7 +99,7 @@ describe('GET /v1/lifecycle', () => {
   });
 
   it('empty log verifies vacuously', async () => {
-    const app = buildServer({ lifecycleReader: async () => [], estimatorReader: async () => EMPTY_ESTIMATOR });
+    const app = buildServer({ todaySpendReader: ZERO_SPEND, lifecycleReader: async () => [], estimatorReader: async () => EMPTY_ESTIMATOR });
     const body = (await app.inject({ method: 'GET', url: '/v1/lifecycle' })).json();
     expect(body).toMatchObject({ count: 0, verified: true, startsAtGenesis: true });
     await app.close();
@@ -115,7 +117,7 @@ describe('GET /v1/lifecycle', () => {
       latest: { at: '2026-09-12T04:00:00.000Z', billingStatus: 'aggregate_only', discrepancyPct: 4.4, reconciliationFactor: 1.04 },
       basis: 'epoch_reconciled',
     };
-    const app = buildServer({ lifecycleReader: async () => [], estimatorReader: async () => estimator });
+    const app = buildServer({ todaySpendReader: ZERO_SPEND, lifecycleReader: async () => [], estimatorReader: async () => estimator });
     const body = (await app.inject({ method: 'GET', url: '/v1/lifecycle' })).json();
     expect(body.estimator).toEqual(estimator);
     await app.close();
@@ -124,9 +126,9 @@ describe('GET /v1/lifecycle', () => {
   // M8 — the dashboard's Metabolism panel reads this to show "today's budget
   // as a function of trailing-24h accrual" without re-deriving the worker's
   // gate formula itself.
-  it('carries a budget block mirroring the live deep-dive gate', async () => {
+  it('carries a budget block computed by the worker gate over the UTC day', async () => {
     const rows = chain(1);
-    rows[0] = { ...rows[0]!, keyRemainingUsd: 4, billingStatus: 'exact' };
+    rows[0] = { ...rows[0]!, balanceUsd: 4, billingStatus: 'exact' };
     const estimator: EstimatorSummary = {
       windows: 3,
       providerSpend24hUsd: 1.2,
@@ -137,19 +139,23 @@ describe('GET /v1/lifecycle', () => {
       basis: 'epoch_reconciled',
     };
     const app = buildServer({
+      todaySpendReader: async () => ({ ledgerUsd: 1.1, providerUsd: 1.2 }),
       lifecycleReader: async () => rows,
       estimatorReader: async () => estimator,
       env: BASE_ENV,
     });
     const body = (await app.inject({ method: 'GET', url: '/v1/lifecycle' })).json();
-    expect(body.budget).toEqual({
+    expect(body.budget).toMatchObject({
       dailyCapUsd: 5,
+      effectiveDailyCapUsd: 5,
+      capSource: 'flat_fallback', // no CREDIT source configured in this env
       capPerRunUsd: 0.2,
-      spentTrailing24hUsd: 1.2,
+      spentTodayUsd: 1.2, // the larger of ledger and provider, like the worker
+      spendWindow: 'utc_day',
       remainingTodayUsd: 3.8,
-      spendableKeyUsd: 1,
+      spendableUsd: 1,
       maxRunCostUsd: 0.2,
-      bindingConstraint: 'cap_per_run',
+      allowed: true,
       gateClosedByBilling: false,
       balanceStale: false,
       balanceUnknown: false,
@@ -159,8 +165,8 @@ describe('GET /v1/lifecycle', () => {
 
   it('closes the budget gate when billing status is anomaly or phantom', async () => {
     const rows = chain(1);
-    rows[0] = { ...rows[0]!, keyRemainingUsd: 4, billingStatus: 'phantom' };
-    const app = buildServer({
+    rows[0] = { ...rows[0]!, balanceUsd: 4, billingStatus: "phantom" };
+    const app = buildServer({ todaySpendReader: ZERO_SPEND,
       lifecycleReader: async () => rows,
       estimatorReader: async () => EMPTY_ESTIMATOR,
       env: BASE_ENV,

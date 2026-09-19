@@ -2,6 +2,7 @@ import { PrismaClient } from '@prisma/client';
 
 export * from '@prisma/client';
 export * from './lifecycle-chain';
+export * from './deepdive-budget';
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 
