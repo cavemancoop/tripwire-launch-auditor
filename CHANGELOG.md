@@ -2224,3 +2224,23 @@ starvation that held up the scorer that night. Not yet confirmed.
   - `curl -s $API/v1/receipt/<hash> | jq .commit.registry` is the registry
     address;
   - `/v1/proof/<hash>` has `onChainConfirmed: true`.
+
+## 2026-09-19 — public source repository; dashboard links point to it
+
+- The owner published **github.com/cavemancoop/tripwire-launch-auditor-public**:
+  one clean commit (`257c5c5`, GitHub no-reply author), without this repo's
+  history, audits, review packs or commercial document.
+- Checked anonymously:
+  - HTTP 200, MIT licence;
+  - `apps/`, `packages/` and `scripts/` byte-identical by git blob hash to the
+    private `main` (`6f728a2`);
+  - no credentials;
+  - a fresh clone, `pnpm install` and `pnpm verify:receipt 0xbe1e685a…`
+    pass all six checks.
+- The dashboard's "ranks backwards" badge linked `DECISIONS.md` in this
+  **private** repo, which returns 404 for judges. It now links the public
+  README's "What the benchmark says", and its tooltip carries the hypothesis
+  itself.
+- `docs/CLAIMS.md` C7, audit-response finding 2 and DEMO.md now point at the
+  public repo. The history rewrite to remove the docx from *this* repo is
+  dropped: this repo stays private, and no commit hashes change.

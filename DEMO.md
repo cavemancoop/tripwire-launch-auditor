@@ -30,6 +30,7 @@ It does not claim:
 | Dashboard | https://web-production-ddcf3.up.railway.app |
 | API | https://api-production-6a84.up.railway.app |
 | Free feed (Telegram) | https://t.me/tripwirelaunchauditor |
+| Public source | https://github.com/cavemancoop/tripwire-launch-auditor-public |
 | Chain | Robinhood Chain, id 4663 · explorer https://robinhoodchain.blockscout.com |
 | CommitRegistry | `0xF36F84a7B7DfFB952341d021db51bD76E54fDBEe` |
 | Report signer (EIP-712) | `0x6a5A2d5Ad4c4De33f851f971fa14923f5095B4BE` |
@@ -171,4 +172,3 @@ pnpm install && pnpm verify               # the offline test suite (contract tes
 **Known gaps:**
 - Probabilities aren't calibrated, and `det_v1` (a real refit) is held until
   it can be fitted before a cutoff and scored only after it.
-- The source repository has to be public for judges to inspect it.

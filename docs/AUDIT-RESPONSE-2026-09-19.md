@@ -18,7 +18,7 @@ imports, x402 or the film.
 | # | Finding | Status | Commits | How to check |
 |---|---|---|---|---|
 | 1 | Timeliness not enforced in the scorecard | **Fixed and observed** | `9c33b3d`, `101781b` | `curl $API/v1/benchmark \| jq .live.exclusions` |
-| 2 | Repository returns 404 anonymously | **Open — owner action** | — | `curl -I https://github.com/cavemancoop/tripwire-launch-auditor` → 404 |
+| 2 | Repository returns 404 anonymously | **Resolved with a separate public repo** | public `257c5c5` | `curl -I https://github.com/cavemancoop/tripwire-launch-auditor-public` → 200 |
 | 3 | Public proof doesn't bind the displayed forecast | **Fixed and observed** | `101781b`, `dce114f` | `pnpm verify:receipt <hash>` |
 | 4 | Cold demo leads to uncommitted rows; no verified entry point | **Mostly fixed** | `1bb8023`, `2c4ccd6` | dashboard panel 00 |
 | 5 | Contradictory benchmark claims and badges | **Fixed and observed** | `9c33b3d` | dashboard panel 04 |
@@ -208,11 +208,21 @@ imports, x402 or the film.
    - DRAWDOWN_80@24h (0.343) and LIQ_IMPAIRED@24h (0.321) rank backwards, with no claims.
 3. **Public CREDIT funding.** `/v1/funding` lists 26 CREDIT activated: operator #58 (20), agent #79, #164, #211 (2 each), all with tx hashes. The budget card uses the worker gate: cap $1.00, bound by the CREDIT share (`credit_linked`), $0.01 spent today, $0.20 next run.
 
+## Public repository (your fix 2)
+
+The owner published **github.com/cavemancoop/tripwire-launch-auditor-public**. It has a single clean commit (`257c5c5`, GitHub no-reply author) and none of this repo's history, audits, review packs or commercial document.
+
+Checked anonymously:
+- `apps/`, `packages/` and `scripts/` are byte-identical by git blob hash to the private `main`, which is the deployed code.
+- The history scan found no credentials.
+- A fresh clone, `pnpm install` and the README's `pnpm verify:receipt` pass all six checks.
+
+This private repo stays private.
+
 ## Still open
 
 | Item | Owner | Why it matters |
 |---|---|---|
-| Make the repository public (the history scan found no credentials; `Tripwire commercial.docx` is in history and needs an owner decision) | Cooper | Your fix 2. Fork-and-run and the scorer stay uninspectable until it's done; `docs/CLAIMS.md` marks C7 "not demonstrated". |
 | Chainstack RU burn after 24h at 1,000/min; Railway billing; phone notifications for the ops channel | Cooper | Your fix 8. Runway and overnight response. |
 | Rotate the production DB password (exposed in an operator chat during this work) | Cooper | Hygiene |
 | Chain-head-to-cursor lag, committed-coverage and report-age distribution on `/metrics`; alerts on failure counters and on backlog | Claude, not started | Your fixes 4/8. The watcher metric still measures cursor recency, not distance from head. |

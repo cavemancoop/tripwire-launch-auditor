@@ -52,7 +52,7 @@ added this file; they're marked "ships with this commit" until observed.
 | C4 | Summary: "a rule added when outage replays committed hours late turned up in 22% of scored rows" | prod-observed: census, `DECISIONS.md` 2026-09-19 |
 | C5 | Summary: "On the rows that count, the model beats both base rates at ranking insider exit and whether a token is still trading. It ranks drawdown and liquidity loss backwards, where an existing scanner does better. The LLM deep-dive shows no added discrimination yet." | prod-observed (benchmark) |
 | C6 | Summary: "Its API key is a wallet signature, so there is no session to expire. The operator funds it; each activation is public." | source-only (key derivation) + prod-observed (funding) |
-| C7 | Fork-and-run: "anyone holding $ORBIO can clone this repo, point it at a wallet holding CREDIT (earned by staking ORBIO), and run their own instance" | **not demonstrated.** The repository was private (HTTP 404, anonymous) at this baseline. |
+| C7 | Fork-and-run: "anyone holding $ORBIO can clone this repo, point it at a wallet holding CREDIT (earned by staking ORBIO), and run their own instance" | **Public source:** github.com/cavemancoop/tripwire-launch-auditor-public (anonymous HTTP 200, one clean commit, code byte-identical to the deployed tree). An anonymous clone + `pnpm install` + `pnpm verify:receipt` passes. Running a full instance with its own CREDIT wallet has not been independently demonstrated. |
 
 ## D. `DEMO.md`
 
@@ -82,6 +82,5 @@ this week" (CHANGELOG entries dated 2026-09-18/19).
 
 ## Known open items at this baseline
 
-- The repository is private (C7).
 - The lifecycle runner had a 13.7 h gap (18 Sep outage) and 2 forks
   (18–19 Sep deploys, since prevented).
