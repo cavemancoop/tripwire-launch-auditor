@@ -9,6 +9,7 @@ import { classifyEligibility, horizonToMs, type Eligibility } from '@launch-audi
 import {
   concatHex,
   createPublicClient,
+  decodeEventLog,
   http,
   keccak256,
   parseAbiItem,
@@ -104,45 +105,67 @@ const BATCH_COMMITTED = parseAbiItem(
   'event BatchCommitted(uint256 indexed batchId, bytes32 merkleRoot, uint256 leafCount, uint256 timestamp)',
 );
 
-async function retry<T>(f: () => Promise<T>, tries = 6): Promise<T> {
+/** Public RPCs answer "network is busy" often; a verifier that gives up on the first one proves nothing. */
+async function retry<T>(f: () => Promise<T>, tries = 10): Promise<T> {
   let last: unknown;
   for (let i = 0; i < tries; i++) {
     try {
       return await f();
     } catch (err) {
       last = err;
-      await new Promise((r) => setTimeout(r, 1000 * (i + 1)));
+      await new Promise((r) => setTimeout(r, Math.min(1000 * 2 ** i, 8000)));
     }
   }
   throw last;
 }
 
-/** The chain half: the root is in a BatchCommitted event from the registry, and the block's own timestamp. */
+/**
+ * The root was emitted by the registry in the claimed tx.
+ * Reads the tx receipt rather than `eth_getLogs`, which public RPCs throttle
+ * hardest, and which only shows *a* matching event in the block, not in this tx.
+ */
+export function rootInTxLogs(
+  logs: Array<{ address: string; topics: readonly Hex[]; data: Hex }>,
+  registry: string,
+  merkleRoot: string,
+): boolean {
+  for (const l of logs) {
+    if (l.address.toLowerCase() !== registry.toLowerCase()) continue;
+    try {
+      const ev = decodeEventLog({ abi: [BATCH_COMMITTED], data: l.data, topics: l.topics as [Hex, ...Hex[]] });
+      if ((ev.args.merkleRoot as string).toLowerCase() === merkleRoot.toLowerCase()) return true;
+    } catch {
+      /* another event from the registry */
+    }
+  }
+  return false;
+}
+
+/** The chain half: the tx that emitted the root, in the claimed block, and that block's own timestamp. */
 export async function verifyReceiptOnChain(
   receipt: Receipt,
   rpcUrl: string,
   registry: string,
 ): Promise<{ checks: Check[]; blockTime: Date | null }> {
-  const { blockNumber, merkleRoot } = receipt.commit;
-  if (blockNumber == null || !merkleRoot) {
+  const { blockNumber, merkleRoot, txHash } = receipt.commit;
+  if (blockNumber == null || !merkleRoot || !txHash) {
     return { checks: [{ name: 'on-chain root', ok: false, detail: 'not committed' }], blockTime: null };
   }
   const client = createPublicClient({ transport: http(rpcUrl, { timeout: 20_000 }) });
-  const bn = BigInt(blockNumber);
-  const [logs, block] = await Promise.all([
-    retry(() => client.getLogs({ address: registry as Hex, event: BATCH_COMMITTED, fromBlock: bn, toBlock: bn })),
-    retry(() => client.getBlock({ blockNumber: bn })),
-  ]);
-  const found = logs.some((l) => (l.args.merkleRoot as string | undefined)?.toLowerCase() === merkleRoot.toLowerCase());
+  const tx = await retry(() => client.getTransactionReceipt({ hash: txHash as Hex }));
+  const block = await retry(() => client.getBlock({ blockNumber: tx.blockNumber }));
+  const found = tx.status === 'success' && rootInTxLogs(tx.logs, registry, merkleRoot);
+  const sameBlock = Number(tx.blockNumber) === blockNumber;
   const blockTime = new Date(Number(block.timestamp) * 1000);
   return {
     checks: [
       {
         name: 'on-chain root',
         ok: found,
-        detail: `BatchCommitted(${merkleRoot.slice(0, 10)}…) ${found ? 'found' : 'NOT found'} in block ${blockNumber} of registry ${registry}`,
+        detail: `tx ${txHash.slice(0, 10)}… (${tx.status}) ${found ? 'emitted' : 'did NOT emit'} BatchCommitted(${merkleRoot.slice(0, 10)}…) from registry ${registry}`,
       },
-      { name: 'block time', ok: true, detail: `block ${blockNumber} timestamp ${blockTime.toISOString()} (read from chain)` },
+      { name: 'block', ok: sameBlock, detail: `tx mined in block ${tx.blockNumber}${sameBlock ? '' : ` — receipt claims ${blockNumber}`}` },
+      { name: 'block time', ok: true, detail: `block ${tx.blockNumber} timestamp ${blockTime.toISOString()} (read from chain)` },
     ],
     blockTime,
   };

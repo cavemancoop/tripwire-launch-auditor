@@ -2061,3 +2061,23 @@ the proof cell linked the batch transaction, which many reports share.
 - After deploy, logged out:
   `pnpm verify:receipt <a committed det_v0 reportHash>` prints PASS for hash,
   signature, merkle, on-chain root and block time.
+
+### Tier 2 follow-up — observed on production (2026-09-19)
+- `verify:receipt` now reads the commit's **tx receipt** and decodes
+  `BatchCommitted` from it, instead of calling `eth_getLogs`. The public RPC
+  rejected every `getLogs` attempt ("network is busy"), so a judge's run would
+  have failed. Reading the receipt also ties the root to that exact tx. The tx
+  must have succeeded and been mined in the claimed block. Retries back off
+  exponentially, up to 10 attempts.
+- Feed: "Verify this forecast" now links `/v1/receipt/<hash>`.
+  `PUBLIC_API_BASE_URL` is set on the worker, so posts carry it and the
+  benchmark link.
+- **Evidence, logged out, deployed `101781b`, public RPC:**
+  - `pnpm verify:receipt 0xd58bb77b…ffa5` (feed post, 08:41Z): all six checks
+    PASS. Signer `0x6a5A…B4BE`; committed 304 s after the anchor; 11/11
+    outcomes eligible.
+  - `pnpm verify:receipt 0xdf34beac…178a` (the audit's replay token): integrity
+    PASS; committed 41,805 s after the anchor; 1h/6h `late`, the rest `replay`.
+- M12b feed format observed on production (`a2603e7`): 20/20 visible posts use
+  rank tiers, ranked against 813 peers, commit lag 0–6 min, tiers spread
+  across all four buckets.

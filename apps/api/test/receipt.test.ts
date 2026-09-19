@@ -1,9 +1,9 @@
-import { concatHex, keccak256, stringToHex, type Hex } from 'viem';
+import { concatHex, encodeAbiParameters, encodeEventTopics, keccak256, parseAbiItem, stringToHex, type Hex } from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { describe, expect, it } from 'vitest';
 import { REPORT_COMMITMENT_TYPES, buildReceipt, type Receipt, type ReceiptRow } from '../src/receipt';
 import { buildServer } from '../src/server';
-import { eligibilityFromChain, verifyReceiptOffline } from '../src/verify-receipt';
+import { eligibilityFromChain, rootInTxLogs, verifyReceiptOffline } from '../src/verify-receipt';
 
 const TOKEN = '0xafb2e8581cc8e7c125163d1efe0061d8632ee458';
 const ANCHOR = new Date('2026-09-18T13:47:34Z'); // the audit's outage replay
@@ -146,5 +146,25 @@ describe('GET /v1/receipt/:hash', () => {
     expect((await app.inject({ method: 'GET', url: `/v1/receipt/${HASH}` })).statusCode).toBe(404);
     expect((await app.inject({ method: 'GET', url: '/v1/receipt/0x1234' })).statusCode).toBe(400);
     await app.close();
+  });
+});
+
+describe('rootInTxLogs', () => {
+  const REGISTRY = '0xF36F84a7B7DfFB952341d021db51bD76E54fDBEe';
+  const ROOT = keccak256(stringToHex('root'));
+  const event = parseAbiItem('event BatchCommitted(uint256 indexed batchId, bytes32 merkleRoot, uint256 leafCount, uint256 timestamp)');
+  const log = (address: string, root: Hex) => ({
+    address,
+    topics: encodeEventTopics({ abi: [event], eventName: 'BatchCommitted', args: { batchId: 7n } }) as Hex[],
+    data: encodeAbiParameters([{ type: 'bytes32' }, { type: 'uint256' }, { type: 'uint256' }], [root, 42n, 1_789_000_000n]),
+  });
+
+  it('finds the root in a BatchCommitted event emitted by the registry', () => {
+    expect(rootInTxLogs([log(REGISTRY, ROOT)], REGISTRY, ROOT)).toBe(true);
+  });
+
+  it('ignores the same event from any other contract, and a different root', () => {
+    expect(rootInTxLogs([log('0x000000000000000000000000000000000000dEaD', ROOT)], REGISTRY, ROOT)).toBe(false);
+    expect(rootInTxLogs([log(REGISTRY, keccak256(stringToHex('other')))], REGISTRY, ROOT)).toBe(false);
   });
 });
