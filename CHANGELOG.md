@@ -2265,3 +2265,20 @@ starvation that held up the scorer that night. Not yet confirmed.
   (`scram-sha-256`). There's no public TCP proxy.
 - **Public repo:** `fb530d1` mirrors the dashboard badge fix, so its code is
   again identical (by blob hash) to the deployed `5ac8e8f`.
+
+## 2026-09-19 — dashboard presentation pass before judging
+
+- Panel 01 subtitle: "zero-billing compute, credit-driven throughput,
+  unattended continuity" → "CREDIT-bounded compute, public funding records, and
+  a signed continuity log". The old phrase overstated what the public README
+  claims.
+- The API base URL input and reload button are now behind a subtle "Advanced"
+  disclosure. The status dot stays visible, and the default still comes from
+  `config.json`.
+- Live launches: `raw` → "on-chain detected", `unknown` → "unattributed",
+  `index` → "early lane" (with tooltips). Launchpad names are unchanged.
+- Lifecycle rows: "key age ?d" → "key age unavailable". New rows are written
+  that way by the worker. Older signed rows are relabelled on display only;
+  `/v1/lifecycle` still serves the exact signed text.
+- Verified locally against the production API; `pnpm verify` green. Mirrored
+  to the public repo so its code again matches the deployed tree.
