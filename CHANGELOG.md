@@ -1951,3 +1951,66 @@ on three cells, including drawdown, where `det_v0` ranks backwards.
 - Not yet checked against live data: how spread out `det_v0` scores are among
   qualified launches. If most tie, most posts land in "middle half". Check
   this in the tunnel session alongside M12a.
+
+## Tier 1 (19 Sep audit) — timing eligibility, claim gates, one cohort (2026-09-19)
+
+Release blocker from `docs/INDEPENDENT-AUDIT-2026-09-19.md`. `reportTime` is
+the T+10m *block* time, not when a report was issued, so reports built late
+(18 Sep outage replays, the 16 Sep 6.8h backlog) carry anchors from before
+they existed. The audit found one committed 11h36m45s after its anchor, after
+its 1h and 6h horizons had ended, and the scorer counted such rows like any
+other. The M12c benchmark/dashboard work is included here, since it touches the same code.
+
+### Changed — scorer
+- `apps/worker/src/scorer/eligibility.ts` (new): each report-outcome pair is
+  classified by its commit's **chain block time**, never the DB's `committedAt`:
+  - `eligible` — committed ≤ 30 min after the anchor and before the horizon ended;
+  - `replay` — committed later, horizon still open;
+  - `late` — committed at or after the horizon end;
+  - `uncommitted`, `missing_time`.
+
+  Signed reports are untouched; "replay" is a scoring-time class, not a
+  rewritten trigger.
+- `collect.ts`: only eligible pairs are scored. Base rates, ScanHood and GoPlus
+  inherit `det_v0`'s class for the same observation, so a cell compares
+  forecasters on the same rows. Scanner rows also need their fetch within
+  30 min of the anchor, since a late ScanHood fetch sees post-launch liquidity.
+  Every pair is counted in `benchmark.exclusions[outcome][forecaster][class]`.
+  Block times come from a cached, budgeted `getBlock`, prefetched in parallel;
+  no schema change. The scanner anchor is now the launch's *earliest*
+  launch/qualified report. It used to be whichever report came last in
+  unordered iteration, the likely cause of the audit's live > all anomaly.
+- `packages/scoring` gates:
+  - the ≥30-positives check counts the *paired* rows (`Comparison.positives`);
+  - below n=100 every metric and comparison is withheld, not just badged;
+  - no "beats X" when the forecaster's own AUROC is ≤ 0.5;
+  - `invertedRanking` flags AUROC significantly below 0.5 (Hanley–McNeil,
+    z > 1.96) on claim-sized samples.
+- Snapshot gains `coverage` (graded / pending / unresolvable / n/a /
+  retrospective per cell, from the rows' own flags) and a `resolutionPolicy`
+  line.
+
+### Changed — dashboard
+- One cohort: the `live` section, eligible rows only. The `+N retro` badge
+  (inferred as `all.n − live.n`) is gone. Backfill is counted from rows and
+  noted, never inferred.
+- Under each outcome: graded/pending counts, "excluded from claims" by class,
+  and backfill if any. The "ranks backwards" badge links DECISIONS.md.
+  Resolution policy is shown under the table. The callout states the
+  eligibility rule instead of "only live, precommitted forecasts".
+- Funding card: the activate-only allowlist, described as the worker's code
+  path, not as a wallet restriction.
+
+### Verify
+- `pnpm verify` green (worker 404, scoring 59):
+  - `eligibility.test.ts` uses the audit's replay token
+    `0xafb2…e458`: late on 1h/6h, replay on 24h/72h/7d, and its timely
+    samples eligible;
+  - `collect-eligibility.test.ts` runs the collector over those fixtures
+    against a stubbed DB;
+  - the scorer tests reproduce the audit's paired-positives counterexample and
+    the inverted-comparator badge.
+- After deploy (logged out): `curl -s $API/v1/benchmark | jq .live.exclusions`
+  has counts per class. That is the census; record it in DECISIONS.md.
+  `LIQ_IMPAIRED@24h` `det_v0` has no `claimAllowed` comparison. The LLM
+  SELL_IMPAIRED@24h cell (n<100) shows `auroc: null`.

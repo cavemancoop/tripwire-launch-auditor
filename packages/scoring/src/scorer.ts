@@ -40,6 +40,8 @@ export interface Comparison {
   vs: string;
   /** paired observations both forecasters have a prediction for — the DeLong sample size, not `n` */
   n: number;
+  /** positives among those paired observations — what the positives gate counts */
+  positives: number;
   aucDiff: number | null;
   z: number | null;
   p: number | null;
@@ -61,6 +63,8 @@ export interface ForecasterCell {
   ece: number | null;
   pr: Array<{ threshold: number; precision: number | null; recall: number | null }>;
   insufficientSample: boolean;
+  /** claim-sized sample and AUROC significantly below 0.5: the forecaster orders this cell backwards */
+  invertedRanking: boolean;
   comparisons: Comparison[];
 }
 
@@ -77,6 +81,12 @@ export interface Benchmark {
   minForClaims: number;
   minPositivesForClaims: number;
   sections: BenchmarkSection[];
+  /**
+   * Every report-outcome pair counted by eligibility class, per outcome and
+   * forecaster (eligible | replay | late | uncommitted | missing_time). Only
+   * eligible pairs are in `sections`. Attached by the collector.
+   */
+  exclusions?: Record<string, Record<string, Partial<Record<string, number>>>>;
 }
 
 export interface ScoreOptions {
@@ -101,6 +111,29 @@ function alignByObs(a: ScoreRow[], b: ScoreRow[]): { pa: number[]; pb: number[];
   return { pa, pb, y };
 }
 
+/**
+ * Standard error of an AUROC (Hanley & McNeil 1982). Used only to tell an
+ * inverted forecaster from noise around 0.5: the rolling base_rate at 0.472 on
+ * n=5,261 is noise (z≈1.35); det_v0 at 0.344 on n=1,227 is not (z≈8.5).
+ */
+export function aurocStandardError(auc: number, positives: number, negatives: number): number | null {
+  if (positives < 2 || negatives < 2) return null;
+  const q1 = auc / (2 - auc);
+  const q2 = (2 * auc * auc) / (1 + auc);
+  const v =
+    (auc * (1 - auc) + (positives - 1) * (q1 - auc * auc) + (negatives - 1) * (q2 - auc * auc)) /
+    (positives * negatives);
+  return v >= 0 ? Math.sqrt(v) : null;
+}
+
+export function isInvertedRanking(auc: number | null, n: number, positives: number): boolean {
+  if (auc === null || n < MIN_FOR_CLAIMS || positives < MIN_POSITIVES_FOR_CLAIMS) return false;
+  const se = aurocStandardError(auc, positives, n - positives);
+  if (se === null) return false;
+  if (se === 0) return auc < 0.5; // perfect separation: no sampling uncertainty left
+  return (0.5 - auc) / se > 1.96;
+}
+
 function cell(
   forecaster: string,
   rows: ScoreRow[],
@@ -115,6 +148,29 @@ function cell(
   const brier = brierScore(probs, labels);
   const refBrier = brierScore(labels.map(() => br), labels); // base-rate constant predictor
   const insufficient = rows.length < MIN_FOR_METRICS;
+  const auc = auroc(probs, labels);
+
+  // The page promises no metric below MIN_FOR_METRICS; an "insufficient" badge
+  // next to a printed AUROC doesn't keep that promise (2026-09-19 audit: an LLM
+  // cell at n=79 showed AUROC 0.458). Publish the counts, withhold the rest.
+  if (insufficient) {
+    return {
+      forecaster,
+      n: rows.length,
+      positives,
+      baseRate: round4(br),
+      auroc: null,
+      auprc: null,
+      logLoss: null,
+      brier: null,
+      brierSkill: null,
+      ece: null,
+      pr: [],
+      insufficientSample: true,
+      invertedRanking: false,
+      comparisons: [],
+    };
+  }
 
   const comparisons: Comparison[] = [];
   for (const base of baselines) {
@@ -122,17 +178,22 @@ function cell(
     const bRows = peers.get(base);
     if (!bRows) continue;
     const { pa, pb, y } = alignByObs(rows, bRows);
+    // the gate counts positives in the rows the test actually compares, not the whole cell
+    const pairedPositives = y.reduce((n, v) => n + (v ? 1 : 0), 0);
     const dl = fastDeLong(pa, pb, y);
     if (!dl) {
-      comparisons.push({ vs: base, n: y.length, aucDiff: null, z: null, p: null, claimAllowed: false, note: 'insufficient overlap / single class' });
+      comparisons.push({ vs: base, n: y.length, positives: pairedPositives, aucDiff: null, z: null, p: null, claimAllowed: false, note: 'insufficient overlap / single class' });
       continue;
     }
-    const enoughPositives = positives >= MIN_POSITIVES_FOR_CLAIMS;
+    const enoughPositives = pairedPositives >= MIN_POSITIVES_FOR_CLAIMS;
+    // beating an inverted comparator is not a win: the forecaster must rank better than chance itself
+    const ownAucAboveChance = auc !== null && auc > 0.5;
     const claimAllowed =
-      y.length >= MIN_FOR_CLAIMS && enoughPositives && dl.p < 0.05 && dl.diff > 0;
+      y.length >= MIN_FOR_CLAIMS && enoughPositives && ownAucAboveChance && dl.p < 0.05 && dl.diff > 0;
     comparisons.push({
       vs: base,
       n: y.length,
+      positives: pairedPositives,
       aucDiff: round4(dl.diff),
       z: round4(dl.z),
       p: round4(dl.p),
@@ -141,12 +202,14 @@ function cell(
         y.length < MIN_FOR_CLAIMS
           ? `insufficient sample (${y.length} < ${MIN_FOR_CLAIMS})`
           : !enoughPositives
-            ? `insufficient positives (${positives} < ${MIN_POSITIVES_FOR_CLAIMS})`
-            : claimAllowed
-              ? 'significant AUROC gain'
-              : dl.diff <= 0
-                ? 'no gain'
-                : 'not significant',
+            ? `insufficient positives (${pairedPositives} < ${MIN_POSITIVES_FOR_CLAIMS})`
+            : !ownAucAboveChance
+              ? 'own AUROC ≤ 0.5 — beating an inverted comparator is not a win'
+              : claimAllowed
+                ? 'significant AUROC gain'
+                : dl.diff <= 0
+                  ? 'no gain'
+                  : 'not significant',
     });
   }
 
@@ -155,7 +218,7 @@ function cell(
     n: rows.length,
     positives,
     baseRate: round4(br),
-    auroc: nullableRound(auroc(probs, labels)),
+    auroc: nullableRound(auc),
     auprc: nullableRound(auprc(probs, labels)),
     logLoss: nullableRound(logLoss(probs, labels)),
     brier: nullableRound(brier),
@@ -166,6 +229,7 @@ function cell(
       return { threshold: t, precision: nullableRound(r.precision), recall: nullableRound(r.recall) };
     }),
     insufficientSample: insufficient,
+    invertedRanking: isInvertedRanking(auc, rows.length, positives),
     comparisons,
   };
 }

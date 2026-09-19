@@ -251,6 +251,10 @@ td.empty, p.empty { color: var(--text-faint); font-family: var(--sans); text-ali
 .badge.bad { color: var(--bad); }
 .badge.good { color: var(--good); }
 .badge.dim { color: var(--text-faint); }
+a.badge { text-decoration: none; }
+
+.note { color: var(--text-faint); font-family: var(--sans); font-size: 0.76rem; line-height: 1.5; margin-top: 0.5rem; }
+td .note { margin-top: 0.15rem; white-space: normal; font-size: 0.7rem; }
 
 .chain-status {
   font-family: var(--mono);

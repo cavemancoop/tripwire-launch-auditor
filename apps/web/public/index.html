@@ -93,7 +93,7 @@
   <section class="panel" id="panel-benchmark">
     <h2><span class="panel-index">04</span> Benchmark</h2>
     <p class="panel-sub">AUROC / Brier Skill vs. baselines, per outcome &middot; horizon &middot; forecaster. Minimum <span id="min-metrics">100</span> resolved to show a metric, <span id="min-claims">200</span> (with &ge;30 positives) to claim a beat. "Beats X" means the ranking is statistically distinguishable from X's (DeLong test) &mdash; not that the probability itself is well-calibrated; Brier Skill is shown alongside for that.</p>
-    <p class="panel-sub panel-callout">This benchmark contains only live, precommitted forecasts. No backfilled rows.</p>
+    <p class="panel-sub panel-callout">Scored rows are live forecasts whose commit landed on-chain (by block time) within 30 minutes of the report's T+10m anchor and before the outcome's horizon ended. Late commits, outage replays and uncommitted reports are excluded and counted under each outcome. No backfilled rows.</p>
     <div class="table-wrap" id="benchmark-wrap"><p class="empty">loading&hellip;</p></div>
   </section>
 

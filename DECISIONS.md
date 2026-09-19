@@ -850,3 +850,64 @@ deliberately not probed because that call mints *and retires* the active key.
 So credit accrual can only be derived while a session is up, and property 2 is
 demonstrable during the session window rather than continuously. The panel must
 say which.
+
+## Timing eligibility: what counts as "committed before the outcome" (2026-09-19)
+
+**Rule.** A report-outcome pair counts toward any benchmark claim only if its
+commit's *chain block time* is ≤ 30 min after the report's T+10m anchor and
+before the outcome's horizon ends. Otherwise it is `replay`, `late`,
+`uncommitted` or `missing_time`: excluded from claims, counted per cell, and
+kept intact. Base rates and scanners inherit `det_v0`'s class for the same
+observation; scanners also need a fetch within 30 min of the anchor.
+
+**Why 30 min and not just "before the horizon ends".** A normal commit lands
+1–15 min after the anchor (5-min batches; the audit's samples were 27 s to
+5 min). Horizon-end alone would let a 5h-late report count on a 6h window.
+That meets the letter of "committed before the outcome" while most of the
+window was already observable, and cumulative outcomes like INSIDER_EXIT can
+be decided early. The 30-min line quarantines every outage/backlog replay
+without touching normal operation.
+
+**Why not re-anchor or relabel.** `reportTime` and `trigger` are inside the
+signed, committed bytes. Changing them would make the record lie about what
+was committed. Replays stay as signed and are only classified at scoring time.
+
+**Census.** Published by the deployed scorer as `benchmark.exclusions`. Numbers
+recorded below once observed on production.
+
+## Decisions A–E, settled with Fable (2026-09-19)
+
+- **A. Feed:** rank tiers on insider exit and still trading (24h), no raw
+  probabilities, drawdown dropped, "ranking only" footer, stale reports never
+  posted (M12b).
+- **B. Inverted cells:** disclose, don't refit. No `det_v0.2`: flipping weights
+  after seeing results is the in-sample move this project has refused.
+- **C. LLM forecaster:** "no evidence it adds discrimination at n=330", not
+  "adds nothing". Roadmap: a strong model as a second named forecaster, which
+  is what CREDIT is for. Not run before judging.
+- **D. `det_v1`:** held. A refit with zero grades two days before judging reads
+  as a reaction; the leakage reasoning stands.
+- **E. Pitch:** open with one fully verified example (forecast → commit time →
+  outcome), then the eligible cohort's table with its failures, then the Orbio
+  funding receipts. Aggregates only after the census.
+
+## Inverted cells: planned applicability rule (2026-09-19)
+
+`det_v0` (and `heuristic_v1`) rank DRAWDOWN_80@24h, LIQ_IMPAIRED@24h and
+SELL_IMPAIRED@1h backwards: AUROC 0.34–0.37 on n=700–3,048, far outside noise
+(Hanley–McNeil z ≈ 8 on drawdown). The dashboard flags these as "ranks
+backwards".
+
+**Hypothesis (not yet tested):** the features `det_v0` treats as risk mark
+launches that are already dead by T+10m. `DRAWDOWN_80` measured from a peak
+that already collapsed, and `LIQ_IMPAIRED` for a pool that never held
+liquidity, are ill-posed for those launches. They can't fall 80% or lose
+liquidity they never had, so the "riskiest" launches score as safe.
+
+**Planned fix, after judging, versioned forward:** an applicability rule that
+makes both outcomes N/A when liquidity at report time is below a floor, the
+same way launchpad-locked tokens are N/A for SELL/LIQ today. It applies only
+to reports issued after the rule's effective block and resets those cells'
+records. It doesn't make current failures disappear.
+The bucket analysis (outcome rate by T+10m liquidity) comes first if there's
+a spare hour.

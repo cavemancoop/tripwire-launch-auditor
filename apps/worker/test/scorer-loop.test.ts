@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Benchmark } from '@launch-auditor/scoring';
+import { resolutionPolicy } from '../src/scorer/coverage';
 import { runScorerLoop, type BenchmarkSnapshot } from '../src/scorer/loop';
 import type { StopSignal } from '../src/watcher/poller';
 
@@ -31,6 +32,7 @@ const fakeBenchmark = (n: number): Benchmark => ({
             ece: 0.02,
             pr: [],
             insufficientSample: n < 100,
+            invertedRanking: false,
             comparisons: [],
           },
         ],
@@ -63,6 +65,7 @@ describe('runScorerLoop', () => {
         return { benchmark: fakeBenchmark(n), rowCount: n };
       },
       persist: async (s) => void persisted.push(s),
+      readCoverage: async () => ({}),
     });
 
     expect(calls).toEqual([undefined, 'live']);
@@ -88,6 +91,7 @@ describe('runScorerLoop', () => {
         return { benchmark: fakeBenchmark(n), rowCount: n };
       },
       persist: async (s) => void persisted.push(s),
+      readCoverage: async () => ({}),
     });
 
     expect(persisted).toHaveLength(1);
@@ -111,10 +115,43 @@ describe('runScorerLoop', () => {
         return { benchmark: fakeBenchmark(1), rowCount: 1 };
       },
       persist: async () => {},
+      readCoverage: async () => ({}),
     });
 
     expect(existsSync(outFile)).toBe(true);
     rmSync(dir, { recursive: true, force: true });
     outFile = undefined;
+  });
+
+  // M12c: graded rows are a non-random subset of forecasts — the snapshot
+  // carries the pending counts and the policy that chose them.
+  it('ships per-cell coverage and the resolution policy with the snapshot', async () => {
+    outFile = join(tmpdir(), `benchmark-loop-coverage-test-${Date.now()}.json`);
+    const signal: StopSignal = { stopped: false };
+    const persisted: BenchmarkSnapshot[] = [];
+    const cov = { 'INSIDER_EXIT@24h': { resolved: 1165, pendingDue: 20301, pendingNotDue: 40, unresolvable: 12, na: 0, retrospectiveResolved: 0 } };
+
+    await runScorerLoop(signal, {
+      outFile,
+      intervalMs: 1,
+      scorer: async () => {
+        signal.stopped = true;
+        return { benchmark: fakeBenchmark(1), rowCount: 1 };
+      },
+      persist: async (s) => void persisted.push(s),
+      readCoverage: async () => cov,
+      qualifiedOnly: true,
+    });
+
+    expect(persisted[0]!.coverage).toEqual(cov);
+    expect(persisted[0]!.resolutionPolicy).toMatch(/graded only for qualified launches/);
+    expect(persisted[0]!.resolutionPolicy).toMatch(/not a random sample/);
+  });
+});
+
+describe('resolutionPolicy', () => {
+  it('describes universal grading when qualified-only is off', () => {
+    expect(resolutionPolicy(false)).toMatch(/Every outcome is graded for every launch/);
+    expect(resolutionPolicy(false)).not.toMatch(/qualified launches \(/);
   });
 });

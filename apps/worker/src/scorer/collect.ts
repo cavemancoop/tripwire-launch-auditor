@@ -1,4 +1,5 @@
 import { prisma } from '@launch-auditor/db';
+import { getBudgetedClient, PRIORITY } from '@launch-auditor/rpc-budget';
 import {
   ALL_OUTCOME_KEYS,
   goplusToProbabilities,
@@ -6,6 +7,15 @@ import {
   type OutcomeKey,
   type ScoreRow,
 } from '@launch-auditor/scoring';
+import { loadEnv } from '../env';
+import { horizonMs } from '../outcomes/resolve';
+import {
+  classifyEligibility,
+  countExclusion,
+  scannerFetchIsTimely,
+  type Eligibility,
+  type ExclusionCounts,
+} from './eligibility';
 
 /** OutcomeKey -> the Report probability column that holds that forecast. */
 const P_COL: Partial<Record<OutcomeKey, string>> = {
@@ -22,9 +32,14 @@ const P_COL: Partial<Record<OutcomeKey, string>> = {
   'TRADING_ALIVE@7d': 'pTradingAlive7d',
 };
 
+/** Forecasters computed here rather than read from a committed report; they inherit det_v0's eligibility. */
+const REFERENCE_FORECASTER = 'det_v0';
+
 const THIRTY_DAYS_MS = 30 * 24 * 3600 * 1000;
 const obsKey = (chainId: number, token: string, anchor: Date): string =>
   `${chainId}|${token.toLowerCase()}|${anchor.toISOString()}`;
+const horizonEndOf = (anchor: Date, key: OutcomeKey): Date =>
+  new Date(anchor.getTime() + horizonMs(key.split('@')[1]!));
 
 interface ResolvedObs {
   chainId: number;
@@ -35,19 +50,52 @@ interface ResolvedObs {
   labels: Map<OutcomeKey, boolean>;
 }
 
+/** Chain timestamp of a block. Immutable, so cached for the life of the process. */
+export type BlockTimeReader = (blockNumber: bigint) => Promise<Date | null>;
+
+const blockTimeCache = new Map<string, Date>();
+const defaultBlockTimeReader: BlockTimeReader = async (blockNumber) => {
+  const k = blockNumber.toString();
+  const hit = blockTimeCache.get(k);
+  if (hit) return hit;
+  const { rpcUrl } = loadEnv();
+  if (!rpcUrl) return null;
+  try {
+    const block = await getBudgetedClient(rpcUrl, { priority: PRIORITY.outcomes }).getBlock({ blockNumber });
+    const t = new Date(Number(block.timestamp) * 1000);
+    blockTimeCache.set(k, t);
+    return t;
+  } catch {
+    return null; // "missing_time", never a guess
+  }
+};
+
 export interface CollectOptions {
   /** include retrospective (backfill) rows, live rows, or both (default) */
   scope?: 'live' | 'retrospective' | 'both';
+  /** injectable for tests — defaults to a cached RPC `getBlock` */
+  blockTimeOf?: BlockTimeReader;
+}
+
+export interface CollectResult {
+  /** eligible report-outcome pairs only — the rows every claim is computed from */
+  rows: ScoreRow[];
+  /** every pair, eligible or not, counted by class per outcome and forecaster */
+  exclusions: ExclusionCounts;
 }
 
 /**
  * Join resolved outcomes with every forecaster's prediction for the same
- * (token, anchor time). Emits ScoreRows for the report-backed forecasters
- * (det_v0, det_v0.1, heuristic_v1, …), plus computed rows for base_rate
- * (trailing-30-day prevalence) and the scanhood / goplus fixed maps.
+ * (token, anchor time). Report-backed forecasters (det_v0, det_v0.1,
+ * heuristic_v1, llm_deepdive_v0) are classified from their own commit's chain
+ * block time; the computed ones (base_rate, base_rate_fixed, scanhood, goplus)
+ * take det_v0's class for the same observation so every forecaster in a cell
+ * is scored on the same rows. Only `eligible` pairs are returned as rows.
  */
-export async function collectScoreRows(opts: CollectOptions = {}): Promise<ScoreRow[]> {
+export async function collectScoreRows(opts: CollectOptions = {}): Promise<CollectResult> {
   const scope = opts.scope ?? 'both';
+  const blockTimeOf = opts.blockTimeOf ?? defaultBlockTimeReader;
+  const exclusions: ExclusionCounts = {};
 
   const outcomeWhere: Record<string, unknown> = { status: 'RESOLVED', value: { not: null } };
   if (scope === 'live') outcomeWhere['retrospective'] = false;
@@ -71,7 +119,7 @@ export async function collectScoreRows(opts: CollectOptions = {}): Promise<Score
     }
     entry.labels.set(`${o.label}@${o.horizon}` as OutcomeKey, o.value === true);
   }
-  if (obs.size === 0) return [];
+  if (obs.size === 0) return { rows: [], exclusions };
 
   // trailing-30-day base rate per outcome key
   const perKey: Record<string, Array<{ t: number; y: boolean }>> = {};
@@ -100,21 +148,44 @@ export async function collectScoreRows(opts: CollectOptions = {}): Promise<Score
   };
 
   const rows: ScoreRow[] = [];
+  /** `${obsKey}|${outcomeKey}` -> det_v0's class, which the computed forecasters inherit */
+  const refClass = new Map<string, Eligibility>();
 
-  // report-backed forecasters
+  // report-backed forecasters, oldest first so each launch's scanner anchor is deterministic
   const reports = await prisma.report.findMany({
     where: { validatorPassed: true },
-    include: { launch: { select: { source: true } } },
+    orderBy: [{ reportTime: 'asc' }, { createdAt: 'asc' }],
+    include: {
+      launch: { select: { source: true } },
+      commit: { select: { blockNumber: true } },
+    },
   });
-  const launchAnchor = new Map<string, string>(); // launchId -> obsKey of its launch/qualified report
+  // warm the block-time cache for every commit a scored report sits in, in parallel chunks
+  const blocks = [
+    ...new Set(
+      reports
+        .filter((r) => r.commit?.blockNumber != null && obs.has(obsKey(r.chainId, r.tokenAddress, r.reportTime)))
+        .map((r) => r.commit!.blockNumber!.toString()),
+    ),
+  ];
+  const blockTimes = new Map<string, Date | null>();
+  for (let i = 0; i < blocks.length; i += 50) {
+    const chunk = blocks.slice(i, i + 50);
+    const times = await Promise.all(chunk.map((b) => blockTimeOf(BigInt(b))));
+    chunk.forEach((b, j) => blockTimes.set(b, times[j] ?? null));
+  }
+
+  const launchAnchor = new Map<string, string>(); // launchId -> obsKey of its earliest launch/qualified report
   for (const r of reports) {
     const k = obsKey(r.chainId, r.tokenAddress, r.reportTime);
     const e = obs.get(k);
     if (!e) continue;
-    if (r.launchId && (r.trigger === 'launch' || r.trigger === 'qualified')) {
+    if (r.launchId && (r.trigger === 'launch' || r.trigger === 'qualified') && !launchAnchor.has(r.launchId)) {
       launchAnchor.set(r.launchId, k);
     }
     const source = r.launch?.source ?? 'unknown';
+    const committed = r.commitId != null && r.commit?.blockNumber != null;
+    const commitBlockTime = committed ? (blockTimes.get(r.commit!.blockNumber!.toString()) ?? null) : null;
     for (const key of ALL_OUTCOME_KEYS) {
       const y = e.labels.get(key);
       if (y === undefined) continue;
@@ -122,6 +193,15 @@ export async function collectScoreRows(opts: CollectOptions = {}): Promise<Score
       if (!col) continue;
       const prob = (r as unknown as Record<string, number | null>)[col];
       if (prob === null || prob === undefined) continue;
+      const cls = classifyEligibility({
+        reportTime: r.reportTime,
+        committed,
+        commitBlockTime,
+        horizonEnd: horizonEndOf(r.reportTime, key),
+      });
+      countExclusion(exclusions, key, r.forecaster, cls);
+      if (r.forecaster === REFERENCE_FORECASTER && !refClass.has(`${k}|${key}`)) refClass.set(`${k}|${key}`, cls);
+      if (cls !== 'eligible') continue;
       rows.push({ obsId: k, forecaster: r.forecaster, outcomeKey: key, trigger: r.trigger, source, prob, label: y });
     }
   }
@@ -138,11 +218,16 @@ export async function collectScoreRows(opts: CollectOptions = {}): Promise<Score
     fixedBaseRate[key as OutcomeKey] = positives / arr.length;
   }
 
-  // base_rate / base_rate_fixed (one row per resolved obs/outcome)
+  // base_rate / base_rate_fixed (one row per eligible obs/outcome)
   for (const e of obs.values()) {
     const source = await launchSource(e.launchId);
+    const k = obsKey(e.chainId, e.token, e.anchor);
     for (const [key, y] of e.labels) {
-      const k = obsKey(e.chainId, e.token, e.anchor);
+      // no committed det_v0 forecast for this observation → nothing to compare against
+      const cls = refClass.get(`${k}|${key}`) ?? 'uncommitted';
+      countExclusion(exclusions, key, 'base_rate', cls);
+      countExclusion(exclusions, key, 'base_rate_fixed', cls);
+      if (cls !== 'eligible') continue;
       rows.push({
         obsId: k,
         forecaster: 'base_rate',
@@ -164,7 +249,7 @@ export async function collectScoreRows(opts: CollectOptions = {}): Promise<Score
     }
   }
 
-  // scanhood / goplus fixed maps
+  // scanhood / goplus fixed maps — also need a timely fetch, or they carry hindsight
   const features = (
     await prisma.feature.findMany({
       include: { launch: { select: { id: true, source: true } } },
@@ -179,16 +264,25 @@ export async function collectScoreRows(opts: CollectOptions = {}): Promise<Score
     const shProbs = scanhoodToProbabilities(f.scanhoodRaw as Record<string, unknown> | null);
     const gpProbs = goplusToProbabilities(f.goplusRaw as Record<string, unknown> | null);
     for (const [key, y] of e.labels) {
+      const ref = refClass.get(`${k}|${key}`) ?? 'uncommitted';
       if (shProbs[key] !== undefined) {
-        rows.push({ obsId: k, forecaster: 'scanhood', outcomeKey: key, trigger: e.trigger, source, prob: shProbs[key]!, label: y });
+        const cls = ref === 'eligible' && !scannerFetchIsTimely(e.anchor, f.scanhoodFetchedAt) ? 'replay' : ref;
+        countExclusion(exclusions, key, 'scanhood', cls);
+        if (cls === 'eligible') {
+          rows.push({ obsId: k, forecaster: 'scanhood', outcomeKey: key, trigger: e.trigger, source, prob: shProbs[key]!, label: y });
+        }
       }
       if (gpProbs[key] !== undefined) {
-        rows.push({ obsId: k, forecaster: 'goplus', outcomeKey: key, trigger: e.trigger, source, prob: gpProbs[key]!, label: y });
+        const cls = ref === 'eligible' && !scannerFetchIsTimely(e.anchor, f.goplusFetchedAt) ? 'replay' : ref;
+        countExclusion(exclusions, key, 'goplus', cls);
+        if (cls === 'eligible') {
+          rows.push({ obsId: k, forecaster: 'goplus', outcomeKey: key, trigger: e.trigger, source, prob: gpProbs[key]!, label: y });
+        }
       }
     }
   }
 
-  return rows;
+  return { rows, exclusions };
 }
 
 const sourceCache = new Map<string, string>();

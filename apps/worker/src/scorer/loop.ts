@@ -16,6 +16,13 @@ import { dirname, join } from 'node:path';
 import { prisma } from '@launch-auditor/db';
 import type { Benchmark } from '@launch-auditor/scoring';
 import { runScorer, type RunScorerOptions } from './benchmark';
+import {
+  prismaCoverageReader,
+  qualifiedOnlyFromEnv,
+  resolutionPolicy,
+  type CoverageByCell,
+  type CoverageReader,
+} from './coverage';
 import { recordFailure } from '../failures';
 import type { StopSignal } from '../watcher/poller';
 
@@ -44,6 +51,9 @@ export interface ScorerLoopOptions {
   scorer?: (opts: RunScorerOptions) => ReturnType<typeof runScorer>;
   /** injectable for tests — defaults to a real Postgres upsert */
   persist?: (snapshot: BenchmarkSnapshot) => Promise<void>;
+  /** injectable for tests — defaults to Prisma outcome counts */
+  readCoverage?: CoverageReader;
+  qualifiedOnly?: boolean;
 }
 
 const defaultPersist = async (snapshot: BenchmarkSnapshot): Promise<void> => {
@@ -69,6 +79,10 @@ export interface BenchmarkSnapshot {
   generatedAt: string;
   all: Benchmark;
   live: Benchmark;
+  /** M12c: graded vs pending vs unresolvable outcome rows per cell (live rows) */
+  coverage?: CoverageByCell;
+  /** M12c: how the rows that did get graded were chosen */
+  resolutionPolicy?: string;
 }
 
 export async function runScorerLoop(
@@ -79,17 +93,22 @@ export async function runScorerLoop(
   const outFile = opts.outFile ?? join(findRepoRoot(process.cwd()), 'data', 'benchmark.json');
   const scorer = opts.scorer ?? runScorer;
   const persist = opts.persist ?? defaultPersist;
+  const readCoverage = opts.readCoverage ?? prismaCoverageReader;
+  const policy = resolutionPolicy(opts.qualifiedOnly ?? qualifiedOnlyFromEnv());
   mkdirSync(dirname(outFile), { recursive: true });
 
   // eslint-disable-next-line no-console
   console.log(`[scorer] snapshot loop every ${intervalMs / 1000}s → Postgres + ${outFile}`);
   while (!signal.stopped) {
     try {
-      const [both, live] = await Promise.all([scorer({}), scorer({ scope: 'live' })]);
+      const now = new Date();
+      const [both, live, coverage] = await Promise.all([scorer({}), scorer({ scope: 'live' }), readCoverage(now)]);
       const snapshot: BenchmarkSnapshot = {
-        generatedAt: new Date().toISOString(),
+        generatedAt: now.toISOString(),
         all: both.benchmark,
         live: live.benchmark,
+        coverage,
+        resolutionPolicy: policy,
       };
       await persist(snapshot);
       mkdirSync(dirname(outFile), { recursive: true });

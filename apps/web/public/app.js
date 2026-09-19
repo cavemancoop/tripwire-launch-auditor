@@ -207,6 +207,7 @@ function renderFunding(f) {
     <div class="kv"><span class="k">agent account</span><span class="v"><a href="${EXPLORER_BASE}/address/${f.account}" target="_blank" rel="noopener">${short(f.account)} ↗</a></span></div>
     <div class="kv"><span class="k">activated in total</span><span class="v">${usd(f.totalActivatedUsd)} (operator ${usd(f.byOperatorUsd)} · agent ${usd(f.byAgentUsd)})</span></div>
     ${rows || '<p class="note">No activations yet.</p>'}
+    <p class="note">CREDIT the agent holds but hasn't activated can only become its own AI balance. The worker's call allowlist permits <code>CREDIT.activate</code> and <code>Staking.claim</code> and nothing that transfers tokens out (<code>apps/worker/src/metabolism/credit-wallet.ts</code>).</p>
   `;
 }
 
@@ -243,53 +244,74 @@ function renderLaunches(rows) {
 
 // ── Benchmark ────────────────────────────────────────────────────────────
 
-function cellKey(outcome, forecaster) {
-  return `${outcome}‖${forecaster}`;
-}
-
-function indexLiveCells(liveBenchmark) {
-  const idx = new Map();
-  const section = liveBenchmark.sections.find((s) => s.splitBy === 'all');
-  for (const [outcome, cells] of Object.entries(section?.byOutcome ?? {})) {
-    for (const c of cells) idx.set(cellKey(outcome, c.forecaster), c.n);
-  }
-  return idx;
-}
-
 function renderBenchmark(snapshot) {
   const wrap = document.getElementById('benchmark-wrap');
-  const all = snapshot.all.sections.find((s) => s.splitBy === 'all');
-  document.getElementById('min-metrics').textContent = String(snapshot.all.minForMetrics);
-  document.getElementById('min-claims').textContent = String(snapshot.all.minForClaims);
+  // One cohort: live forecasts, eligible rows only — the rows the claims are made on.
+  const bench = snapshot.live;
+  const all = bench.sections.find((s) => s.splitBy === 'all');
+  document.getElementById('min-metrics').textContent = String(bench.minForMetrics);
+  document.getElementById('min-claims').textContent = String(bench.minForClaims);
   if (!all) {
     wrap.innerHTML = '<p class="empty">no resolved outcomes yet</p>';
     return;
   }
-  const liveN = indexLiveCells(snapshot.live);
+  const coverage = snapshot.coverage || {};
+  const exclusions = bench.exclusions || {};
 
   const rows = [];
   for (const [outcome, cells] of Object.entries(all.byOutcome)) {
-    for (const c of cells) {
-      const liveCount = liveN.get(cellKey(outcome, c.forecaster)) ?? 0;
-      const retro = Math.max(0, c.n - liveCount);
+    cells.forEach((c, i) => {
       const claim = c.comparisons?.find((x) => x.claimAllowed);
       const descriptive = DESCRIPTIVE_OUTCOMES[outcome];
+      const cov = i === 0 ? coverageLine(coverage[outcome], exclusions[outcome]?.det_v0) : '';
       rows.push(`<tr>
-        <td>${outcome}${descriptive ? ' <span class="badge dim" title="' + descriptive + '">descriptive</span>' : ''}</td>
+        <td>${outcome}${descriptive ? ' <span class="badge dim" title="' + descriptive + '">descriptive</span>' : ''}${cov}</td>
         <td>${c.forecaster}</td>
-        <td>${c.n}${retro > 0 ? ` <span class="badge dim">+${retro} retro</span>` : ''}${c.insufficientSample ? ' <span class="badge warn">insufficient</span>' : ''}</td>
+        <td>${c.n}${c.insufficientSample ? ' <span class="badge warn" title="Below the minimum sample: metrics withheld.">insufficient</span>' : ''}</td>
         <td>${c.positives}</td>
-        <td>${c.auroc === null ? 'n/a' : c.auroc.toFixed(3)}</td>
+        <td>${c.auroc === null ? 'n/a' : c.auroc.toFixed(3)}${c.invertedRanking ? ` <a class="badge warn" href="${INVERTED_NOTE_URL}" target="_blank" rel="noopener" title="${INVERTED_TITLE}">ranks backwards</a>` : ''}</td>
         <td>${c.brierSkill === null ? 'n/a' : c.brierSkill.toFixed(3)}</td>
         <td>${descriptive ? '' : claim ? `<span class="badge good">beats ${claim.vs} p=${claim.p}</span>` : ''}</td>
       </tr>`);
-    }
+    });
   }
 
   wrap.innerHTML = `<table>
     <thead><tr><th>outcome</th><th>forecaster</th><th>n</th><th>positives</th><th>auroc</th><th>brier skill</th><th></th></tr></thead>
     <tbody>${rows.join('') || '<tr><td colspan="7" class="empty">no cells yet</td></tr>'}</tbody>
-  </table>`;
+  </table>${snapshot.resolutionPolicy ? `<p class="note">${snapshot.resolutionPolicy}</p>` : ''}`;
+}
+
+const INVERTED_NOTE_URL =
+  'https://github.com/cavemancoop/tripwire-launch-auditor/blob/main/DECISIONS.md#inverted-cells-planned-applicability-rule-2026-09-19';
+const INVERTED_TITLE =
+  'AUROC significantly below 0.5 on a claim-sized sample: this forecaster orders this outcome backwards. Our hypothesis and the planned fix are in DECISIONS.md.';
+
+/**
+ * Under an outcome's first row: how many outcome rows exist and why most of
+ * them aren't in the table. `excl` = det_v0's report-outcome pairs by
+ * eligibility class; every other forecaster in the cell is scored on the same rows.
+ */
+function coverageLine(c, excl) {
+  if (!c && !excl) return '';
+  const n = (x) => Number(x).toLocaleString('en-US');
+  const lines = [];
+  if (c) {
+    const parts = [`graded ${n(c.resolved)}`, `pending ${n(c.pendingDue)}`];
+    if (c.unresolvable) parts.push(`unresolvable ${n(c.unresolvable)}`);
+    if (c.na) parts.push(`n/a ${n(c.na)}`);
+    lines.push(`<span title="Live outcome rows whose horizon has passed. Pending = due but not yet graded.">${parts.join(' · ')}</span>`);
+  }
+  if (excl) {
+    const out = ['late', 'replay', 'uncommitted', 'missing_time'].filter((k) => excl[k]).map((k) => `${k.replace('_', ' ')} ${n(excl[k])}`);
+    if (out.length) {
+      lines.push(`<span title="Graded, but not counted: committed after the horizon ended (late), more than 30 min after the anchor (replay), never committed, or commit time unreadable.">excluded from claims: ${out.join(' · ')}</span>`);
+    }
+  }
+  if (c && c.retrospectiveResolved) {
+    lines.push(`<span title="Backfilled (retrospective) outcomes exist for this cell and are not in this table.">backfill graded, not shown: ${n(c.retrospectiveResolved)}</span>`);
+  }
+  return `<div class="note">${lines.join('<br>')}</div>`;
 }
 
 // ── Lifecycle timeline ───────────────────────────────────────────────────

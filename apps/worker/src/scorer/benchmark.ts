@@ -15,8 +15,8 @@ export async function runScorer(opts: RunScorerOptions = {}): Promise<{
   benchmark: Benchmark;
   rowCount: number;
 }> {
-  const rows = await collectScoreRows({ scope: opts.scope });
-  const benchmark = scoreBenchmark(rows, { thresholds: opts.thresholds });
+  const { rows, exclusions } = await collectScoreRows({ scope: opts.scope });
+  const benchmark = { ...scoreBenchmark(rows, { thresholds: opts.thresholds }), exclusions };
   if (opts.out) {
     mkdirSync(dirname(opts.out), { recursive: true });
     writeFileSync(opts.out, JSON.stringify(benchmark, null, 2));
