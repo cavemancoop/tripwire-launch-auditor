@@ -106,7 +106,7 @@
 
   <section class="panel" id="panel-lifecycle">
     <h2><span class="panel-index">05</span> Key lifecycle</h2>
-    <p class="panel-sub">The signed <code>lifecycle_log</code> chain &mdash; every row's <code>bodyHash</code> folds the previous row's, so tampering is detectable, not just promised.</p>
+    <p class="panel-sub">The signed <code>lifecycle_log</code> chain &mdash; each row's <code>bodyHash</code> folds its parent's, so altering or deleting a row is detectable, not just promised. Forks (two rows naming one parent) are shown, not hidden.</p>
     <div class="chain-status" id="chain-status">&mdash;</div>
     <div class="table-wrap">
       <table id="lifecycle-table">
@@ -119,7 +119,7 @@
 </main>
 
 <footer>
-  <p>Committed before outcome &middot; reproducible scorer. Nothing stronger claimed.</p>
+  <p>Counted forecasts were committed before their outcome window closed &middot; reproducible scorer &middot; scores rank launches, they are not calibrated probabilities. Nothing stronger claimed.</p>
 </footer>
 
 <script src="app.js"></script>

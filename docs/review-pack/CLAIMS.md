@@ -1,3 +1,5 @@
+> **Superseded.** Frozen snapshot of 2026-09-15 (`d61dc20`), the target of the first Codex review. Many claims below were withdrawn or reworded on 16–19 Sep. The current inventory is [`docs/CLAIMS.md`](../CLAIMS.md).
+
 # Claims under test
 
 Every public claim the project makes, one per line, **verbatim**, with its source.

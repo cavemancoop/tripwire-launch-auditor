@@ -2179,3 +2179,19 @@ starvation that held up the scorer that night. Not yet confirmed.
 - After deploy: the Key lifecycle panel reads "intact, 2 forks". The forks
   shouldn't increase across the next deploy (if both containers overlap, rows
   interleave).
+
+## 2026-09-19 — Tier 3 close-out: DEMO.md, current CLAIMS.md, last copy fixes
+
+- `DEMO.md` rewritten against `0df3f67`, walked through logged out at ~09:30Z.
+  It follows the audit's recommended order: one verified forecast first (panel
+  00 + `verify:receipt`), then the eligible record with its failures (census,
+  two surviving wins, three inverted cells, the scanner doing better, the LLM
+  null result, selection bias), then what Orbio funded, then what broke.
+- `docs/CLAIMS.md` (new): every current public claim, quoted, with its evidence
+  type (prod-observed / verified-offline / source-only). The fork-and-run claim
+  is marked **not demonstrated** while the repo is private.
+  `docs/review-pack/CLAIMS.md` is marked superseded and kept as the dated
+  record Codex tested.
+- Dashboard footer: "Committed before outcome" → "Counted forecasts were
+  committed before their outcome window closed", plus "scores rank". The Key
+  lifecycle subtitle now reads "each row folds its parent's; forks are shown".
