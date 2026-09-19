@@ -2085,7 +2085,7 @@ the proof cell linked the batch transaction, which many reports share.
 ## Tier 2 (19 Sep audit, fixes 4 + 6) — a pinned verified example; one budget calculation (2026-09-19)
 
 ### Added — dashboard panel 00, "One forecast, checked end to end"
-- Fetches `/v1/receipt/<hash>` for feed post 884 (`0xbe1e685a…e7c915`,
+- Fetches `/v1/receipt/<hash>` for feed post 884 (`0xbe1e685a…c7e915`,
   15 Sep): the token, the T+10m anchor, the commit's chain block time
   (330 s later, with the tx), the signer, and the four headline outcomes with
   score / what happened / eligibility. An insider exit happened, and `det_v0`

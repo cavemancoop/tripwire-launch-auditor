@@ -98,7 +98,7 @@ imports, x402 or the film.
 ## 4 — Cold demo
 
 - **Panel 00, "One forecast, checked end to end"**, renders a completed,
-  eligible forecast live from its receipt: feed post 884, `0xbe1e685a…e7c915`.
+  eligible forecast live from its receipt: feed post 884, `0xbe1e685a…c7e915`.
   It shows what was forecast (insider exit 24h 0.996), when it was committed
   (block time, 330 s after the anchor), what happened (an insider exit did
   happen) and the verify command.
@@ -200,7 +200,7 @@ imports, x402 or the film.
 
 ## Rehearsal of the proof sequence (`0b5bf3c`, 2026-09-19 09:50Z, logged out)
 
-1. **Panel 00 receipt, checked independently.** `pnpm verify:receipt 0xbe1e685a…e7c915` over the public RPC gave PASS on hash, signature (`0x6a5A…B4BE`), Merkle (6 siblings), on-chain root (tx `0xee1f992b…`, success, registry `0xF36F…BEe`), block 63282230 and block time 2026-09-15T01:52:17Z. That's 330 s after the anchor; INSIDER_EXIT@6h/24h are true and eligible. `/v1/proof` for the same hash: `proofValid: true, onChainConfirmed: true`.
+1. **Panel 00 receipt, checked independently.** `pnpm verify:receipt 0xbe1e685a…c7e915` over the public RPC gave PASS on hash, signature (`0x6a5A…B4BE`), Merkle (6 siblings), on-chain root (tx `0xee1f992b…`, success, registry `0xF36F…BEe`), block 63282230 and block time 2026-09-15T01:52:17Z. That's 330 s after the anchor; INSIDER_EXIT@6h/24h are true and eligible. `/v1/proof` for the same hash: `proofValid: true, onChainConfirmed: true`.
 2. **The eligible benchmark, failures included.**
    - Graded 17,423 of 267,115 due outcomes.
    - INSIDER_EXIT@24h: AUROC 0.767, beats both base rates (209 replays excluded).
