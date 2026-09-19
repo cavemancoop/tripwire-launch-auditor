@@ -3,7 +3,7 @@
 For the auditor. This maps each finding in `docs/INDEPENDENT-AUDIT-2026-09-19.md`
 to what changed, where, and how it was checked. It also lists what's still open.
 
-**Final deployed commit:** `dfbbc70` (api, worker and web all `SUCCESS`).
+**Final deployed commit:** `0b5bf3c` (api, worker and web all `SUCCESS` at 09:50:20Z). The sections below were first checked at `dfbbc70`.
 **Evidence captured:** 2026-09-19 at 09:32 UTC, logged out, using `curl`
 without auth, the public Telegram web preview, a fresh browser tab, and
 `pnpm verify:receipt` over the public RPC `rpc.ordofi.network`.
@@ -197,6 +197,16 @@ imports, x402 or the film.
 - **`COMMIT_REGISTRY_ADDRESS` is set on the API.** Receipts now carry `commit.registry`. This also re-enabled `/v1/proof`'s on-chain confirmation, which is why every proof you fetched said `onChainConfirmed: null`.
 - **The backlog is stated up front.** The benchmark panel opens with "Graded so far: 17,407 of 267,069 outcomes whose horizon has passed (6.5%)". `DEMO.md` has a section on it: 239,609 due and ungraded, 640 graded in 24h, 11,760 recorded failures and their sources.
 - **No model or feature work before judging**, per your advice.
+
+## Rehearsal of the proof sequence (`0b5bf3c`, 2026-09-19 09:50Z, logged out)
+
+1. **Panel 00 receipt, checked independently.** `pnpm verify:receipt 0xbe1e685a…e7c915` over the public RPC gave PASS on hash, signature (`0x6a5A…B4BE`), Merkle (6 siblings), on-chain root (tx `0xee1f992b…`, success, registry `0xF36F…BEe`), block 63282230 and block time 2026-09-15T01:52:17Z. That's 330 s after the anchor; INSIDER_EXIT@6h/24h are true and eligible. `/v1/proof` for the same hash: `proofValid: true, onChainConfirmed: true`.
+2. **The eligible benchmark, failures included.**
+   - Graded 17,423 of 267,115 due outcomes.
+   - INSIDER_EXIT@24h: AUROC 0.767, beats both base rates (209 replays excluded).
+   - TRADING_ALIVE@24h: 0.652, beats both base rates and the heuristic (550 replays, 1 late excluded).
+   - DRAWDOWN_80@24h (0.343) and LIQ_IMPAIRED@24h (0.321) rank backwards, with no claims.
+3. **Public CREDIT funding.** `/v1/funding` lists 26 CREDIT activated: operator #58 (20), agent #79, #164, #211 (2 each), all with tx hashes. The budget card uses the worker gate: cap $1.00, bound by the CREDIT share (`credit_linked`), $0.01 spent today, $0.20 next run.
 
 ## Still open
 
