@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Hex } from 'viem';
 import type { ResolverContext } from '../src/outcomes/context';
 import { resolveDrawdown } from '../src/outcomes/resolve-drawdown';
@@ -104,6 +104,51 @@ describe('resolveDrawdown', () => {
     const r = await resolveDrawdown(baseCtx({ client: client as never }));
     expect(r.value).toBe(true); // 10 / 100 = 0.1
     expect((r.evidence as { horizonSource: string }).horizonSource).toBe('quote');
+  });
+
+  // F01 (docs/FABLE-REVIEW-IMPLEMENTATION.md): a launch/qualified report's
+  // reference window ends at anchor+24h, the 24h horizon, so
+  // drawdownRefEnd == horizonBlock. M4a (f269962) probed the quoter there for a
+  // zero-swap baseline, then priced the horizon with the identical eth_call, so
+  // every such row resolved false with ratio 1 (reproduced at f269962 and
+  // c35311a; see the package 1 record). M4a is withdrawn: a zero-swap reference
+  // window is UNRESOLVABLE with no quoter call, as in deployed 21e9ebd, and no
+  // setting re-enables it. A new zero-swap rule needs its own rule version.
+  describe('F01 — zero-swap reference window stays UNRESOLVABLE', () => {
+    const zeroSwapClient = () => ({
+      request: vi.fn(async ({ method }: { method: string }) => {
+        if (method === 'eth_getLogs') return [];
+        if (method === 'eth_call') return encodeQuoterReturn(10n * 10n ** 15n); // would give a finite baseline
+        throw new Error(method);
+      }),
+    });
+    const ethCallCount = (client: ReturnType<typeof zeroSwapClient>) =>
+      client.request.mock.calls.filter(([a]) => a.method === 'eth_call').length;
+
+    afterEach(() => vi.unstubAllEnvs());
+
+    it.each([
+      ['24h launch report, refEnd == horizonBlock', { drawdownRefStart: 10n, drawdownRefEnd: 200n, horizonBlock: 200n }],
+      ['refEnd before horizonBlock', { drawdownRefStart: 10n, drawdownRefEnd: 100n, horizonBlock: 200n }],
+    ])('%s: pre-M4a reason and evidence, zero quoter calls', async (_name, window) => {
+      const client = zeroSwapClient();
+      const r = await resolveDrawdown(baseCtx({ client: client as never, ...window }));
+      expect(r.status).toBe('UNRESOLVABLE');
+      expect(r.value).toBeNull();
+      expect(r.reason).toBe('no positive price in the reference window');
+      expect(r.evidence).toEqual({ refWindowBlocks: [Number(window.drawdownRefStart), Number(window.drawdownRefEnd)] });
+      expect(ethCallCount(client)).toBe(0);
+    });
+
+    it('the withdrawn c35311a switch (DRAWDOWN_NO_SWAP_BASELINE=1) has no effect', async () => {
+      vi.stubEnv('DRAWDOWN_NO_SWAP_BASELINE', '1');
+      const client = zeroSwapClient();
+      const r = await resolveDrawdown(
+        baseCtx({ client: client as never, drawdownRefStart: 10n, drawdownRefEnd: 200n, horizonBlock: 200n }),
+      );
+      expect(r.status).toBe('UNRESOLVABLE');
+      expect(ethCallCount(client)).toBe(0);
+    });
   });
 });
 
