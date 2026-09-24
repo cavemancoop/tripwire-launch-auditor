@@ -56,6 +56,12 @@ export interface ScorerLoopOptions {
   qualifiedOnly?: boolean;
 }
 
+/** Emergency containment switch for the in-process periodic scorer. The API
+ * keeps serving the last persisted benchmark snapshot while disabled, so a
+ * scorer regression cannot take down launch detection and commitments. */
+export const scorerLoopEnabled = (value = process.env.SCORER_LOOP_ENABLED): boolean =>
+  !/^(0|false|no|off)$/i.test(value?.trim() ?? '');
+
 const defaultPersist = async (snapshot: BenchmarkSnapshot): Promise<void> => {
   await prisma.benchmarkSnapshot.upsert({
     where: { key: 'latest' },
@@ -102,7 +108,12 @@ export async function runScorerLoop(
   while (!signal.stopped) {
     try {
       const now = new Date();
-      const [both, live, coverage] = await Promise.all([scorer({}), scorer({ scope: 'live' }), readCoverage(now)]);
+      // These passes each scan the scoring dataset. Running them concurrently
+      // doubled peak memory and contributed to the 2026-09-23 Railway OOM.
+      // Keep peak residency to one scorer pass; coverage is small and follows.
+      const both = await scorer({});
+      const live = await scorer({ scope: 'live' });
+      const coverage = await readCoverage(now);
       const snapshot: BenchmarkSnapshot = {
         generatedAt: now.toISOString(),
         all: both.benchmark,

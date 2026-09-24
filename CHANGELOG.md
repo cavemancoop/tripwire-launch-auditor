@@ -2,6 +2,30 @@
 
 Append-only. Each entry: what changed, deliberate scope calls, and what the human should verify.
 
+## 2026-09-23 — worker OOM containment: bound scorer snapshot memory
+
+Railway restarted the production worker after an out-of-memory event. Resource
+metrics showed a normal ~0.4–0.5 GB footprint with periodic scorer-correlated
+spikes to 3–6 GB; the final sampled minute reached 6.1 GB immediately before
+the restart. Logs showed every scorer tick failing at the unbounded
+`prisma.report.findMany()` while the watcher and commit loops otherwise kept
+working.
+
+- Scorer database reads now select only the columns scoring consumes. They no
+  longer materialize report `canonicalJson`/evidence/coverage/signatures,
+  outcome evidence/coverage, or unrelated feature provenance.
+- Scanner features are filtered in Postgres instead of loading every feature
+  and discarding most of them in Node.
+- The all-inclusive and live-only scoring passes now run sequentially rather
+  than holding two full query/result graphs concurrently.
+- `SCORER_LOOP_ENABLED=0` is an emergency kill switch. It disables only
+  periodic recomputation; the API continues serving the last snapshot already
+  persisted in Postgres, protecting launch detection and on-chain commitments.
+- The scorer-loop test now pins single-pass concurrency and the kill-switch
+  parser.
+
+Verification: `pnpm verify`.
+
 ## M0 — Scaffold (2026-09-02)
 
 ### Added

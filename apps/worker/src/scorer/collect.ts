@@ -109,7 +109,22 @@ export async function collectScoreRows(opts: CollectOptions = {}): Promise<Colle
   if (scope === 'live') outcomeWhere['retrospective'] = false;
   if (scope === 'retrospective') outcomeWhere['retrospective'] = true;
 
-  const outcomes = await prisma.outcome.findMany({ where: outcomeWhere });
+  // Keep this projection deliberately narrow. The production outcomes table is
+  // hundreds of thousands of rows; loading evidence/coverage/id/timestamps that
+  // scoring never reads turns one snapshot into a multi-GB allocation.
+  const outcomes = await prisma.outcome.findMany({
+    where: outcomeWhere,
+    select: {
+      chainId: true,
+      tokenAddress: true,
+      anchorTime: true,
+      trigger: true,
+      launchId: true,
+      label: true,
+      horizon: true,
+      value: true,
+    },
+  });
   const obs = new Map<string, ResolvedObs>();
   for (const o of outcomes) {
     const k = obsKey(o.chainId, o.tokenAddress, o.anchorTime);
@@ -163,7 +178,27 @@ export async function collectScoreRows(opts: CollectOptions = {}): Promise<Colle
   const reports = await prisma.report.findMany({
     where: { validatorPassed: true },
     orderBy: [{ reportTime: 'asc' }, { createdAt: 'asc' }],
-    include: {
+    // canonicalJson, evidence, coverage, signatures and validatorFailures can
+    // be large. None participates in scoring, so never materialize it here.
+    select: {
+      chainId: true,
+      tokenAddress: true,
+      reportTime: true,
+      trigger: true,
+      forecaster: true,
+      launchId: true,
+      commitId: true,
+      pInsiderExit6h: true,
+      pInsiderExit24h: true,
+      pInsiderExit72h: true,
+      pSellImpaired1h: true,
+      pSellImpaired24h: true,
+      pLiqImpaired24h: true,
+      pLiqImpaired7d: true,
+      pDrawdown80_24h: true,
+      pDrawdown80_7d: true,
+      pTradingAlive24h: true,
+      pTradingAlive7d: true,
       launch: { select: { source: true } },
       commit: { select: { blockNumber: true } },
     },
@@ -258,11 +293,21 @@ export async function collectScoreRows(opts: CollectOptions = {}): Promise<Colle
   }
 
   // scanhood / goplus fixed maps — also need a timely fetch, or they carry hindsight
-  const features = (
-    await prisma.feature.findMany({
-      include: { launch: { select: { id: true, source: true } } },
-    })
-  ).filter((f) => f.scanhoodRaw != null || f.goplusRaw != null);
+  // Filter in Postgres and project only the two scanner payloads. Previously
+  // this loaded every feature row plus provenance and then discarded rows
+  // without scanner data in JS, causing another avoidable heap spike.
+  const features = await prisma.feature.findMany({
+    // A scanner row without fetchedAt is ineligible anyway, so the timestamp
+    // columns provide a simple SQL-not-null filter without JSON null ambiguity.
+    where: { OR: [{ scanhoodFetchedAt: { not: null } }, { goplusFetchedAt: { not: null } }] },
+    select: {
+      scanhoodRaw: true,
+      scanhoodFetchedAt: true,
+      goplusRaw: true,
+      goplusFetchedAt: true,
+      launch: { select: { id: true, source: true } },
+    },
+  });
   for (const f of features) {
     const k = launchAnchor.get(f.launch.id);
     if (!k) continue;

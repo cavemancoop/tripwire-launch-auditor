@@ -17,7 +17,7 @@ import { seedTokenStoreFromEnv } from './metabolism/session-seed';
 import { deriveOrbioApiKey, describeKey } from './metabolism/credit-wallet';
 import { setWalletGatewayKey } from './deepdive/openrouter';
 import { runOutcomesLoop } from './outcomes';
-import { runScorerLoop } from './scorer';
+import { runScorerLoop, scorerLoopEnabled } from './scorer';
 import { runTelegramPosterLoop } from './telegram/poster';
 import { runPoller, type StopSignal } from './watcher/poller';
 import { rpc } from './watcher/rpc';
@@ -117,7 +117,13 @@ async function main(): Promise<void> {
   // BENCHMARK_FILE, if set, must be an absolute path (or shared-relative-to-cwd
   // path both processes agree on) — leave it unset and runScorerLoop anchors to
   // the repo root, which is what the API's default also anchors to.
-  void runScorerLoop(signal, { outFile: process.env.BENCHMARK_FILE || undefined });
+  if (scorerLoopEnabled()) {
+    void runScorerLoop(signal, { outFile: process.env.BENCHMARK_FILE || undefined });
+  } else {
+    console.warn(
+      '[scorer] periodic snapshots disabled by SCORER_LOOP_ENABLED; API serves the last persisted snapshot',
+    );
+  }
 
   if (env.agentPrivateKey && process.env.TOKEN_ENCRYPTION_KEY) {
     console.log('[metabolism] lifecycle loop enabled');
