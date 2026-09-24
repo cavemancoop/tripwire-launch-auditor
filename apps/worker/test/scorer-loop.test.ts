@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Benchmark } from '@launch-auditor/scoring';
 import { resolutionPolicy } from '../src/scorer/coverage';
-import { runScorerLoop, type BenchmarkSnapshot } from '../src/scorer/loop';
+import { runScorerLoop, scorerLoopEnabled, type BenchmarkSnapshot } from '../src/scorer/loop';
 import type { StopSignal } from '../src/watcher/poller';
 
 const fakeBenchmark = (n: number): Benchmark => ({
@@ -54,14 +54,20 @@ describe('runScorerLoop', () => {
     const signal: StopSignal = { stopped: false };
     const calls: Array<string | undefined> = [];
     const persisted: BenchmarkSnapshot[] = [];
+    let active = 0;
+    let maxActive = 0;
 
     await runScorerLoop(signal, {
       outFile,
       intervalMs: 1,
       scorer: async (opts) => {
+        active++;
+        maxActive = Math.max(maxActive, active);
         calls.push(opts.scope);
         signal.stopped = true; // stop after this one tick
         const n = opts.scope === 'live' ? 80 : 120;
+        await Promise.resolve();
+        active--;
         return { benchmark: fakeBenchmark(n), rowCount: n };
       },
       persist: async (s) => void persisted.push(s),
@@ -69,6 +75,7 @@ describe('runScorerLoop', () => {
     });
 
     expect(calls).toEqual([undefined, 'live']);
+    expect(maxActive).toBe(1);
     expect(existsSync(outFile)).toBe(true);
 
     const snapshot = JSON.parse(readFileSync(outFile, 'utf8')) as BenchmarkSnapshot;
@@ -146,6 +153,17 @@ describe('runScorerLoop', () => {
     expect(persisted[0]!.coverage).toEqual(cov);
     expect(persisted[0]!.resolutionPolicy).toMatch(/graded only for qualified launches/);
     expect(persisted[0]!.resolutionPolicy).toMatch(/not a random sample/);
+  });
+});
+
+describe('scorerLoopEnabled', () => {
+  it('defaults on and accepts the operational false spellings', () => {
+    expect(scorerLoopEnabled(undefined)).toBe(true);
+    expect(scorerLoopEnabled('1')).toBe(true);
+    expect(scorerLoopEnabled('true')).toBe(true);
+    for (const value of ['0', 'false', 'no', 'off', ' OFF ']) {
+      expect(scorerLoopEnabled(value)).toBe(false);
+    }
   });
 });
 

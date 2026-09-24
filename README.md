@@ -388,6 +388,13 @@ pnpm verify
 Runs `prisma generate` + `prisma validate` + `tsc --noEmit` for every package + the
 vitest suites, and prints a green summary. No Docker, no network, no paid APIs.
 
+**Outcome regression (F01).** A DRAWDOWN_80 row whose reference window has
+zero swaps is UNRESOLVABLE and makes no quoter call. This holds even when the
+reference window ends at the 24h horizon, where a quoter baseline would have
+produced a tautological ratio-1 `false`. Any different zero-swap rule needs its
+own rule version with an effective block. Check with
+`pnpm --filter @launch-auditor/worker exec vitest run test/outcomes-price.test.ts`.
+
 ## Milestones
 
 Tracked in [`CHANGELOG.md`](./CHANGELOG.md). Current: **M9 — Railway deploy**.

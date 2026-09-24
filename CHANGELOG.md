@@ -2,6 +2,51 @@
 
 Append-only. Each entry: what changed, deliberate scope calls, and what the human should verify.
 
+## 2026-09-24 — F01 regression tests: zero-swap DRAWDOWN_80 stays UNRESOLVABLE
+
+Tests only; no resolver, rule, row or migration change. Ported verbatim from
+reviewed commit f20c3e4 (branch `fix/f01-m4a-hold`).
+
+- The unreleased M4a change (local f269962) gave a launch/qualified 24h row
+  with zero reference swaps a quoter baseline at the horizon block. The
+  horizon price was then the identical `eth_call`, so the row resolved false
+  with ratio 1. F01 withdrew M4a. This branch's `resolve-drawdown.ts` is
+  already the pre-M4a code (identical to 21e9ebd and f20c3e4).
+- Three tests in `outcomes-price.test.ts` pin that behavior. Same-block and
+  earlier-refEnd zero-swap windows return
+  `UNRESOLVABLE 'no positive price in the reference window'` with zero
+  `eth_call`s. The withdrawn `DRAWDOWN_NO_SWAP_BASELINE` variable has no effect.
+
+### Verify
+```bash
+pnpm --filter @launch-auditor/worker exec vitest run test/outcomes-price.test.ts
+pnpm verify
+```
+
+## 2026-09-23 — worker OOM containment: bound scorer snapshot memory
+
+Railway restarted the production worker after an out-of-memory event. Resource
+metrics showed a normal ~0.4–0.5 GB footprint with periodic scorer-correlated
+spikes to 3–6 GB; the final sampled minute reached 6.1 GB immediately before
+the restart. Logs showed every scorer tick failing at the unbounded
+`prisma.report.findMany()` while the watcher and commit loops otherwise kept
+working.
+
+- Scorer database reads now select only the columns scoring consumes. They no
+  longer materialize report `canonicalJson`/evidence/coverage/signatures,
+  outcome evidence/coverage, or unrelated feature provenance.
+- Scanner features are filtered in Postgres instead of loading every feature
+  and discarding most of them in Node.
+- The all-inclusive and live-only scoring passes now run sequentially rather
+  than holding two full query/result graphs concurrently.
+- `SCORER_LOOP_ENABLED=0` is an emergency kill switch. It disables only
+  periodic recomputation; the API continues serving the last snapshot already
+  persisted in Postgres, protecting launch detection and on-chain commitments.
+- The scorer-loop test now pins single-pass concurrency and the kill-switch
+  parser.
+
+Verification: `pnpm verify`.
+
 ## M0 — Scaffold (2026-09-02)
 
 ### Added
