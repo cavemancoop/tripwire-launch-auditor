@@ -9,6 +9,7 @@
  * or throw over the original error it's recording.
  */
 import { prisma } from '@launch-auditor/db';
+import { redactRpcDiagnostic } from '@launch-auditor/rpc-budget';
 
 export async function recordFailure(site: string, err: unknown): Promise<void> {
   // Every catch site that calls this is exercised by tests deliberately
@@ -20,7 +21,8 @@ export async function recordFailure(site: string, err: unknown): Promise<void> {
   // production incident.
   if (process.env.VITEST) return;
 
-  const message = err instanceof Error ? err.message : String(err);
+  // RPC errors carry the key-bearing provider URL (review d1286de9)
+  const message = redactRpcDiagnostic(err instanceof Error ? err.message : String(err));
   try {
     await prisma.catchSiteFailure.upsert({
       where: { site },
@@ -31,7 +33,7 @@ export async function recordFailure(site: string, err: unknown): Promise<void> {
     // eslint-disable-next-line no-console
     console.error(
       `[failures] could not record catch-site failure for "${site}"`,
-      recordErr instanceof Error ? recordErr.message : recordErr,
+      recordErr instanceof Error ? redactRpcDiagnostic(recordErr.message) : recordErr,
     );
   }
 }

@@ -2,6 +2,53 @@
 
 Append-only. Each entry: what changed, deliberate scope calls, and what the human should verify.
 
+## 2026-09-25 — Fable engineering release candidate (Packages 2b and 4a)
+
+The worker now exposes fixed-label outcome/scorer loop progress on its private
+`/metrics` route. Shared RPC error classification and regression tests keep
+provider quota and nested rate-limit failures pending for retry, redact
+credentials from new outcome diagnostics, and preserve the existing v1
+DRAWDOWN_80 grading interpretation. No schema migration or new configuration
+is required. Package 4b cancellation and row ownership remains open.
+
+The publishable tree passed Prisma generate/validate, workspace typechecks and
+829 Vitest tests. Forge was unavailable and skipped; live RPC and production
+database behavior remain to be observed after deployment. See
+[`docs/FABLE-RELEASE-STATUS.md`](docs/FABLE-RELEASE-STATUS.md) for scope,
+limitations and remaining work.
+
+## 2026-09-24 — Package 2a: worker observation (scheduler by tier, memory)
+
+Observation only. No change to RPC admission order, rate or concurrency,
+outcome selection, grading, retries, statuses, schema, migrations, `/health`,
+public claims or configuration. No new env var.
+
+- `RequestScheduler.stats` adds per-tier `queuedByPriority`,
+  `inFlightByPriority`, `completedByPriority` and `failedByPriority`, next to
+  the existing `byPriority`. `allSchedulerStats()` returns every scheduler's
+  stats without its URL.
+- The worker health server adds `GET /metrics`: 38 fixed Prometheus series
+  (RPC started/completed/failed/queued/in-flight by tier, process memory, peak
+  RSS, heap limit, uptime). It is private-network only. If the collector or
+  formatter throws, `/metrics` returns a fixed `503 metrics unavailable`
+  without the exception text, and `/health` stays independent and
+  byte-identical (review revision).
+- The worker logs one `[obs] {json}` line every 60 s. It is a bounded
+  operational subset of the Prometheus metrics: per-tier RPC counts, plus rss,
+  heapUsed, heapTotal and maxRss rounded to MB, and uptime. It omits
+  `external`, `array_buffers` and `heap_limit_bytes`.
+
+### Verify
+```bash
+pnpm --filter @launch-auditor/rpc-budget exec vitest run test/scheduler.test.ts
+pnpm --filter @launch-auditor/worker exec vitest run test/observability.test.ts
+pnpm verify
+```
+Check: the original scheduler ordering, concurrency, failure and rate tests are
+unmodified and pass. Start order is identical with stats read mid-flight.
+`/health` returns the same bytes as before, including right after a failed
+`/metrics` request on the same server.
+
 ## 2026-09-24 — F01 regression tests: zero-swap DRAWDOWN_80 stays UNRESOLVABLE
 
 Tests only; no resolver, rule, row or migration change. Ported verbatim from

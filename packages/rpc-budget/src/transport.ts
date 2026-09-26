@@ -1,5 +1,6 @@
 import { http, type Transport } from 'viem';
 import { cacheKey, ResponseCache } from './cache';
+import { rpcErrorKinds } from './errors';
 import type { RequestScheduler } from './scheduler';
 
 export interface BudgetedHttpOptions {
@@ -15,9 +16,14 @@ export interface BudgetedHttpOptions {
   rateLimitRetries?: number;
 }
 
-/** ordofi `-32005 "network is busy"`, blockmachine `rate limit exceeded`, generic 429s */
-const RATE_LIMITED =
-  /rate.?limit|too many requests|429|network is busy|try again in a moment|exceeds defined limit|-32005|capacity|throttl/i;
+/** ordofi `-32005 "network is busy"`, blockmachine `rate limit exceeded`, generic 429s.
+ *  Package 4a (review 896555be): the shared taxonomy decides, reading details and
+ *  causes but not the URL. A quota refusal is not retried here even when it
+ *  arrives as an HTTP 429 — a monthly quota does not come back within seconds. */
+function isRateLimited(err: unknown): boolean {
+  const kinds = rpcErrorKinds(err);
+  return kinds.includes('rate_limit') && !kinds.includes('quota');
+}
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -53,8 +59,7 @@ export function budgetedHttp(rpcUrl: string, opts: BudgetedHttpOptions): Transpo
             return await innerRequest(args, reqOpts);
           } catch (err) {
             lastErr = err;
-            const msg = err instanceof Error ? err.message : String(err);
-            if (attempt === rlRetries || !RATE_LIMITED.test(msg)) throw err;
+            if (attempt === rlRetries || !isRateLimited(err)) throw err;
             await sleep(500 * 2 ** attempt + Math.random() * 250); // 0.5s, 1s, 2s, 4s (+jitter)
           }
         }

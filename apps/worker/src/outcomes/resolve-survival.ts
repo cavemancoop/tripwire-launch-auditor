@@ -1,3 +1,4 @@
+import { hasProviderFailure } from '@launch-auditor/rpc-budget';
 import { buildPriceSeries } from './series';
 import { resolved, unresolvable, type Resolution } from './types';
 import type { ResolverContext } from './context';
@@ -19,6 +20,12 @@ export async function resolveSurvival(ctx: ResolverContext): Promise<Resolution>
   try {
     series = await buildPriceSeries(ctx.client, ctx.pool, from, ctx.horizonBlock, ctx.maxRange);
   } catch (err) {
+    // Package 4a: a quota, rate-limit or transport failure propagates with its full
+    // message. Truncated to its first line ("HTTP request failed.", the 18 Sep quota
+    // text) it matched no retry pattern and was written UNRESOLVABLE for good.
+    // Review 896555be: any such signal, even beside an archive miss (a "header not
+    // found" whose cause timed out) — the first line alone would drop the cause.
+    if (hasProviderFailure(err)) throw err;
     // an RPC failure must not be read as "dead" (checkpoint §C step 2)
     return unresolvable(
       `could not scan the survival window: ${err instanceof Error ? err.message.split('\n')[0] : err}`,

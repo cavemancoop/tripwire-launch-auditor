@@ -12,6 +12,20 @@ export {
   type SchedulerStats,
 } from './scheduler';
 export { budgetedHttp, type BudgetedHttpOptions } from './transport';
+export {
+  classifyRpcError,
+  hasProviderFailure,
+  isProviderFailureKind,
+  redactRpcDiagnostic,
+  rpcErrorKinds,
+  rpcErrorText,
+  ARCHIVE_PATTERN,
+  QUOTA_PATTERN,
+  RATE_LIMIT_PATTERN,
+  REVERT_PATTERN,
+  TRANSPORT_PATTERN,
+  type RpcErrorKind,
+} from './errors';
 export { probeGetLogsRange, type ProbeOptions } from './probe';
 export {
   configureRpcBudget,
@@ -23,6 +37,7 @@ export {
   schedulerFor,
   cacheFor,
   budgetStats,
+  allSchedulerStats,
   resetRpcBudget,
   type BudgetedClientOptions,
   type BudgetSnapshot,

@@ -30,7 +30,16 @@ export interface SchedulerStats {
   queued: number;
   /** count started, per priority tier */
   byPriority: Record<number, number>;
+  /** observation only (Package 2): per-tier waiting, running, finished counts */
+  queuedByPriority: Record<number, number>;
+  inFlightByPriority: Record<number, number>;
+  completedByPriority: Record<number, number>;
+  failedByPriority: Record<number, number>;
 }
+
+const bump = (m: Record<number, number>, k: number, d: number): void => {
+  m[k] = (m[k] ?? 0) + d;
+};
 
 /**
  * One instance per RPC URL, shared by every client that talks to it. Requests
@@ -52,6 +61,10 @@ export class RequestScheduler {
     completed: 0,
     failed: 0,
     byPriority: {} as Record<number, number>,
+    queuedByPriority: {} as Record<number, number>,
+    inFlightByPriority: {} as Record<number, number>,
+    completedByPriority: {} as Record<number, number>,
+    failedByPriority: {} as Record<number, number>,
   };
 
   constructor(opts: SchedulerOptions) {
@@ -74,6 +87,7 @@ export class RequestScheduler {
         reject,
       });
       this.counts.enqueued++;
+      bump(this.counts.queuedByPriority, priority, 1);
       this.pump();
     });
   }
@@ -87,6 +101,10 @@ export class RequestScheduler {
       inFlight: this.inFlight,
       queued: this.queue.size,
       byPriority: { ...this.counts.byPriority },
+      queuedByPriority: { ...this.counts.queuedByPriority },
+      inFlightByPriority: { ...this.counts.inFlightByPriority },
+      completedByPriority: { ...this.counts.completedByPriority },
+      failedByPriority: { ...this.counts.failedByPriority },
     };
   }
 
@@ -117,6 +135,8 @@ export class RequestScheduler {
       this.inFlight++;
       this.counts.started++;
       this.counts.byPriority[job.priority] = (this.counts.byPriority[job.priority] ?? 0) + 1;
+      bump(this.counts.queuedByPriority, job.priority, -1);
+      bump(this.counts.inFlightByPriority, job.priority, 1);
       void this.execute(job);
     }
   }
@@ -125,12 +145,15 @@ export class RequestScheduler {
     try {
       const value = await job.run();
       this.counts.completed++;
+      bump(this.counts.completedByPriority, job.priority, 1);
       job.resolve(value);
     } catch (err) {
       this.counts.failed++;
+      bump(this.counts.failedByPriority, job.priority, 1);
       job.reject(err);
     } finally {
       this.inFlight--;
+      bump(this.counts.inFlightByPriority, job.priority, -1);
       this.loop();
     }
   }

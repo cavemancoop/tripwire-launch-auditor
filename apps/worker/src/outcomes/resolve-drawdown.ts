@@ -1,3 +1,4 @@
+import { ARCHIVE_PATTERN, REVERT_PATTERN } from '@launch-auditor/rpc-budget';
 import { mergeCoverage } from './coverage';
 import { quoteExactInSingle, sellDirection } from './quote';
 import { buildPriceSeries } from './series';
@@ -8,6 +9,22 @@ const DRAWDOWN_FLOOR = 0.2; // price <= 20% of reference max
 /** how far back from the horizon to look for "the price at the horizon" before
  *  falling back to a Quoter spot call — keeps the scan bounded for 7d horizons */
 const HORIZON_TAIL_BLOCKS = 50_000n;
+
+/** the pre-896555be quoter's network test over the error message, verbatim */
+const V1_QUOTE_NETWORK = /timeout|ETIMEDOUT|ECONNRESET|ECONNREFUSED|socket hang up|network|fetch failed|429/i;
+
+/**
+ * Review 866d601f: a quoter revert prices the horizon at 0, a scored DRAWDOWN_80
+ * positive. Review 896555be's classifier calls more errors a revert than the one
+ * OUTCOME_RULES_v1 rows have been graded under (a `429` or `network` in the RPC
+ * URL, or `429` in revert data, used to read as a network failure the sweep
+ * deferred). Scoring those would turn a deferred measurement into a positive on
+ * existing rows, so a revert is scored only where the v1 message classifier also
+ * saw one. Widening that needs its own rule version and effective boundary.
+ */
+export function v1ScoresQuoteRevert(message: string): boolean {
+  return !ARCHIVE_PATTERN.test(message) && !V1_QUOTE_NETWORK.test(message) && REVERT_PATTERN.test(message);
+}
 
 /**
  * DRAWDOWN_80 (spec §1): price at the horizon <= 20% of the max price in the
@@ -79,11 +96,13 @@ export async function resolveDrawdown(ctx: ResolverContext): Promise<Resolution>
     });
     coverage.callCount += 1;
     if (!q.ok) {
-      if (q.error === 'revert') {
+      if (q.error === 'revert' && v1ScoresQuoteRevert(q.message)) {
         horizonPrice = 0; // cannot sell -> price is effectively 0
         horizonSource = 'quote';
       } else {
-        return unresolvable(`quoter ${q.error} at horizon block`, coverage, {
+        // a revert v1 did not score keeps v1's `network` reason, which the sweep defers
+        const error = q.error === 'revert' ? 'network' : q.error;
+        return unresolvable(`quoter ${error} at horizon block`, coverage, {
           refMaxPrice: refMax,
           rpcError: q.message.split('\n')[0]!.slice(0, 200),
         });
