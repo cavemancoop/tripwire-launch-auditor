@@ -24,6 +24,8 @@ export interface WorkerEnv {
   commitMaxLeaves: number;
   /** shared RPC budget: sustained requests/min across all callers (M4) */
   rpcBudgetRpm: number;
+  /** release cutover gate: false starts the worker without the outcome resolver */
+  outcomesEnabled: boolean;
   /** eth_getLogs span: 0 = probe the RPC's real limit on boot, else use this */
   rpcMaxGetLogsRange: number;
   /** M5b Metabolism: hard reserve held back; STARVED when balance − this ≤ 0 */
@@ -76,6 +78,22 @@ export interface WorkerEnv {
 }
 
 let dotenvLoaded = false;
+
+/** An invalid cutover value must fail startup instead of silently running the
+ * outcome writer during a planned non-overlapping deployment. */
+export function parseOutcomesEnabled(value: string | undefined): boolean {
+  if (value === undefined) return true;
+  switch (value.trim().toLowerCase()) {
+    case '1':
+    case 'true':
+      return true;
+    case '0':
+    case 'false':
+      return false;
+    default:
+      throw new Error('OUTCOMES_ENABLED must be 0 or 1 (false or true)');
+  }
+}
 
 /**
  * Load the repo-root `.env` into `process.env`, once per process. Nothing here
@@ -133,6 +151,7 @@ export function loadEnv(): WorkerEnv {
     commitIntervalSec: Number(process.env.COMMIT_INTERVAL_SEC ?? 300),
     commitMaxLeaves: Number(process.env.COMMIT_MAX_LEAVES ?? 200),
     rpcBudgetRpm: Number(process.env.RPC_BUDGET_RPM ?? 500),
+    outcomesEnabled: parseOutcomesEnabled(process.env.OUTCOMES_ENABLED),
     rpcMaxGetLogsRange: Number(process.env.RPC_MAX_GETLOGS_RANGE ?? 0),
     metabolismReserveUsd: Number(process.env.RESERVE_USD || 3),
     metabolismLowWaterUsd:
