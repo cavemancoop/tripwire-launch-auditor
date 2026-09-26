@@ -287,14 +287,10 @@ export async function sweepDueOutcomes(
 
   const resolveRow = async (row: (typeof due)[number]): Promise<void> => {
     try {
-      // Package 4b (review d17cd0c4): a timed-out row is deferred and its late
-      // result discarded, so the RPC its resolution would still issue is
-      // cancelled rather than spent — no next chunk, retry or queued request.
       const res = await withDeadline(
         () => resolveOneOutcome(client, row as OutcomeRow),
         OUTCOME_DEADLINE_MS,
         `${row.label}@${row.horizon} ${row.tokenAddress}`,
-        { cancelRpc: true },
       );
 
       const reasonDisposition = res.status === 'UNRESOLVABLE' && res.reason ? sweepDisposition(res.reason) : 'fail';
