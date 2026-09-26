@@ -115,7 +115,11 @@ async function main(): Promise<void> {
   // loop shared the watcher-priority client, so raising resolver batch and
   // concurrency competed as an equal with T+10m report generation instead of
   // yielding to it (the documented order is watcher > commit > outcomes).
-  void runOutcomesLoop(getBudgetedClient(env.rpcUrl, { priority: PRIORITY.outcomes }), signal);
+  if (env.outcomesEnabled) {
+    void runOutcomesLoop(getBudgetedClient(env.rpcUrl, { priority: PRIORITY.outcomes }), signal);
+  } else {
+    console.warn('[outcomes] resolution loop disabled by OUTCOMES_ENABLED=0');
+  }
   // BENCHMARK_FILE, if set, must be an absolute path (or shared-relative-to-cwd
   // path both processes agree on) — leave it unset and runScorerLoop anchors to
   // the repo root, which is what the API's default also anchors to.
