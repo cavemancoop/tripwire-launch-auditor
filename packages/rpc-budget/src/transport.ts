@@ -1,6 +1,5 @@
-import { HttpRequestError, http, type Transport } from 'viem';
+import { http, type Transport } from 'viem';
 import { cacheKey, ResponseCache } from './cache';
-import { currentRpcSignal, throwIfRpcCancelled } from './cancel';
 import { rpcErrorKinds } from './errors';
 import type { RequestScheduler } from './scheduler';
 
@@ -26,49 +25,7 @@ function isRateLimited(err: unknown): boolean {
   return kinds.includes('rate_limit') && !kinds.includes('quota');
 }
 
-/** JSON-RPC codes viem's own transport retry treats as transient: unknown, limit exceeded, internal */
-const TRANSIENT_RPC_CODES = new Set([-1, -32005, -32603]);
-/** HTTP statuses viem's own transport retry treats as transient */
-const TRANSIENT_HTTP_STATUSES = new Set([403, 408, 413, 429, 500, 502, 503, 504]);
-
-/** Review ffa98d81: the retry decision viem's http() used to make internally
- *  (viem 2.x `buildRequest` shouldRetry), now made here so a cancellation can stop
- *  it. A coded JSON-RPC error retries only on the transient codes, an HTTP error
- *  only on the transient statuses, and anything else (a network failure, a
- *  timeout) always. */
-export function isTransientTransportError(err: unknown): boolean {
-  const code = (err as { code?: unknown } | null)?.code;
-  if (typeof code === 'number') return TRANSIENT_RPC_CODES.has(code);
-  if (err instanceof HttpRequestError && err.status) return TRANSIENT_HTTP_STATUSES.has(err.status);
-  return true;
-}
-
-/** viem's own transport backoff: a numeric Retry-After header, else `retryDelay · 2^n` */
-function transientDelayMs(err: unknown, n: number, retryDelay: number): number {
-  if (err instanceof HttpRequestError) {
-    const retryAfter = (err as { headers?: Headers }).headers?.get('Retry-After');
-    if (retryAfter?.match(/\d/)) return Number.parseInt(retryAfter, 10) * 1000;
-  }
-  return ~~(1 << n) * retryDelay;
-}
-
-/** A backoff that ends early when the signal aborts, so a cancelled request frees its slot. */
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    if (signal?.aborted) return resolve();
-    const onAbort = (): void => {
-      clearTimeout(timer);
-      resolve();
-    };
-    const timer = setTimeout(() => {
-      signal?.removeEventListener('abort', onAbort);
-      resolve();
-    }, ms);
-    signal?.addEventListener('abort', onAbort, { once: true });
-  });
-}
-
-const RETRY_DELAY_MS = 400;
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 /**
  * A viem transport that wraps `http()` so every `request({ method, params })`
@@ -78,62 +35,36 @@ const RETRY_DELAY_MS = 400;
  * transport retry does not catch, since it arrives as HTTP 200 + an error body)
  * is retried here with exponential backoff, all inside one scheduler slot so a
  * retry does not spend an extra token.
- *
- * Package 4b: a request issued under a cancelled signal (see `runCancellableRpc`)
- * is dropped before it starts, and a cancelled one stops its in-slot retries —
- * both these rate-limit retries and the transient-failure retries viem's http()
- * would otherwise run out of reach of the signal (review ffa98d81), so those run
- * here too, on viem's schedule. A request already sent is left to settle.
  */
 export function budgetedHttp(rpcUrl: string, opts: BudgetedHttpOptions): Transport {
-  // viem's own retry is off: it cannot see the cancellation signal
   const inner = http(rpcUrl, {
     timeout: opts.timeout ?? 30_000,
-    retryCount: 0,
+    retryCount: opts.retryCount ?? 2,
+    retryDelay: 400,
   });
-  const retryCount = opts.retryCount ?? 2;
   const rlRetries = opts.rateLimitRetries ?? 4;
 
   return (params) => {
     const t = inner(params);
     const innerRequest = t.request as (a: unknown, o?: unknown) => Promise<unknown>;
 
-    /** one attempt as viem's http() made it: transient failures retried `retryCount` times */
-    const attempt = async (args: unknown, reqOpts: unknown, signal: AbortSignal | undefined): Promise<unknown> => {
-      for (let n = 0; ; n++) {
-        throwIfRpcCancelled(signal);
-        try {
-          return await innerRequest(args, reqOpts);
-        } catch (err) {
-          if (n >= retryCount || !isTransientTransportError(err) || signal?.aborted) throw err;
-          await sleep(transientDelayMs(err, n, RETRY_DELAY_MS), signal);
-        }
-      }
-    };
-
     const request = async (args: { method: string; params?: unknown }, reqOpts?: unknown) => {
       const key = opts.cache ? cacheKey(opts.chainId, args.method, args.params ?? []) : null;
       if (key && opts.cache!.has(key)) return opts.cache!.get(key);
 
-      const signal = currentRpcSignal();
-      const result = await opts.scheduler.schedule(
-        opts.priority,
-        async () => {
-          let lastErr: unknown;
-          for (let n = 0; n <= rlRetries; n++) {
-            try {
-              return await attempt(args, reqOpts, signal);
-            } catch (err) {
-              lastErr = err;
-              if (n === rlRetries || !isRateLimited(err) || signal?.aborted) throw err;
-              await sleep(500 * 2 ** n + Math.random() * 250, signal); // 0.5s, 1s, 2s, 4s (+jitter)
-              throwIfRpcCancelled(signal);
-            }
+      const result = await opts.scheduler.schedule(opts.priority, async () => {
+        let lastErr: unknown;
+        for (let attempt = 0; attempt <= rlRetries; attempt++) {
+          try {
+            return await innerRequest(args, reqOpts);
+          } catch (err) {
+            lastErr = err;
+            if (attempt === rlRetries || !isRateLimited(err)) throw err;
+            await sleep(500 * 2 ** attempt + Math.random() * 250); // 0.5s, 1s, 2s, 4s (+jitter)
           }
-          throw lastErr;
-        },
-        { signal },
-      );
+        }
+        throw lastErr;
+      });
 
       // A null answer to a hash-addressed read ("no such tx / receipt / block
       // yet") is not immutable: the object can appear on the next block or on

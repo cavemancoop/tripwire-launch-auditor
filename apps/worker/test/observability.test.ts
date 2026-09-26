@@ -9,7 +9,6 @@ const stats = (over: Partial<SchedulerStats>): SchedulerStats => ({
   started: 0,
   completed: 0,
   failed: 0,
-  cancelled: 0,
   inFlight: 0,
   queued: 0,
   byPriority: {},
