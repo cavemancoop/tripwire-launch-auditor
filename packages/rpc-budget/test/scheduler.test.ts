@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { RpcCancelledError } from '../src/cancel';
 import { RequestScheduler } from '../src/scheduler';
 
 const flush = async (n = 8) => {
@@ -147,5 +148,55 @@ describe('RequestScheduler — per-tier stats (observation only)', () => {
     await Promise.all([first, second]);
     expect(s.stats.inFlightByPriority).toEqual({ 0: 0, 2: 0 });
     expect(s.stats.queuedByPriority).toEqual({ 0: 0, 2: 0 });
+  });
+});
+
+// Package 4b (review d17cd0c4): cancelled work that has not started never starts
+// and never spends a slot; work already started runs on in its slot.
+describe('RequestScheduler — cancellation (Package 4b)', () => {
+  it('a job whose signal aborts while queued never starts', async () => {
+    const s = new RequestScheduler({ rpm: 6_000_000, maxInFlight: 1 });
+    let release!: () => void;
+    const first = s.schedule(0, () => new Promise<void>((res) => (release = res)));
+    await flush(); // the only slot is taken; the next job waits in the queue
+    const ac = new AbortController();
+    const run = vi.fn(() => Promise.resolve('late'));
+    const second = s.schedule(0, run, { signal: ac.signal });
+    await flush();
+    expect(s.stats.queued).toBe(1);
+
+    ac.abort(new Error('deadline'));
+    await expect(second).rejects.toBeInstanceOf(RpcCancelledError);
+    release();
+    await first;
+    await flush();
+
+    expect(run).not.toHaveBeenCalled();
+    expect(s.stats).toMatchObject({ enqueued: 2, started: 1, completed: 1, cancelled: 1, queued: 0, inFlight: 0 });
+    expect(s.stats.queuedByPriority).toEqual({ 0: 0 });
+  });
+
+  it('an already-aborted signal is never queued', async () => {
+    const s = new RequestScheduler({ rpm: 6_000_000, maxInFlight: 1 });
+    const ac = new AbortController();
+    ac.abort();
+    const run = vi.fn(() => Promise.resolve('x'));
+    await expect(s.schedule(0, run, { signal: ac.signal })).rejects.toBeInstanceOf(RpcCancelledError);
+    await flush();
+    expect(run).not.toHaveBeenCalled();
+    expect(s.stats).toMatchObject({ enqueued: 0, started: 0, cancelled: 1, queued: 0 });
+  });
+
+  it('aborting a job that already started lets it finish in its slot', async () => {
+    const s = new RequestScheduler({ rpm: 6_000_000, maxInFlight: 1 });
+    const ac = new AbortController();
+    let release!: (v: string) => void;
+    const job = s.schedule(0, () => new Promise<string>((res) => (release = res)), { signal: ac.signal });
+    await flush();
+    expect(s.stats.inFlight).toBe(1);
+    ac.abort();
+    release('done');
+    await expect(job).resolves.toBe('done');
+    expect(s.stats).toMatchObject({ started: 1, completed: 1, cancelled: 0 });
   });
 });

@@ -1,5 +1,6 @@
 import { http, type Transport } from 'viem';
 import { cacheKey, ResponseCache } from './cache';
+import { currentRpcSignal, throwIfRpcCancelled } from './cancel';
 import { rpcErrorKinds } from './errors';
 import type { RequestScheduler } from './scheduler';
 
@@ -35,6 +36,9 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
  * transport retry does not catch, since it arrives as HTTP 200 + an error body)
  * is retried here with exponential backoff, all inside one scheduler slot so a
  * retry does not spend an extra token.
+ *
+ * Package 4b: a request issued under a cancelled signal (see `runCancellableRpc`)
+ * is dropped before it starts, and a cancelled one stops its in-slot retries.
  */
 export function budgetedHttp(rpcUrl: string, opts: BudgetedHttpOptions): Transport {
   const inner = http(rpcUrl, {
@@ -52,19 +56,25 @@ export function budgetedHttp(rpcUrl: string, opts: BudgetedHttpOptions): Transpo
       const key = opts.cache ? cacheKey(opts.chainId, args.method, args.params ?? []) : null;
       if (key && opts.cache!.has(key)) return opts.cache!.get(key);
 
-      const result = await opts.scheduler.schedule(opts.priority, async () => {
-        let lastErr: unknown;
-        for (let attempt = 0; attempt <= rlRetries; attempt++) {
-          try {
-            return await innerRequest(args, reqOpts);
-          } catch (err) {
-            lastErr = err;
-            if (attempt === rlRetries || !isRateLimited(err)) throw err;
-            await sleep(500 * 2 ** attempt + Math.random() * 250); // 0.5s, 1s, 2s, 4s (+jitter)
+      const signal = currentRpcSignal();
+      const result = await opts.scheduler.schedule(
+        opts.priority,
+        async () => {
+          let lastErr: unknown;
+          for (let attempt = 0; attempt <= rlRetries; attempt++) {
+            try {
+              return await innerRequest(args, reqOpts);
+            } catch (err) {
+              lastErr = err;
+              if (attempt === rlRetries || !isRateLimited(err) || signal?.aborted) throw err;
+              await sleep(500 * 2 ** attempt + Math.random() * 250); // 0.5s, 1s, 2s, 4s (+jitter)
+              throwIfRpcCancelled(signal);
+            }
           }
-        }
-        throw lastErr;
-      });
+          throw lastErr;
+        },
+        { signal },
+      );
 
       // A null answer to a hash-addressed read ("no such tx / receipt / block
       // yet") is not immutable: the object can appear on the next block or on

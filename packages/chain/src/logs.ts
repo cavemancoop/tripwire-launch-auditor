@@ -19,6 +19,9 @@ export interface ChunkedLogsParams {
   toBlock: bigint;
   /** Max blocks per eth_getLogs call (RPC range limit; 2000 for ordofi). */
   maxRange: number;
+  /** Package 4b: once aborted, no further chunk is requested (throws the abort reason).
+   *  A budgeted client also refuses chunks issued under a cancelled async-context signal. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -29,12 +32,13 @@ export async function getLogsChunked(
   client: Pick<PublicClient, 'request'>,
   params: ChunkedLogsParams,
 ): Promise<RpcLog[]> {
-  const { address, topics, fromBlock, toBlock, maxRange } = params;
+  const { address, topics, fromBlock, toBlock, maxRange, signal } = params;
   if (maxRange < 1) throw new Error('maxRange must be >= 1');
 
   const out: RpcLog[] = [];
   const step = BigInt(maxRange);
   for (let start = fromBlock; start <= toBlock; start += step) {
+    signal?.throwIfAborted();
     const end = start + step - 1n < toBlock ? start + step - 1n : toBlock;
     const batch = (await client.request({
       method: 'eth_getLogs',
@@ -73,6 +77,8 @@ export async function getLogsByTopicValues(
     maxRange: number;
     /** max OR values per request (default 4 — conservative for blockmachine) */
     maxTopicValues?: number;
+    /** Package 4b: forwarded to every chunked scan */
+    signal?: AbortSignal;
   },
 ): Promise<RpcLog[]> {
   const cap = params.maxTopicValues ?? 4;
@@ -93,6 +99,7 @@ export async function getLogsByTopicValues(
       fromBlock: params.fromBlock,
       toBlock: params.toBlock,
       maxRange: params.maxRange,
+      signal: params.signal,
     });
     for (const l of logs) {
       const bn = l.blockNumber ? BigInt(l.blockNumber) : 0n;
