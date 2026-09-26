@@ -2,7 +2,7 @@
  * Package 2b — outcomes and scorer loop observation (docs/FABLE-REVIEW-IMPLEMENTATION.md).
  * Process-local counters the two loops report to after every pass, served next
  * to the 2a series on the worker's private `/metrics`. Fixed label sets only
- * (21 series): never a token address, row id or error message. Observers are
+ * (23 series): never a token address, row id or error message. Observers are
  * called through `observeSafely`, so a broken observer cannot change a loop.
  */
 import type { SweepResult } from './outcomes/loop';
@@ -17,7 +17,7 @@ export const OUTCOME_LABELS = [
 ] as const;
 export type OutcomeLabelKey = (typeof OUTCOME_LABELS)[number];
 
-export const ROW_RESULTS = ['resolved', 'na', 'unresolvable', 'retry', 'failed'] as const;
+export const ROW_RESULTS = ['resolved', 'na', 'unresolvable', 'retry', 'failed', 'claim_skipped', 'lost_claim'] as const;
 export type RowResult = (typeof ROW_RESULTS)[number];
 
 export const LOOPS = ['outcomes', 'scorer'] as const;
@@ -84,6 +84,8 @@ export class LoopMetrics implements LoopObserver {
     this.s.rows.unresolvable += result.unresolvable;
     this.s.rows.retry += result.retryLater;
     this.s.rows.failed += result.failed;
+    this.s.rows.claim_skipped += result.claimSkipped ?? 0;
+    this.s.rows.lost_claim += result.lostClaim ?? 0;
   }
 
   scorerPass(ok: boolean, atMs: number): void {

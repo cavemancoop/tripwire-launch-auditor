@@ -19,12 +19,16 @@ const st = vi.hoisted(() => ({
 vi.mock('@launch-auditor/db', () => ({
   Prisma: { JsonNull: null },
   prisma: {
+    $transaction: async function (fn: (tx: unknown) => Promise<unknown>) {
+      return fn({ outcome: this.outcome, $queryRaw: async () => [{ dbNow: new Date() }] });
+    },
     outcome: {
       findMany: async (args: { where: { label?: string }; take: number }) =>
         st.rows.filter((r) => r.label === args.where.label).slice(0, args.take),
-      update: async (args: Update) => {
-        st.updates.push(args);
-        return {};
+      // Package 4b: every claim succeeds; the owner-guarded writes are the row's result
+      updateMany: async (args: Update) => {
+        if (typeof args.data.claimToken !== 'string') st.updates.push(args);
+        return { count: 1 };
       },
     },
   },

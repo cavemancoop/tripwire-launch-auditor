@@ -388,6 +388,12 @@ model Outcome {
   measuredAt DateTime?
   retrospective Boolean     @default(false)
 
+  // Package 4b (review d17cd0c4): expiring ownership of one resolution attempt.
+  // A sweeper claims the PENDING row before any RPC; its result write lands only
+  // while it still holds the unexpired claim. Both null = unclaimed.
+  claimToken     String?
+  claimExpiresAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

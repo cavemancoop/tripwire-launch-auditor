@@ -77,6 +77,8 @@ const emptySweep = (): SweepResult => ({
   unresolvable: 0,
   retryLater: 0,
   failed: 0,
+  claimSkipped: 0,
+  lostClaim: 0,
 });
 
 export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult> {
@@ -335,12 +337,15 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
       result.outcomes.unresolvable += r.unresolvable;
       result.outcomes.retryLater += r.retryLater;
       result.outcomes.failed += r.failed;
+      result.outcomes.claimSkipped! += r.claimSkipped ?? 0;
+      result.outcomes.lostClaim! += r.lostClaim ?? 0;
       if (r.picked === 0) quiet++;
       else {
         quiet = 0;
         log(
           `[backfill] outcomes +${r.resolved} resolved / ${r.na} n/a / ${r.unresolvable} unres / ` +
-            `${r.retryLater} retry — ${used()} calls`,
+            `${r.retryLater} retry / ${r.claimSkipped ?? 0} claim skipped / ` +
+            `${r.lostClaim ?? 0} claim lost — ${used()} calls`,
         );
       }
     }

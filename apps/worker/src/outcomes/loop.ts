@@ -3,11 +3,17 @@ import { classifyRpcError, hasProviderFailure, redactRpcDiagnostic } from '@laun
 import { recordFailure } from '../failures';
 import { loopMetrics, observeSafely, type LoopObserver } from '../loop-metrics';
 import { DeadlineError, withDeadline } from '../watcher/retry';
+import { claimRow, newClaimToken, unclaimedWhere, writeOwned } from './claim';
 import { resolveOneOutcome, type OutcomeRow, type ResolveClient } from './resolve';
 
 /** one outcome should never take longer than this; on timeout it stays PENDING
  *  for the next sweep (guards the backfill against a runaway scan) */
 const OUTCOME_DEADLINE_MS = 120_000;
+
+/** Package 4b (review d17cd0c4): how long one attempt owns its row. The claim is
+ *  taken just before the row's resolution starts, which the deadline bounds; the
+ *  margin covers the result write. A crashed owner's row is claimable after this. */
+export const OUTCOME_LEASE_MS = OUTCOME_DEADLINE_MS + 3 * 60_000;
 
 export interface SweepResult {
   picked: number;
@@ -18,6 +24,11 @@ export interface SweepResult {
   unresolvable: number;
   retryLater: number;
   failed: number;
+  /** Package 4b: selected rows another sweeper claimed first; no RPC was spent on them */
+  claimSkipped?: number;
+  /** Package 4b: attempts whose result write was refused because they no longer
+   *  owned the row; counted in none of the result fields above */
+  lostClaim?: number;
 }
 
 /** A deferred row is not picked again for this long. Without it, the oldest
@@ -138,6 +149,8 @@ export interface SweepFilter {
    *  spam / token-vs-token / >10%-fee side pools whose DRAWDOWN/TRADING_ALIVE
    *  outcomes are unresolvable and would bias the base rate. */
   laneQualifiedOnly?: boolean;
+  /** Package 4b: how long an attempt owns its row (default OUTCOME_LEASE_MS) */
+  leaseMs?: number;
 }
 
 /** Resolve every PENDING outcome whose horizon has passed, up to `limit`. */
@@ -149,11 +162,13 @@ export async function sweepDueOutcomes(
   const now = new Date();
   const retryCutoff = new Date(now.getTime() - (filter.retryBackoffMs ?? DEFAULT_RETRY_BACKOFF_MS));
   const giveUpAfterMs = filter.giveUpAfterMs ?? DEFAULT_GIVE_UP_AFTER_MS;
+  const leaseMs = filter.leaseMs ?? OUTCOME_LEASE_MS;
   const where = {
       status: 'PENDING' as const,
       horizonAt: { lte: now },
-      // a deferral stamps measuredAt on a still-PENDING row; wait out the backoff
-      AND: [{ OR: [{ measuredAt: null }, { measuredAt: { lt: retryCutoff } }] }],
+      // a deferral stamps measuredAt on a still-PENDING row; wait out the backoff.
+      // Package 4b: a row another attempt owns is not selected until its lease ends.
+      AND: [{ OR: [{ measuredAt: null }, { measuredAt: { lt: retryCutoff } }] }, unclaimedWhere(now)],
       ...(filter.onlyLabels?.length ? { label: { in: filter.onlyLabels } } : {}),
       ...(filter.excludeLabels?.length ? { label: { notIn: filter.excludeLabels } } : {}),
       ...(filter.laneQualifiedOnly
@@ -203,13 +218,22 @@ export async function sweepDueOutcomes(
     unresolvable: 0,
     retryLater: 0,
     failed: 0,
+    claimSkipped: 0,
+    lostClaim: 0,
   };
 
   type DeferEvidence = { firstDeferredAt?: string; deferrals?: number; quotaPausedMs?: number };
 
+  /** Package 4b: this attempt's lease ended (or another attempt took the row) before its write */
+  const claimLost = (row: (typeof due)[number], label: string, what: string) => {
+    out.lostClaim!++;
+    // eslint-disable-next-line no-console
+    console.warn(`[outcomes] ${label} ${row.tokenAddress} ${what} not written: claim lost (lease expired or row taken over)`);
+  };
+
   // `msg` is the raw error text (the caller has already classified it); only its
   // redacted form is stored or logged — viem messages carry the key-bearing RPC URL
-  const deferRow = async (row: (typeof due)[number], label: string, msg: string) => {
+  const deferRow = async (row: (typeof due)[number], token: string, label: string, msg: string) => {
     const safe = redactRpcDiagnostic(msg);
     const prior = (row.evidence ?? {}) as DeferEvidence;
     const at = Date.now();
@@ -219,39 +243,35 @@ export async function sweepDueOutcomes(
     const pause = quotaPausedMs > 0 ? { quotaPausedMs } : {};
     const deferrals = (prior.deferrals ?? 0) + 1;
     if (d.action === 'give_up') {
-      out.unresolvable++;
-      await prisma.outcome.update({
-        where: { id: row.id },
-        data: {
-          status: 'UNRESOLVABLE',
-          value: null,
-          evidence: {
-            reason: `gave up after ${deferrals} transient failures since ${d.firstDeferredAt}: ${safe}`,
-            firstDeferredAt: d.firstDeferredAt,
-            deferrals,
-            ...pause,
-          } as Prisma.InputJsonValue,
-          measuredAt: new Date(at),
-        },
+      const written = await writeOwned(row.id, token, {
+        status: 'UNRESOLVABLE',
+        value: null,
+        evidence: {
+          reason: `gave up after ${deferrals} transient failures since ${d.firstDeferredAt}: ${safe}`,
+          firstDeferredAt: d.firstDeferredAt,
+          deferrals,
+          ...pause,
+        } as Prisma.InputJsonValue,
+        measuredAt: new Date(at),
       });
+      if (!written) return claimLost(row, label, 'give-up');
+      out.unresolvable++;
       // eslint-disable-next-line no-console
       console.warn(`[outcomes] ${label} ${row.tokenAddress} gave up (unresolvable) after ${deferrals} deferrals: ${safe}`);
       return;
     }
-    out.retryLater++;
-    await prisma.outcome.update({
-      where: { id: row.id },
-      // stay PENDING; measuredAt starts the backoff, evidence carries the give-up clock
-      data: {
-        measuredAt: new Date(at),
-        evidence: {
-          firstDeferredAt: d.firstDeferredAt,
-          deferrals,
-          ...pause,
-          lastError: safe.slice(0, 300),
-        } as Prisma.InputJsonValue,
-      },
+    // stay PENDING; measuredAt starts the backoff, evidence carries the give-up clock
+    const written = await writeOwned(row.id, token, {
+      measuredAt: new Date(at),
+      evidence: {
+        firstDeferredAt: d.firstDeferredAt,
+        deferrals,
+        ...pause,
+        lastError: safe.slice(0, 300),
+      } as Prisma.InputJsonValue,
     });
+    if (!written) return claimLost(row, label, 'deferral');
+    out.retryLater++;
     // eslint-disable-next-line no-console
     console.warn(`[outcomes] ${label} ${row.tokenAddress} deferred (${deferrals}): ${safe}`);
   };
@@ -263,34 +283,54 @@ export async function sweepDueOutcomes(
    *  failure started keeps its start time and its counted retry time, and the
    *  outage is recorded as a pause on it (review 896555be), so a transient
    *  failure after recovery does not find the outage charged to the row. */
-  const deferOnQuota = async (row: (typeof due)[number], label: string, msg: string) => {
+  const deferOnQuota = async (row: (typeof due)[number], token: string, label: string, msg: string) => {
     const safe = redactRpcDiagnostic(msg);
     const prior = (row.evidence ?? {}) as DeferEvidence;
     const at = Date.now();
     const quotaPausedMs = accrueQuotaPause(prior.firstDeferredAt, prior.quotaPausedMs, row.measuredAt, at);
-    out.retryLater++;
-    await prisma.outcome.update({
-      where: { id: row.id },
-      data: {
-        measuredAt: new Date(at),
-        evidence: {
-          ...(prior.firstDeferredAt !== undefined ? { firstDeferredAt: prior.firstDeferredAt } : {}),
-          ...(prior.deferrals !== undefined ? { deferrals: prior.deferrals } : {}),
-          ...(quotaPausedMs > 0 ? { quotaPausedMs } : {}),
-          lastError: safe.slice(0, 300),
-        } as Prisma.InputJsonValue,
-      },
+    const written = await writeOwned(row.id, token, {
+      measuredAt: new Date(at),
+      evidence: {
+        ...(prior.firstDeferredAt !== undefined ? { firstDeferredAt: prior.firstDeferredAt } : {}),
+        ...(prior.deferrals !== undefined ? { deferrals: prior.deferrals } : {}),
+        ...(quotaPausedMs > 0 ? { quotaPausedMs } : {}),
+        lastError: safe.slice(0, 300),
+      } as Prisma.InputJsonValue,
     });
+    if (!written) return claimLost(row, label, 'quota deferral');
+    out.retryLater++;
     // eslint-disable-next-line no-console
     console.warn(`[outcomes] ${label} ${row.tokenAddress} deferred on provider quota (give-up clock not advanced): ${safe}`);
   };
 
   const resolveRow = async (row: (typeof due)[number]): Promise<void> => {
+    const label = `${row.label}@${row.horizon}`;
+    // Package 4b (review d17cd0c4): own the row before any RPC. The claim is one
+    // statement that re-checks the sweep's selection, so a row graded, deferred
+    // or claimed by another sweeper since this sweep read it is skipped.
+    const token = newClaimToken();
     try {
+      if (!(await claimRow(row.id, token, where, leaseMs))) {
+        out.claimSkipped!++;
+        return;
+      }
+    } catch (err) {
+      out.failed++;
+      // eslint-disable-next-line no-console
+      console.error(`[outcomes] ${label} ${row.tokenAddress} claim failed:`, redactRpcDiagnostic(err instanceof Error ? err.message : String(err)));
+      await recordFailure('outcomes.claim_failed', err);
+      return;
+    }
+
+    try {
+      // Package 4b (review d17cd0c4): a timed-out row is deferred and its late
+      // result discarded, so the RPC its resolution would still issue is
+      // cancelled rather than spent — no next chunk, retry or queued request.
       const res = await withDeadline(
         () => resolveOneOutcome(client, row as OutcomeRow),
         OUTCOME_DEADLINE_MS,
         `${row.label}@${row.horizon} ${row.tokenAddress}`,
+        { cancelRpc: true },
       );
 
       const reasonDisposition = res.status === 'UNRESOLVABLE' && res.reason ? sweepDisposition(res.reason) : 'fail';
@@ -298,29 +338,27 @@ export async function sweepDueOutcomes(
         // the classified reason decides retryability; the raw RPC message is only for the log
         const raw = (res.evidence as { rpcError?: string } | undefined)?.rpcError;
         const text = raw ? `${res.reason} — ${raw}` : res.reason!;
-        if (reasonDisposition === 'quota') await deferOnQuota(row, `${row.label}@${row.horizon}`, text);
-        else await deferRow(row, `${row.label}@${row.horizon}`, text);
+        if (reasonDisposition === 'quota') await deferOnQuota(row, token, label, text);
+        else await deferRow(row, token, label, text);
         return;
       }
 
       const status = res.status as $Enums.OutcomeStatus;
       const rpcError = (res.evidence as { rpcError?: unknown } | undefined)?.rpcError;
-      await prisma.outcome.update({
-        where: { id: row.id },
-        data: {
-          status,
-          value: res.value,
-          evidence: {
-            ...(res.reason ? { reason: redactRpcDiagnostic(res.reason) } : {}),
-            ...res.evidence,
-            ...(typeof rpcError === 'string' ? { rpcError: redactRpcDiagnostic(rpcError) } : {}),
-          } as unknown as Prisma.InputJsonValue,
-          coverage: res.coverage
-            ? (res.coverage as unknown as Prisma.InputJsonValue)
-            : Prisma.JsonNull,
-          measuredAt: new Date(),
-        },
+      const written = await writeOwned(row.id, token, {
+        status,
+        value: res.value,
+        evidence: {
+          ...(res.reason ? { reason: redactRpcDiagnostic(res.reason) } : {}),
+          ...res.evidence,
+          ...(typeof rpcError === 'string' ? { rpcError: redactRpcDiagnostic(rpcError) } : {}),
+        } as unknown as Prisma.InputJsonValue,
+        coverage: res.coverage
+          ? (res.coverage as unknown as Prisma.InputJsonValue)
+          : Prisma.JsonNull,
+        measuredAt: new Date(),
       });
+      if (!written) return claimLost(row, label, status);
 
       if (status === 'RESOLVED') out.resolved++;
       else if (status === 'NA') out.na++;
@@ -329,18 +367,24 @@ export async function sweepDueOutcomes(
       const msg = err instanceof Error ? err.message : String(err);
       const disposition = sweepDisposition(err);
       if (disposition === 'quota') {
-        await deferOnQuota(row, `${row.label}@${row.horizon}`, msg);
+        await deferOnQuota(row, token, label, msg);
         return;
       }
       if (disposition === 'defer') {
-        await deferRow(row, `${row.label}@${row.horizon}`, msg);
+        await deferRow(row, token, label, msg);
         return;
       }
-      out.failed++;
       // back off a code-path failure too, or it takes a slot every sweep forever; never give up on it
-      await prisma.outcome
-        .update({ where: { id: row.id }, data: { measuredAt: new Date() } })
-        .catch(() => {});
+      let backedOff: boolean;
+      try {
+        backedOff = await writeOwned(row.id, token, { measuredAt: new Date() });
+      } catch (writeError) {
+        out.failed++;
+        await recordFailure('outcomes.resolve_failed', writeError);
+        return;
+      }
+      if (!backedOff) return claimLost(row, label, 'failed backoff');
+      out.failed++;
       // eslint-disable-next-line no-console
       console.error(
         `[outcomes] ${row.label}@${row.horizon} ${row.tokenAddress} failed:`,
@@ -413,9 +457,11 @@ export async function runOutcomesLoop(
       const ms = clock() - started;
       observeSafely(() => observer.outcomeSweep(ms, r, clock()));
       if (r.picked > 0) {
+        const contended = (r.claimSkipped ?? 0) + (r.lostClaim ?? 0);
         // eslint-disable-next-line no-console
         console.log(
-          `[outcomes] swept ${r.picked}: ${r.resolved} resolved · ${r.na} n/a · ${r.unresolvable} unresolvable · ${r.retryLater} retry · ${r.failed} error in ${(ms / 1000).toFixed(1)}s`,
+          `[outcomes] swept ${r.picked}: ${r.resolved} resolved · ${r.na} n/a · ${r.unresolvable} unresolvable · ${r.retryLater} retry · ${r.failed} error` +
+            `${contended > 0 ? ` · ${r.claimSkipped ?? 0} claimed elsewhere · ${r.lostClaim ?? 0} claim lost` : ''} in ${(ms / 1000).toFixed(1)}s`,
         );
       }
     } catch (err) {

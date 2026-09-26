@@ -60,10 +60,10 @@ async function runSweeps(script: Array<SweepResult | Error>, observer: LoopObser
 }
 
 describe('formatLoopMetrics', () => {
-  it('emits exactly 21 fixed series with only the fixed label sets', () => {
+  it('emits exactly 23 fixed series with only the fixed label sets', () => {
     const text = formatLoopMetrics(new LoopMetrics().snapshot());
     const lines = samples(text);
-    expect(lines).toHaveLength(21);
+    expect(lines).toHaveLength(23);
     for (const l of lines) expect(l.endsWith(' 0')).toBe(true);
     const labels = new Set(lines.flatMap((l) => [...l.matchAll(/(\w+)="([^"]*)"/g)].map((m) => `${m[1]}=${m[2]}`)));
     const allowed = new Set([
@@ -78,14 +78,14 @@ describe('formatLoopMetrics', () => {
     const m = new LoopMetrics();
     m.outcomeSweep(10, sweepResult({ picked: 2, pickedByLabel: { SOMETHING_NEW: 1, '0xdeadbeef': 1 } }), 0);
     const text = formatLoopMetrics(m.snapshot());
-    expect(samples(text)).toHaveLength(21);
+    expect(samples(text)).toHaveLength(23);
     expect(text).toContain('tripwire_worker_outcome_picked_total{label="other"} 2');
     expect(text).not.toMatch(/SOMETHING_NEW|0xdeadbeef/);
   });
 
-  it('the /metrics default carries the 38 process series plus the 21 loop series', () => {
+  it('the /metrics default carries the 38 process series plus the 23 loop series', () => {
     const text = defaultWorkerMetrics();
-    expect(samples(text)).toHaveLength(38 + 21);
+    expect(samples(text)).toHaveLength(38 + 23);
     expect(text).toContain('tripwire_worker_rpc_started_total{tier="watcher"}');
     expect(text).toContain('tripwire_worker_loop_last_success_timestamp_seconds{loop="scorer"}');
   });
@@ -110,7 +110,7 @@ describe('runOutcomesLoop — Package 2b observation', () => {
     const m = new LoopMetrics();
     await runSweeps(
       [
-        sweepResult({ picked: 5, pickedByLabel: { INSIDER_EXIT: 3, DRAWDOWN_80: 2 }, resolved: 2, na: 1, retryLater: 1, failed: 1 }),
+        sweepResult({ picked: 5, pickedByLabel: { INSIDER_EXIT: 3, DRAWDOWN_80: 2 }, resolved: 2, na: 1, retryLater: 1, failed: 1, claimSkipped: 1, lostClaim: 1 }),
         sweepResult({ picked: 2, pickedByLabel: { INSIDER_EXIT: 1, TRADING_ALIVE: 1 }, unresolvable: 2 }),
       ],
       m,
@@ -119,7 +119,7 @@ describe('runOutcomesLoop — Package 2b observation', () => {
     expect(s.sweeps).toBe(2);
     expect(s.sweepSecondsSum).toBe(5);
     expect(s.picked).toEqual({ INSIDER_EXIT: 4, SELL_IMPAIRED: 0, LIQ_IMPAIRED: 0, DRAWDOWN_80: 2, TRADING_ALIVE: 1, other: 0 });
-    expect(s.rows).toEqual({ resolved: 2, na: 1, unresolvable: 2, retry: 1, failed: 1 });
+    expect(s.rows).toEqual({ resolved: 2, na: 1, unresolvable: 2, retry: 1, failed: 1, claim_skipped: 1, lost_claim: 1 });
   });
 
   it('a thrown sweep counts an error and does not advance last success', async () => {
