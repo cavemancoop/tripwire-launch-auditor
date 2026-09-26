@@ -52,10 +52,11 @@ enum OutcomeLabel {
 }
 
 enum OutcomeStatus {
-  PENDING       // horizon not reached yet
-  RESOLVED      // value is set
-  NA            // not applicable (launchpad token for SELL_IMPAIRED / LIQ_IMPAIRED)
-  UNRESOLVABLE  // data unavailable at the horizon check
+  PENDING          // horizon not reached yet
+  RESOLVED         // value is set
+  NA               // not applicable (launchpad token for SELL_IMPAIRED / LIQ_IMPAIRED)
+  UNRESOLVABLE     // data unavailable at the horizon check
+  POLICY_EXCLUDED  // outside a separately approved resolution policy; not a measurement
 }
 
 /// Forecasters scored side by side (spec §2).
