@@ -29,6 +29,14 @@ export class PriorityQueue<T> {
     return this.items.shift()?.value;
   }
 
+  /** drop one queued value (by identity); false when it is no longer queued */
+  remove(value: T): boolean {
+    const i = this.items.findIndex((e) => e.value === value);
+    if (i < 0) return false;
+    this.items.splice(i, 1);
+    return true;
+  }
+
   get size(): number {
     return this.items.length;
   }

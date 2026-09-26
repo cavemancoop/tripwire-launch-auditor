@@ -1,3 +1,4 @@
+import { RpcCancelledError } from './cancel';
 import { PriorityQueue } from './priority-queue';
 import { TokenBucket } from './token-bucket';
 
@@ -14,11 +15,18 @@ export interface SchedulerOptions {
   clearTimeoutFn?: (handle: unknown) => void;
 }
 
+export interface ScheduleOptions {
+  /** Package 4b: aborting drops the job if it has not started; a started job runs on */
+  signal?: AbortSignal;
+}
+
 interface Job {
   priority: number;
   run: () => Promise<unknown>;
   resolve: (v: unknown) => void;
   reject: (e: unknown) => void;
+  /** detaches the abort listener once the job leaves the queue */
+  detach?: () => void;
 }
 
 export interface SchedulerStats {
@@ -26,6 +34,8 @@ export interface SchedulerStats {
   started: number;
   completed: number;
   failed: number;
+  /** Package 4b: jobs dropped before starting because their signal aborted */
+  cancelled: number;
   inFlight: number;
   queued: number;
   /** count started, per priority tier */
@@ -60,6 +70,7 @@ export class RequestScheduler {
     started: 0,
     completed: 0,
     failed: 0,
+    cancelled: 0,
     byPriority: {} as Record<number, number>,
     queuedByPriority: {} as Record<number, number>,
     inFlightByPriority: {} as Record<number, number>,
@@ -78,14 +89,33 @@ export class RequestScheduler {
     this.setTimeoutFn = opts.setTimeoutFn ?? ((fn, ms) => setTimeout(fn, ms));
   }
 
-  schedule<T>(priority: number, run: () => Promise<T>): Promise<T> {
+  schedule<T>(priority: number, run: () => Promise<T>, opts: ScheduleOptions = {}): Promise<T> {
+    const { signal } = opts;
     return new Promise<T>((resolve, reject) => {
-      this.queue.push(priority, {
+      if (signal?.aborted) {
+        // never queued, never spends a token
+        this.counts.cancelled++;
+        reject(new RpcCancelledError(signal.reason));
+        return;
+      }
+      const job: Job = {
         priority,
         run: run as () => Promise<unknown>,
         resolve: resolve as (v: unknown) => void,
         reject,
-      });
+      };
+      if (signal) {
+        const onAbort = (): void => {
+          // already started (or finished): it runs on in its slot
+          if (!this.queue.remove(job)) return;
+          this.counts.cancelled++;
+          bump(this.counts.queuedByPriority, priority, -1);
+          reject(new RpcCancelledError(signal.reason));
+        };
+        signal.addEventListener('abort', onAbort, { once: true });
+        job.detach = () => signal.removeEventListener('abort', onAbort);
+      }
+      this.queue.push(priority, job);
       this.counts.enqueued++;
       bump(this.counts.queuedByPriority, priority, 1);
       this.pump();
@@ -98,6 +128,7 @@ export class RequestScheduler {
       started: this.counts.started,
       completed: this.counts.completed,
       failed: this.counts.failed,
+      cancelled: this.counts.cancelled,
       inFlight: this.inFlight,
       queued: this.queue.size,
       byPriority: { ...this.counts.byPriority },
@@ -132,6 +163,7 @@ export class RequestScheduler {
       }
       const job = this.queue.shift();
       if (!job) return;
+      job.detach?.();
       this.inFlight++;
       this.counts.started++;
       this.counts.byPriority[job.priority] = (this.counts.byPriority[job.priority] ?? 0) + 1;

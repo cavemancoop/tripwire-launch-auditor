@@ -2,6 +2,25 @@
 
 Append-only. Each entry: what changed, deliberate scope calls, and what the human should verify.
 
+## 2026-09-26 — Fable outcome deadline cancellation (release candidate)
+
+Outcome sweeps now cancel queued RPC work and stop later scan chunks and
+transport retries after a row's 120-second deadline. Requests already sent
+may still settle, but their late result cannot change the deferred row. The
+transport retains its uncancelled retry policy under scheduler control;
+T+10m feature processing keeps its previous deadline behavior because it can
+persist a degraded fallback.
+
+This slice changes no outcome rule, schema, migration, environment variable
+or public API. Expiring row ownership remains separate and unfinished, so
+concurrent sweepers can still race on a row. The new behavior has local
+regression tests and independent source review. The publishable tree passed
+Prisma checks, workspace typechecks and 851 Vitest tests in an isolated
+offline run; Forge was unavailable and skipped. Publication and production
+observation must be recorded on the exact release commit before this entry
+can be considered deployed. See
+[`docs/FABLE-CANCELLATION-RELEASE.md`](docs/FABLE-CANCELLATION-RELEASE.md).
+
 ## 2026-09-25 — Fable engineering release candidate (Packages 2b and 4a)
 
 The worker now exposes fixed-label outcome/scorer loop progress on its private

@@ -1,4 +1,4 @@
-import { classifyRpcError, rpcErrorKinds } from '@launch-auditor/rpc-budget';
+import { classifyRpcError, isRpcCancelled, rpcErrorKinds } from '@launch-auditor/rpc-budget';
 import {
   decodeFunctionResult,
   encodeFunctionData,
@@ -82,7 +82,9 @@ export async function quoteExactInSingle(args: {
   } catch (err) {
     // Package 4a: a provider quota outage is not a quote result of any kind.
     // Propagate it whole so the sweep defers the row with its give-up clock paused.
-    if (classifyRpcError(err) === 'quota') throw err;
+    // Package 4b: nor is a request the caller cancelled — propagate it so the
+    // abandoned resolution stops instead of scanning on toward a discarded result.
+    if (classifyRpcError(err) === 'quota' || isRpcCancelled(err)) throw err;
     return {
       ok: false,
       error: classifyQuoteError(err),
