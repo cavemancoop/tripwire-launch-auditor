@@ -6,19 +6,23 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const db = vi.hoisted(() => ({
   rows: [] as Array<{ id: string; label: string; horizon: string; tokenAddress: string; evidence: unknown }>,
   findMany: [] as unknown[],
-  updates: [] as Array<{ where: { id: string }; data: { status?: string } }>,
+  updates: [] as Array<{ where: { id: string }; data: { status?: string; claimToken?: string | null } }>,
 }));
 vi.mock('@launch-auditor/db', () => ({
   Prisma: { JsonNull: null },
   prisma: {
+    $transaction: async function (fn: (tx: unknown) => Promise<unknown>) {
+      return fn({ outcome: this.outcome, $queryRaw: async () => [{ dbNow: new Date() }] });
+    },
     outcome: {
       findMany: async (args: { where: { label?: string }; take: number }) => {
         db.findMany.push(args);
         return db.rows.filter((r) => r.label === args.where.label).slice(0, args.take);
       },
-      update: async (args: { where: { id: string }; data: { status?: string } }) => {
-        db.updates.push(args);
-        return {};
+      // Package 4b: every claim succeeds; the owner-guarded writes are the row's result
+      updateMany: async (args: { where: { id: string }; data: { status?: string; claimToken?: string | null } }) => {
+        if (typeof args.data.claimToken !== 'string') db.updates.push(args);
+        return { count: 1 };
       },
     },
   },
@@ -53,7 +57,17 @@ beforeEach(() => {
 describe('sweepDueOutcomes — Package 2b counts', () => {
   it('an empty sweep reports zero picks and an empty label split', async () => {
     const r = await sweepDueOutcomes({} as never, 25, { order: 'fair' });
-    expect(r).toEqual({ picked: 0, pickedByLabel: {}, resolved: 0, na: 0, unresolvable: 0, retryLater: 0, failed: 0 });
+    expect(r).toEqual({
+      picked: 0,
+      pickedByLabel: {},
+      resolved: 0,
+      na: 0,
+      unresolvable: 0,
+      retryLater: 0,
+      failed: 0,
+      claimSkipped: 0,
+      lostClaim: 0,
+    });
     expect(db.updates).toHaveLength(0);
   });
 
@@ -75,6 +89,8 @@ describe('sweepDueOutcomes — Package 2b counts', () => {
       unresolvable: 1,
       retryLater: 1,
       failed: 1,
+      claimSkipped: 0,
+      lostClaim: 0,
     });
     // grading and retry writes are unchanged: one update per row, statuses only on graded rows
     const byId = Object.fromEntries(db.updates.map((u) => [u.where.id, u.data.status]));
@@ -86,6 +102,8 @@ describe('sweepDueOutcomes — Package 2b counts', () => {
       d1: undefined, // deferred: stays PENDING
       t1: undefined, // code-path failure: backoff stamp only
     });
+    // every write releases the attempt's claim
+    for (const u of db.updates) expect(u.data.claimToken).toBeNull();
   });
 
   it('selection is still one oldest-first query per label, capped at the batch', async () => {

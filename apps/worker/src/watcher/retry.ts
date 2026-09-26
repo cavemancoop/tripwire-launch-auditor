@@ -1,4 +1,4 @@
-import { rpcErrorKinds, rpcErrorText } from '@launch-auditor/rpc-budget';
+import { rpcErrorKinds, rpcErrorText, runCancellableRpc } from '@launch-auditor/rpc-budget';
 
 /**
  * A load-balanced RPC can serve `eth_getLogs` from a node a few seconds ahead of
@@ -57,17 +57,36 @@ export class DeadlineError extends Error {
   }
 }
 
+export interface DeadlineOptions {
+  /** Package 4b (review d17cd0c4): when the deadline fires, cancel the budgeted
+   *  RPC the work would still issue — queued requests are dropped, and no further
+   *  chunk or in-slot retry starts. Only for work whose late result is discarded
+   *  whole: code that persists a degraded fallback on an RPC error (the T+10m
+   *  feature pass) must not run with this. */
+  cancelRpc?: boolean;
+}
+
 /**
- * Reject with {@link DeadlineError} if `fn` has not settled within `ms`. The
- * underlying promise is not cancelled (JS can't) but the shared RPC scheduler
- * rate-limits whatever it's doing, so it settles and is GC'd soon after. Use
- * this to stop one pathological launch / outcome from stalling a whole backfill
- * — the earlier 24h "hang" was one T+10m scan waiting forever on a dead socket.
+ * Reject with {@link DeadlineError} if `fn` has not settled within `ms`. Without
+ * `cancelRpc` the underlying promise is not cancelled (JS can't) and runs on
+ * under the shared RPC scheduler's rate limit. Use this to stop one pathological
+ * launch / outcome from stalling a whole backfill — the earlier 24h "hang" was
+ * one T+10m scan waiting forever on a dead socket.
  */
-export function withDeadline<T>(fn: () => Promise<T>, ms: number, label?: string): Promise<T> {
+export function withDeadline<T>(
+  fn: () => Promise<T>,
+  ms: number,
+  label?: string,
+  opts: DeadlineOptions = {},
+): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new DeadlineError(ms, label)), ms);
-    fn().then(
+    const work = opts.cancelRpc ? runCancellableRpc(fn) : { result: fn(), cancel: () => {} };
+    const timer = setTimeout(() => {
+      const err = new DeadlineError(ms, label);
+      work.cancel(err);
+      reject(err);
+    }, ms);
+    work.result.then(
       (v) => {
         clearTimeout(timer);
         resolve(v);

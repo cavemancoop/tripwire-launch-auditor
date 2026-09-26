@@ -24,6 +24,10 @@ function request(): (a: { method: string; params: unknown[] }) => Promise<unknow
     priority: 1,
     chainId: 4663,
     rateLimitRetries: 1,
+    // the mock bypasses viem's transient-failure retry, which the transport now
+    // runs itself (review ffa98d81, transport-http-retry.test.ts); off here so
+    // these cases see only the rate-limit decision, as before
+    retryCount: 0,
   });
   return transport({}).request as never;
 }

@@ -8,9 +8,18 @@ export {
 } from './cache';
 export {
   RequestScheduler,
+  type ScheduleOptions,
   type SchedulerOptions,
   type SchedulerStats,
 } from './scheduler';
+export {
+  RpcCancelledError,
+  currentRpcSignal,
+  isRpcCancelled,
+  runCancellableRpc,
+  throwIfRpcCancelled,
+  type CancellableRpcWork,
+} from './cancel';
 export { budgetedHttp, type BudgetedHttpOptions } from './transport';
 export {
   classifyRpcError,

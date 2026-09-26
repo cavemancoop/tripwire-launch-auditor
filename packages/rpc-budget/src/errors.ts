@@ -1,3 +1,5 @@
+import { isRpcCancelled } from './cancel';
+
 /**
  * Package 4a: one typed classification of RPC failures, shared by the transport,
  * the outcome resolvers and the outcome sweep. The kinds that say nothing about
@@ -86,9 +88,10 @@ export function isProviderFailureKind(kind: RpcErrorKind): boolean {
 
 /** Any provider-failure signal at all, even when the text also names an archive
  *  miss or a revert. For retry decisions, where a wrong "retry" costs a backoff
- *  and a wrong "don't" can cost a row. */
+ *  and a wrong "don't" can cost a row. Package 4b: a cancelled request never
+ *  reached the chain either, so it counts — no fallback may be cached from it. */
 export function hasProviderFailure(err: unknown): boolean {
-  return rpcErrorKinds(err).some(isProviderFailureKind);
+  return isRpcCancelled(err) || rpcErrorKinds(err).some(isProviderFailureKind);
 }
 
 /**
