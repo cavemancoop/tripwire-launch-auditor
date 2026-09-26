@@ -1,3 +1,4 @@
+import { classifyRpcError, rpcErrorKinds } from '@launch-auditor/rpc-budget';
 import {
   decodeFunctionResult,
   encodeFunctionData,
@@ -33,17 +34,23 @@ export type QuoteOutcome =
   | { ok: true; amountOut: bigint }
   | { ok: false; error: QuoteError; message: string };
 
-const ARCHIVE_RE =
-  /missing trie node|header not found|missing.*(state|archive)|no historical|not available|state.*not.*available|pruned|block .* not found|could not be found|getDeleteStateObject|required historical state/i;
-const REVERT_RE = /revert|execution reverted|VM Exception|invalid opcode|out of gas|0x[0-9a-f]*$/i;
-
+/**
+ * Review 896555be: the quoter's mapping of the shared RPC taxonomy, read over the
+ * whole error (details, names, causes; never the URL). A transport failure wins
+ * over everything, as the old message regex did, so an archive miss with a timed-
+ * out cause is `network` (the sweep defers it) rather than a terminal `archive`.
+ * So does a rate limit beside an archive miss: an `archive` result is terminal on
+ * its first attempt, and a 429 nested under "header not found" is the provider
+ * refusing, not the node lacking state. A revert still wins over a bare rate-limit
+ * signal: `revert` prices DRAWDOWN_80's horizon at 0, and a revert reason that
+ * mentions a rate limit (or revert data with `429` in its hex) is still the pool
+ * refusing the sell. Anything else is `network`, never a signal.
+ */
 export function classifyQuoteError(err: unknown): QuoteError {
-  const msg = err instanceof Error ? err.message : String(err);
-  if (ARCHIVE_RE.test(msg)) return 'archive';
-  if (/timeout|ETIMEDOUT|ECONNRESET|ECONNREFUSED|socket hang up|network|fetch failed|429/i.test(msg)) {
-    return 'network';
-  }
-  if (REVERT_RE.test(msg)) return 'revert';
+  const kinds = rpcErrorKinds(err);
+  if (kinds.includes('quota') || kinds.includes('transport')) return 'network';
+  if (kinds.includes('archive')) return kinds.includes('rate_limit') ? 'network' : 'archive';
+  if (kinds.includes('revert')) return 'revert';
   return 'network';
 }
 
@@ -73,6 +80,9 @@ export async function quoteExactInSingle(args: {
     }) as readonly [bigint, bigint];
     return { ok: true, amountOut };
   } catch (err) {
+    // Package 4a: a provider quota outage is not a quote result of any kind.
+    // Propagate it whole so the sweep defers the row with its give-up clock paused.
+    if (classifyRpcError(err) === 'quota') throw err;
     return {
       ok: false,
       error: classifyQuoteError(err),

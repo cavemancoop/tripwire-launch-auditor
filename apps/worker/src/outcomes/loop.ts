@@ -1,5 +1,7 @@
 import { Prisma, prisma, type $Enums } from '@launch-auditor/db';
+import { classifyRpcError, hasProviderFailure, redactRpcDiagnostic } from '@launch-auditor/rpc-budget';
 import { recordFailure } from '../failures';
+import { loopMetrics, observeSafely, type LoopObserver } from '../loop-metrics';
 import { DeadlineError, withDeadline } from '../watcher/retry';
 import { resolveOneOutcome, type OutcomeRow, type ResolveClient } from './resolve';
 
@@ -9,6 +11,8 @@ const OUTCOME_DEADLINE_MS = 120_000;
 
 export interface SweepResult {
   picked: number;
+  /** Package 2b: rows selected per outcome label (observation only) */
+  pickedByLabel?: Partial<Record<string, number>>;
   resolved: number;
   na: number;
   unresolvable: number;
@@ -51,20 +55,61 @@ export function interleave<T>(groups: T[][], limit: number): T[] {
   return out;
 }
 
-/** Pure: keep retrying a transient failure, or give up and record it as unresolvable. */
+/** stored evidence is untrusted JSON: anything but a positive finite number is no pause */
+function validPausedMs(v: unknown): number {
+  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0;
+}
+
+/** Pure: keep retrying a transient failure, or give up and record it as unresolvable.
+ *  `quotaPausedMs` (review 896555be) is time on this clock spent in a provider
+ *  quota outage; it does not count toward the give-up window. A restarted
+ *  (missing or corrupt) clock carries no pause. */
 export function deferOrGiveUp(
   firstDeferredAt: string | null | undefined,
   now: number,
   giveUpAfterMs: number = DEFAULT_GIVE_UP_AFTER_MS,
+  quotaPausedMs: unknown = 0,
 ): { action: 'defer' | 'give_up'; firstDeferredAt: string } {
   const first =
     firstDeferredAt && !Number.isNaN(Date.parse(firstDeferredAt)) ? firstDeferredAt : new Date(now).toISOString();
-  return { action: now - Date.parse(first) >= giveUpAfterMs ? 'give_up' : 'defer', firstDeferredAt: first };
+  const paused = first === firstDeferredAt ? validPausedMs(quotaPausedMs) : 0;
+  return { action: now - Date.parse(first) - paused >= giveUpAfterMs ? 'give_up' : 'defer', firstDeferredAt: first };
 }
 
-/** treat as transient and leave PENDING for the next sweep */
-const RETRYABLE =
-  /network|timeout|ETIMEDOUT|ECONNRESET|ECONNREFUSED|socket hang up|fetch failed|429|rate.?limit|too many requests|request limit|network is busy|-32005|-32097|capacity|throttl|sweep error/i;
+/** Pure (review 896555be): the quota pause on a started give-up clock after one
+ *  more quota refusal. The whole interval since the row's previous attempt stamp
+ *  (never before the clock started) ended in the refusal, so it is attributed to
+ *  the outage — erring toward keeping a row PENDING, not toward terminal data
+ *  loss. Time already counted before that stamp stays counted. With no clock or
+ *  no stamp there is nothing to pause. */
+export function accrueQuotaPause(
+  firstDeferredAt: string | null | undefined,
+  quotaPausedMs: unknown,
+  lastAttemptAt: Date | null | undefined,
+  now: number,
+): number {
+  const prior = validPausedMs(quotaPausedMs);
+  const first = firstDeferredAt ? Date.parse(firstDeferredAt) : Number.NaN;
+  const last = lastAttemptAt ? lastAttemptAt.getTime() : Number.NaN;
+  if (Number.isNaN(first) || Number.isNaN(last)) return prior;
+  return prior + Math.max(0, now - Math.max(first, last));
+}
+
+/** the one text the sweep has always retried that is no RPC failure kind; kept verbatim */
+const SWEEP_ONLY_RETRY = /sweep error/i;
+
+export type SweepDisposition = 'quota' | 'defer' | 'fail';
+
+/** Pure (review 896555be): the sweep's mapping of the shared RPC taxonomy, for a
+ *  thrown error or a resolver's UNRESOLVABLE reason. A quota refusal pauses the
+ *  give-up clock; a deadline or any other provider-failure signal — even beside
+ *  an archive miss or a revert — defers on it; anything else is the row's (or the
+ *  code's) own result. */
+export function sweepDisposition(err: unknown): SweepDisposition {
+  if (classifyRpcError(err) === 'quota') return 'quota';
+  if (err instanceof DeadlineError || hasProviderFailure(err)) return 'defer';
+  return SWEEP_ONLY_RETRY.test(err instanceof Error ? err.message : String(err)) ? 'defer' : 'fail';
+}
 
 export interface SweepFilter {
   /** only resolve DRAWDOWN_80 + outcomes whose launch reached the qualified lane
@@ -147,8 +192,12 @@ export async function sweepDueOutcomes(
     });
   }
 
+  const pickedByLabel: Partial<Record<string, number>> = {};
+  for (const row of due) pickedByLabel[row.label] = (pickedByLabel[row.label] ?? 0) + 1;
+
   const out: SweepResult = {
     picked: due.length,
+    pickedByLabel,
     resolved: 0,
     na: 0,
     unresolvable: 0,
@@ -156,9 +205,18 @@ export async function sweepDueOutcomes(
     failed: 0,
   };
 
+  type DeferEvidence = { firstDeferredAt?: string; deferrals?: number; quotaPausedMs?: number };
+
+  // `msg` is the raw error text (the caller has already classified it); only its
+  // redacted form is stored or logged — viem messages carry the key-bearing RPC URL
   const deferRow = async (row: (typeof due)[number], label: string, msg: string) => {
-    const prior = (row.evidence ?? {}) as { firstDeferredAt?: string; deferrals?: number };
-    const d = deferOrGiveUp(prior.firstDeferredAt, Date.now(), giveUpAfterMs);
+    const safe = redactRpcDiagnostic(msg);
+    const prior = (row.evidence ?? {}) as DeferEvidence;
+    const at = Date.now();
+    const d = deferOrGiveUp(prior.firstDeferredAt, at, giveUpAfterMs, prior.quotaPausedMs);
+    // the pause belongs to the clock it was recorded on; a restarted clock drops it
+    const quotaPausedMs = d.firstDeferredAt === prior.firstDeferredAt ? validPausedMs(prior.quotaPausedMs) : 0;
+    const pause = quotaPausedMs > 0 ? { quotaPausedMs } : {};
     const deferrals = (prior.deferrals ?? 0) + 1;
     if (d.action === 'give_up') {
       out.unresolvable++;
@@ -168,15 +226,16 @@ export async function sweepDueOutcomes(
           status: 'UNRESOLVABLE',
           value: null,
           evidence: {
-            reason: `gave up after ${deferrals} transient failures since ${d.firstDeferredAt}: ${msg}`,
+            reason: `gave up after ${deferrals} transient failures since ${d.firstDeferredAt}: ${safe}`,
             firstDeferredAt: d.firstDeferredAt,
             deferrals,
+            ...pause,
           } as Prisma.InputJsonValue,
-          measuredAt: new Date(),
+          measuredAt: new Date(at),
         },
       });
       // eslint-disable-next-line no-console
-      console.warn(`[outcomes] ${label} ${row.tokenAddress} gave up (unresolvable) after ${deferrals} deferrals: ${msg}`);
+      console.warn(`[outcomes] ${label} ${row.tokenAddress} gave up (unresolvable) after ${deferrals} deferrals: ${safe}`);
       return;
     }
     out.retryLater++;
@@ -184,12 +243,46 @@ export async function sweepDueOutcomes(
       where: { id: row.id },
       // stay PENDING; measuredAt starts the backoff, evidence carries the give-up clock
       data: {
-        measuredAt: new Date(),
-        evidence: { firstDeferredAt: d.firstDeferredAt, deferrals, lastError: msg.slice(0, 300) } as Prisma.InputJsonValue,
+        measuredAt: new Date(at),
+        evidence: {
+          firstDeferredAt: d.firstDeferredAt,
+          deferrals,
+          ...pause,
+          lastError: safe.slice(0, 300),
+        } as Prisma.InputJsonValue,
       },
     });
     // eslint-disable-next-line no-console
-    console.warn(`[outcomes] ${label} ${row.tokenAddress} deferred (${deferrals}): ${msg}`);
+    console.warn(`[outcomes] ${label} ${row.tokenAddress} deferred (${deferrals}): ${safe}`);
+  };
+
+  /** Package 4a: the provider's quota ran out (18 Sep); nothing about this row
+   *  failed. Stay PENDING with the backoff stamp, but neither start the give-up
+   *  clock, count a deferral, nor give up — an outage longer than the give-up
+   *  window must not turn due rows UNRESOLVABLE. A clock an earlier transient
+   *  failure started keeps its start time and its counted retry time, and the
+   *  outage is recorded as a pause on it (review 896555be), so a transient
+   *  failure after recovery does not find the outage charged to the row. */
+  const deferOnQuota = async (row: (typeof due)[number], label: string, msg: string) => {
+    const safe = redactRpcDiagnostic(msg);
+    const prior = (row.evidence ?? {}) as DeferEvidence;
+    const at = Date.now();
+    const quotaPausedMs = accrueQuotaPause(prior.firstDeferredAt, prior.quotaPausedMs, row.measuredAt, at);
+    out.retryLater++;
+    await prisma.outcome.update({
+      where: { id: row.id },
+      data: {
+        measuredAt: new Date(at),
+        evidence: {
+          ...(prior.firstDeferredAt !== undefined ? { firstDeferredAt: prior.firstDeferredAt } : {}),
+          ...(prior.deferrals !== undefined ? { deferrals: prior.deferrals } : {}),
+          ...(quotaPausedMs > 0 ? { quotaPausedMs } : {}),
+          lastError: safe.slice(0, 300),
+        } as Prisma.InputJsonValue,
+      },
+    });
+    // eslint-disable-next-line no-console
+    console.warn(`[outcomes] ${label} ${row.tokenAddress} deferred on provider quota (give-up clock not advanced): ${safe}`);
   };
 
   const resolveRow = async (row: (typeof due)[number]): Promise<void> => {
@@ -200,22 +293,27 @@ export async function sweepDueOutcomes(
         `${row.label}@${row.horizon} ${row.tokenAddress}`,
       );
 
-      if (res.status === 'UNRESOLVABLE' && res.reason && RETRYABLE.test(res.reason)) {
+      const reasonDisposition = res.status === 'UNRESOLVABLE' && res.reason ? sweepDisposition(res.reason) : 'fail';
+      if (reasonDisposition !== 'fail') {
         // the classified reason decides retryability; the raw RPC message is only for the log
         const raw = (res.evidence as { rpcError?: string } | undefined)?.rpcError;
-        await deferRow(row, `${row.label}@${row.horizon}`, raw ? `${res.reason} — ${raw}` : res.reason);
+        const text = raw ? `${res.reason} — ${raw}` : res.reason!;
+        if (reasonDisposition === 'quota') await deferOnQuota(row, `${row.label}@${row.horizon}`, text);
+        else await deferRow(row, `${row.label}@${row.horizon}`, text);
         return;
       }
 
       const status = res.status as $Enums.OutcomeStatus;
+      const rpcError = (res.evidence as { rpcError?: unknown } | undefined)?.rpcError;
       await prisma.outcome.update({
         where: { id: row.id },
         data: {
           status,
           value: res.value,
           evidence: {
-            ...(res.reason ? { reason: res.reason } : {}),
+            ...(res.reason ? { reason: redactRpcDiagnostic(res.reason) } : {}),
             ...res.evidence,
+            ...(typeof rpcError === 'string' ? { rpcError: redactRpcDiagnostic(rpcError) } : {}),
           } as unknown as Prisma.InputJsonValue,
           coverage: res.coverage
             ? (res.coverage as unknown as Prisma.InputJsonValue)
@@ -229,7 +327,12 @@ export async function sweepDueOutcomes(
       else out.unresolvable++;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (err instanceof DeadlineError || RETRYABLE.test(msg)) {
+      const disposition = sweepDisposition(err);
+      if (disposition === 'quota') {
+        await deferOnQuota(row, `${row.label}@${row.horizon}`, msg);
+        return;
+      }
+      if (disposition === 'defer') {
         await deferRow(row, `${row.label}@${row.horizon}`, msg);
         return;
       }
@@ -241,7 +344,7 @@ export async function sweepDueOutcomes(
       // eslint-disable-next-line no-console
       console.error(
         `[outcomes] ${row.label}@${row.horizon} ${row.tokenAddress} failed:`,
-        err instanceof Error ? err.message : err,
+        redactRpcDiagnostic(msg),
       );
       await recordFailure('outcomes.resolve_failed', err);
     }
@@ -270,6 +373,12 @@ export interface OutcomesLoopOptions {
    *  launches only; DRAWDOWN_80 / TRADING_ALIVE stay universal. Env:
    *  OUTCOMES_QUALIFIED_ONLY. Off by default (current behavior unchanged). */
   qualifiedOnly?: boolean;
+  /** injectable for tests — defaults to the real `sweepDueOutcomes` (hits Prisma) */
+  sweep?: typeof sweepDueOutcomes;
+  /** Package 2b: loop observation; defaults to the process `loopMetrics` */
+  observer?: LoopObserver;
+  /** injectable clock for sweep timing (ms) */
+  now?: () => number;
 }
 
 export async function runOutcomesLoop(
@@ -280,6 +389,9 @@ export async function runOutcomesLoop(
   const intervalMs = opts.intervalMs ?? 60_000;
   const batch = opts.batch ?? Number(process.env.OUTCOMES_BATCH || 25);
   const concurrency = opts.concurrency ?? Number(process.env.OUTCOMES_CONCURRENCY || 4);
+  const sweep = opts.sweep ?? sweepDueOutcomes;
+  const observer = opts.observer ?? loopMetrics;
+  const clock = opts.now ?? Date.now;
   // 2026-09-15: every index-lane launch (the ~87% that never clear the qualified
   // bar) still gets INSIDER_EXIT / SELL_IMPAIRED / LIQ_IMPAIRED rows created
   // (spec §1's "applies to: all" for INSIDER_EXIT), and INSIDER_EXIT resolution
@@ -295,17 +407,21 @@ export async function runOutcomesLoop(
       `fair across labels${qualifiedOnly ? ', qualified-lane only for INSIDER_EXIT/SELL_IMPAIRED/LIQ_IMPAIRED' : ''}`,
   );
   while (!signal.stopped) {
+    const started = clock();
     try {
-      const r = await sweepDueOutcomes(client, batch, { order: 'fair', concurrency, qualifiedOnly });
+      const r = await sweep(client, batch, { order: 'fair', concurrency, qualifiedOnly });
+      const ms = clock() - started;
+      observeSafely(() => observer.outcomeSweep(ms, r, clock()));
       if (r.picked > 0) {
         // eslint-disable-next-line no-console
         console.log(
-          `[outcomes] swept ${r.picked}: ${r.resolved} resolved · ${r.na} n/a · ${r.unresolvable} unresolvable · ${r.retryLater} retry · ${r.failed} error`,
+          `[outcomes] swept ${r.picked}: ${r.resolved} resolved · ${r.na} n/a · ${r.unresolvable} unresolvable · ${r.retryLater} retry · ${r.failed} error in ${(ms / 1000).toFixed(1)}s`,
         );
       }
     } catch (err) {
+      observeSafely(() => observer.outcomeSweep(clock() - started, undefined, clock()));
       // eslint-disable-next-line no-console
-      console.error('[outcomes] sweep error', err instanceof Error ? err.message : err);
+      console.error('[outcomes] sweep error', redactRpcDiagnostic(err instanceof Error ? err.message : String(err)));
       await recordFailure('outcomes.sweep_error', err);
     }
     await new Promise((res) => setTimeout(res, intervalMs));

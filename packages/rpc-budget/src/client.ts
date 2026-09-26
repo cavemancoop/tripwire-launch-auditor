@@ -69,6 +69,12 @@ export function budgetStats(rpcUrl: string): BudgetSnapshot {
   return { ...s, cacheHits: c.hits, cacheMisses: c.misses, cacheSize: c.size };
 }
 
+/** Every scheduler's stats (one per RPC URL), without the URL: URLs embed
+ *  provider keys, so observers get only the list (Package 2). */
+export function allSchedulerStats(): SchedulerStats[] {
+  return [...schedulers.values()].map((s) => s.stats);
+}
+
 /** Test hook: drop all schedulers/caches so config changes take effect. */
 export function resetRpcBudget(): void {
   schedulers.clear();

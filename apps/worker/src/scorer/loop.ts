@@ -24,6 +24,7 @@ import {
   type CoverageReader,
 } from './coverage';
 import { recordFailure } from '../failures';
+import { loopMetrics, observeSafely, type LoopObserver } from '../loop-metrics';
 import type { StopSignal } from '../watcher/poller';
 
 /**
@@ -54,6 +55,10 @@ export interface ScorerLoopOptions {
   /** injectable for tests — defaults to Prisma outcome counts */
   readCoverage?: CoverageReader;
   qualifiedOnly?: boolean;
+  /** Package 2b: loop observation; defaults to the process `loopMetrics` */
+  observer?: LoopObserver;
+  /** injectable clock for the last-success timestamp (ms) */
+  now?: () => number;
 }
 
 /** Emergency containment switch for the in-process periodic scorer. The API
@@ -100,6 +105,8 @@ export async function runScorerLoop(
   const scorer = opts.scorer ?? runScorer;
   const persist = opts.persist ?? defaultPersist;
   const readCoverage = opts.readCoverage ?? prismaCoverageReader;
+  const observer = opts.observer ?? loopMetrics;
+  const clock = opts.now ?? Date.now;
   const policy = resolutionPolicy(opts.qualifiedOnly ?? qualifiedOnlyFromEnv());
   mkdirSync(dirname(outFile), { recursive: true });
 
@@ -124,9 +131,11 @@ export async function runScorerLoop(
       await persist(snapshot);
       mkdirSync(dirname(outFile), { recursive: true });
       writeFileSync(outFile, JSON.stringify(snapshot, null, 2));
+      observeSafely(() => observer.scorerPass(true, clock()));
       // eslint-disable-next-line no-console
       console.log(`[scorer] snapshot: ${both.rowCount} rows (${live.rowCount} live) → Postgres + ${outFile}`);
     } catch (err) {
+      observeSafely(() => observer.scorerPass(false, clock()));
       // eslint-disable-next-line no-console
       console.error('[scorer] snapshot failed', err instanceof Error ? err.message : err);
       await recordFailure('scorer.snapshot_failed', err);

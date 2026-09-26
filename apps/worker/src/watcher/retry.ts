@@ -1,3 +1,5 @@
+import { rpcErrorKinds, rpcErrorText } from '@launch-auditor/rpc-budget';
+
 /**
  * A load-balanced RPC can serve `eth_getLogs` from a node a few seconds ahead of
  * the node that then answers `getTransaction` / `getBlock`, so a just-seen tx or
@@ -5,19 +7,22 @@
  * transient: back off and retry.
  */
 
-const TRANSIENT_MESSAGE =
-  /could not be found|not be processed on a block yet|not found|rate.?limit|too many requests|429|timeout|ETIMEDOUT|ECONNRESET|ECONNREFUSED|socket hang up|network is busy|exceeds defined limit|try again in a moment|-32005|-32000/i;
+/** Review 896555be: the watcher's own lag signals, beyond the shared taxonomy's
+ *  rate-limit and transport kinds — a read racing a lagging node, and the viem
+ *  error classes it arrives as. Matched against the shared classifier's text. */
+const LAG_MESSAGE = /could not be found|not be processed on a block yet|not found|-32000/i;
+const LAG_NAME = /NotFoundError|RpcRequestError|LimitExceededError/i;
 
-const TRANSIENT_NAME =
-  /NotFoundError|TimeoutError|HttpRequestError|RpcRequestError|LimitExceededError/i;
-
+/** Transient to an in-place retry: a rate limit, a transport failure, or node lag.
+ *  A quota refusal is not — it lasts until the provider's cycle resets, so a few
+ *  seconds of backoff only spend calls; the caller's own hold (the poller's
+ *  cursor, the outcome sweep's paused clock) retries it later. */
 export function isTransientRpcError(err: unknown): boolean {
-  if (err && typeof err === 'object') {
-    const name = 'name' in err ? String((err as { name?: unknown }).name ?? '') : '';
-    if (TRANSIENT_NAME.test(name)) return true;
-  }
-  const msg = err instanceof Error ? err.message : String(err);
-  return TRANSIENT_MESSAGE.test(msg);
+  const kinds = rpcErrorKinds(err);
+  if (kinds.includes('quota')) return false;
+  if (kinds.includes('rate_limit') || kinds.includes('transport')) return true;
+  const text = rpcErrorText(err);
+  return LAG_MESSAGE.test(text) || LAG_NAME.test(text);
 }
 
 export interface RetryOptions {

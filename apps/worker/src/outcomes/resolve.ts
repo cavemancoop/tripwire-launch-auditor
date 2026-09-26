@@ -1,5 +1,6 @@
 import { getChainConfig, getGetLogsMaxRange } from '@launch-auditor/chain';
 import { prisma } from '@launch-auditor/db';
+import { hasProviderFailure } from '@launch-auditor/rpc-budget';
 import { outcomeApplies, type OutcomeKey } from '@launch-auditor/scoring';
 import { erc20Abi, type Hex, type PublicClient } from 'viem';
 import { blockAtTime, type BlockTimeClient } from './block-time';
@@ -41,7 +42,8 @@ const HORIZON_MS: Record<string, number> = {
 
 const decimalsCache = new Map<string, number>();
 
-async function quoteDecimals(client: ResolveClient, quote: string): Promise<number> {
+/** exported for tests */
+export async function quoteDecimals(client: Pick<ResolveClient, 'readContract'>, quote: string): Promise<number> {
   if (quote === ZERO) return 18;
   const key = quote.toLowerCase();
   const hit = decimalsCache.get(key);
@@ -55,7 +57,12 @@ async function quoteDecimals(client: ResolveClient, quote: string): Promise<numb
     const n = Number(d);
     decimalsCache.set(key, n);
     return n;
-  } catch {
+  } catch (err) {
+    // Package 4a: an unreachable provider says nothing about the token. Caching the
+    // 18 fallback would size every later SELL_IMPAIRED sell of a 6-decimals quote
+    // 1e12x too large, long after the outage ends. Review 896555be: any provider
+    // signal counts, even beside an archive miss or a revert in the same error.
+    if (hasProviderFailure(err)) throw err;
     decimalsCache.set(key, 18);
     return 18;
   }

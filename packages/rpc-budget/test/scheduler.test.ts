@@ -94,3 +94,58 @@ describe('RequestScheduler — rate limiting', () => {
     expect(s.stats.completed).toBe(3);
   });
 });
+
+// Package 2: per-tier stats are observation only — reading them must not change
+// admission, and every per-tier gauge must return to zero when work drains.
+describe('RequestScheduler — per-tier stats (observation only)', () => {
+  const run = async (readStats: boolean) => {
+    const s = new RequestScheduler({ rpm: 6_000_000, maxInFlight: 1 });
+    const order: string[] = [];
+    const mk = (tag: string, fail = false) => () => {
+      if (readStats) void s.stats;
+      order.push(tag);
+      return fail ? Promise.reject(new Error(tag)) : Promise.resolve(tag);
+    };
+    const jobs = [
+      s.schedule(4, mk('4a')),
+      s.schedule(2, mk('2a', true)),
+      s.schedule(0, mk('0a')),
+      s.schedule(2, mk('2b')),
+    ];
+    if (readStats) void s.stats;
+    await Promise.allSettled(jobs);
+    return { order, stats: s.stats };
+  };
+
+  it('start order is identical whether or not stats are read mid-flight', async () => {
+    const plain = await run(false);
+    const observed = await run(true);
+    expect(observed.order).toEqual(plain.order);
+    expect(plain.order).toEqual(['0a', '2a', '2b', '4a']);
+  });
+
+  it('attributes completions and failures to the job tier and drains queued/in-flight to zero', async () => {
+    const { stats } = await run(true);
+    expect(stats.byPriority).toEqual({ 0: 1, 2: 2, 4: 1 });
+    expect(stats.completedByPriority).toEqual({ 0: 1, 2: 1, 4: 1 });
+    expect(stats.failedByPriority).toEqual({ 2: 1 });
+    expect(Object.values(stats.queuedByPriority).every((n) => n === 0)).toBe(true);
+    expect(Object.values(stats.inFlightByPriority).every((n) => n === 0)).toBe(true);
+    expect(stats).toMatchObject({ enqueued: 4, started: 4, completed: 3, failed: 1, queued: 0, inFlight: 0 });
+  });
+
+  it('shows queued and in-flight per tier while work is waiting', async () => {
+    const s = new RequestScheduler({ rpm: 6_000_000, maxInFlight: 1 });
+    let release!: () => void;
+    const first = s.schedule(2, () => new Promise<void>((res) => (release = res)));
+    await flush(); // tier 2 now holds the only slot
+    const second = s.schedule(0, () => Promise.resolve());
+    await flush();
+    expect(s.stats.inFlightByPriority[2]).toBe(1);
+    expect(s.stats.queuedByPriority[0]).toBe(1);
+    release();
+    await Promise.all([first, second]);
+    expect(s.stats.inFlightByPriority).toEqual({ 0: 0, 2: 0 });
+    expect(s.stats.queuedByPriority).toEqual({ 0: 0, 2: 0 });
+  });
+});

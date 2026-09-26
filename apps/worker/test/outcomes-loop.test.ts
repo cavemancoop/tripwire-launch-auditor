@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_GIVE_UP_AFTER_MS, deferOrGiveUp, interleave } from '../src/outcomes/loop';
+import { DEFAULT_GIVE_UP_AFTER_MS, accrueQuotaPause, deferOrGiveUp, interleave } from '../src/outcomes/loop';
 
 // 2026-09-15: 24 of every 25 sweep slots went to the same SELL_IMPAIRED@1h rows,
 // deferred on an RPC error and re-picked next minute, so nine of eleven cells
@@ -42,5 +42,45 @@ describe('deferOrGiveUp — transient failures end as unresolvable, not forever'
 
   it('a corrupt clock restarts instead of giving up immediately', () => {
     expect(deferOrGiveUp('not a date', now).action).toBe('defer');
+  });
+
+  // review 896555be: quota-outage time is not retry time
+  it('quota-paused time does not count toward the window; the rest still does', () => {
+    const first = new Date(now - 50 * 3_600_000).toISOString();
+    expect(deferOrGiveUp(first, now, DEFAULT_GIVE_UP_AFTER_MS, 48 * 3_600_000).action).toBe('defer');
+    expect(deferOrGiveUp(first, now, DEFAULT_GIVE_UP_AFTER_MS, 26 * 3_600_000).action).toBe('give_up');
+  });
+
+  it('ignores a malformed pause, and a restarted clock carries none', () => {
+    const first = new Date(now - DEFAULT_GIVE_UP_AFTER_MS).toISOString();
+    for (const bad of [-5, Number.NaN, Number.POSITIVE_INFINITY, '9e9', null, undefined]) {
+      expect(deferOrGiveUp(first, now, DEFAULT_GIVE_UP_AFTER_MS, bad).action).toBe('give_up');
+    }
+    expect(deferOrGiveUp(undefined, now, 0, 10 * DEFAULT_GIVE_UP_AFTER_MS).action).toBe('give_up');
+  });
+});
+
+describe('accrueQuotaPause — outage time on a started clock', () => {
+  const H = 3_600_000;
+  const t0 = Date.parse('2026-09-18T00:00:00Z');
+  const first = new Date(t0).toISOString();
+
+  it('adds the interval since the previous attempt stamp to the recorded pause', () => {
+    expect(accrueQuotaPause(first, undefined, new Date(t0), t0 + H)).toBe(H);
+    expect(accrueQuotaPause(first, 5 * H, new Date(t0 + 10 * H), t0 + 11 * H)).toBe(6 * H);
+  });
+
+  it('never pauses time before the clock started', () => {
+    expect(accrueQuotaPause(first, 0, new Date(t0 - 5 * H), t0 + H)).toBe(H);
+  });
+
+  it('no clock or no stamp: nothing accrues, the recorded pause is kept', () => {
+    expect(accrueQuotaPause(undefined, 0, new Date(t0), t0 + H)).toBe(0);
+    expect(accrueQuotaPause('not a date', 0, new Date(t0), t0 + H)).toBe(0);
+    expect(accrueQuotaPause(first, 2 * H, null, t0 + H)).toBe(2 * H);
+  });
+
+  it('a stamp in the future adds nothing', () => {
+    expect(accrueQuotaPause(first, H, new Date(t0 + 5 * H), t0 + 4 * H)).toBe(H);
   });
 });

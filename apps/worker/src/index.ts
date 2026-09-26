@@ -12,6 +12,7 @@ import { runCommitLoop } from './commit';
 import { runDeepdiveLoop, startDeepdiveWorker } from './deepdive';
 import { loadEnv, type WorkerEnv } from './env';
 import { startHealthServer } from './health-server';
+import { startObservationLog } from './observability';
 import { runLifecycleLoop } from './metabolism';
 import { seedTokenStoreFromEnv } from './metabolism/session-seed';
 import { deriveOrbioApiKey, describeKey } from './metabolism/credit-wallet';
@@ -85,6 +86,7 @@ async function main(): Promise<void> {
   await bootRpcBudget(client, env);
 
   const healthServer = startHealthServer(env.healthPort);
+  startObservationLog();
 
   const worker = startFeaturesWorker(client);
   worker.on('ready', () => console.log('[worker] features queue ready'));

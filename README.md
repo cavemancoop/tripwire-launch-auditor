@@ -368,6 +368,31 @@ deploy-time command — the migrations directory is already in the repo.
   gauges: watcher staleness, commit age, metabolism state, IDS/phantom flag,
   24h launch/report counts). Point a Prometheus scrape config or Railway's
   own metrics import at it.
+- `GET /metrics` — on the worker's private health port (`WORKER_PORT`, 3010;
+  no public domain). Process-local observation only (Packages 2a and 2b):
+  `tripwire_worker_rpc_{started,completed,failed}_total`,
+  `tripwire_worker_rpc_{queued,in_flight}` by `tier` (watcher, commit,
+  outcomes, deepdive, backfill, other), `tripwire_worker_memory_bytes` by
+  `kind`, `max_rss_bytes`, `heap_limit_bytes`, `uptime_seconds` (38 series);
+  and for the outcome and scorer loops `tripwire_worker_outcome_sweeps_total`,
+  `outcome_sweep_errors_total`, `outcome_sweep_last_duration_seconds`,
+  `outcome_sweep_duration_seconds_sum`, `outcome_picked_total` by `label`
+  (five outcome labels, other), `outcome_rows_total` by `result` (resolved,
+  na, unresolvable, retry, failed), and `loop_iterations_total`,
+  `loop_errors_total`, `loop_last_success_timestamp_seconds` by `loop`
+  (outcomes, scorer; timestamp 0 = never) (21 series). There are 59 fixed
+  series and never an RPC URL, token address or error message. Sweep counts
+  come only from sweeps that returned; a sweep that threw adds to the error
+  counters and its duration, and does not move the last-success timestamp.
+  If collection fails it returns a fixed
+  `503 metrics unavailable` and never the error text; `/health` is unaffected.
+  A bounded operational subset is logged once a minute as `[obs] {json}`: rpc
+  tier → [started, completed, failed, queued, inFlight], plus rss, heapUsed,
+  heapTotal and maxRss rounded to MB, and uptime. It omits `external`,
+  `array_buffers` and `heap_limit_bytes`. The outcomes `swept` log line ends
+  with the sweep duration. Read them with
+  `railway logs --service worker`. Check with
+  `pnpm --filter @launch-auditor/worker exec vitest run test/observability.test.ts test/loop-metrics.test.ts test/outcomes-sweep-counts.test.ts`.
 - Telegram alerts (`apps/worker/src/alerts.ts`): STARVED, IDS trip
   (`idsMismatch` or a phantom-spend epoch), commit lag > 10 min, watcher
   stalled > 5 min. Edge-triggered — one message when a check goes bad, one
@@ -380,6 +405,9 @@ agree); then kill your **local** `pnpm start` instance and confirm the
 Railway server is the only one still committing (no double-commits, no gap).
 
 ## Verify
+
+The current Fable engineering release scope and verification boundaries are in
+[`docs/FABLE-RELEASE-STATUS.md`](docs/FABLE-RELEASE-STATUS.md).
 
 ```bash
 pnpm verify
