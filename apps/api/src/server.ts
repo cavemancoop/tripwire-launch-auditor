@@ -9,6 +9,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { createPublicClient, http, parseAbiItem, type Hex } from 'viem';
 import { checkDesignPartner } from './auth';
 import { makeAssessEnqueuer, type AssessEnqueuer } from './assess-queue';
+import { memoizeProofReader, ProofCacheBusyError } from './proof-cache';
 import { budgetDisplay } from './budget-display';
 import { chainFundingReader, type FundingReader } from './funding';
 import { makeDeepdiveEnqueuer, type DeepdiveEnqueuer } from './deepdive-queue';
@@ -457,7 +458,7 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
   const readReport = opts.reportReader ?? prismaReportReader;
   const readLaunchDetail = opts.launchDetailReader ?? prismaLaunchDetailReader;
   const readBenchmark = opts.benchmarkReader ?? prismaBenchmarkReader;
-  const readProof = opts.proofReader ?? prismaProofReader(env);
+  const readProof = opts.proofReader ?? memoizeProofReader(prismaProofReader(env));
   const readReceipt = opts.receiptReader ?? prismaReceiptReader(env);
   const readMetrics = opts.metricsReader ?? prismaMetricsReader;
   const readFunding = opts.fundingReader ?? chainFundingReader(env);
@@ -619,7 +620,16 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
     if (!HEX_HASH.test(hash)) {
       return reply.code(400).send({ error: 'hash must be a 32-byte hex value' });
     }
-    const row = await readProof(hash.toLowerCase());
+    let row: ProofRow | null;
+    try {
+      row = await readProof(hash.toLowerCase());
+    } catch (err) {
+      if (err instanceof ProofCacheBusyError) {
+        reply.header('Retry-After', '1');
+        return reply.code(503).send({ error: 'proof reader busy; retry shortly' });
+      }
+      throw err;
+    }
     if (!row) return reply.code(404).send({ error: 'unknown report hash' });
     return row;
   });

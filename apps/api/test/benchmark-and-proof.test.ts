@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildServer, type ProofRow } from '../src/server';
+import { ProofCacheBusyError } from '../src/proof-cache';
 
 describe('GET /v1/benchmark', () => {
   it('serves whatever the worker last snapshotted', async () => {
@@ -63,6 +64,14 @@ describe('GET /v1/proof/:hash', () => {
     const app = buildServer({ proofReader: async () => row });
     const res = await app.inject({ method: 'GET', url: `/v1/proof/${HASH}` });
     expect(res.json().onChainConfirmed).toBeNull();
+    await app.close();
+  });
+
+  it('returns a retryable 503 when all proof-reader slots are occupied', async () => {
+    const app = buildServer({ proofReader: async () => { throw new ProofCacheBusyError(); } });
+    const res = await app.inject({ method: 'GET', url: `/v1/proof/${HASH}` });
+    expect(res.statusCode).toBe(503);
+    expect(res.headers['retry-after']).toBe('1');
     await app.close();
   });
 });
