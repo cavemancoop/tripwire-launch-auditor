@@ -53,6 +53,20 @@ export interface CommitResult {
   reason?: string;
 }
 
+/** Preserve FIFO within each class while protecting launch commitments from
+ * an on-demand assessment burst. */
+export function prioritizeCommitReports<T extends { trigger: string }>(pending: T[]): T[] {
+  const launch: T[] = [];
+  const other: T[] = [];
+  const onDemand: T[] = [];
+  for (const report of pending) {
+    if (report.trigger === 'launch' || report.trigger === 'qualified') launch.push(report);
+    else if (report.trigger === 'on_demand') onDemand.push(report);
+    else other.push(report);
+  }
+  return [...launch, ...other, ...onDemand];
+}
+
 function requireCommitEnv(env: WorkerEnv):
   | { ok: true; pk: Hex; registry: Hex }
   | { ok: false; reason: string } {
@@ -275,7 +289,7 @@ async function runCommitBatch(opts: { force?: boolean }): Promise<CommitResult> 
   const pending = await prisma.report.findMany({
     where: { validatorPassed: true, commitId: null, ...(held.length ? { id: { notIn: held } } : {}) },
     orderBy: { createdAt: 'asc' },
-    select: { id: true, reportHash: true, createdAt: true },
+    select: { id: true, reportHash: true, createdAt: true, trigger: true },
   });
   if (pending.length === 0) return { committed: false, reason: 'nothing pending' };
 
@@ -291,7 +305,10 @@ async function runCommitBatch(opts: { force?: boolean }): Promise<CommitResult> 
     };
   }
 
-  const batch = pending.slice(0, env.commitMaxLeaves);
+  // A burst of anonymous on-demand assessments must not push launch-time
+  // reports behind the 30-minute commitment window. Keep FIFO within each
+  // trigger class, then use the available leaves for lower-priority reports.
+  const batch = prioritizeCommitReports(pending).slice(0, env.commitMaxLeaves);
   const tree = buildMerkleTree(batch.map((r) => r.reportHash as Hex));
 
   const wallet = getWalletClient(env.rpcUrl, cfg.pk);
