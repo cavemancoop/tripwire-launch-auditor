@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-09-28 — Durable operational alert transitions (Package 4c)
+
+Worker operational alerts now load their last delivered bad/ok state from
+Postgres at startup and save a transition only after Telegram accepts it.
+Failed sends remain eligible for the next tick; failed state writes retry
+without resending in the same process. State is scoped to the alert chat.
+Delivery is at least once across a crash between Telegram acceptance and the
+Postgres write. This adds one empty, additive table and does not change alert
+thresholds or recipients.
+
 ## 2026-09-28 — Assessment admission protection candidate (Package 4c)
 
 Repeated requests for one token share its pending BullMQ assessment job. The

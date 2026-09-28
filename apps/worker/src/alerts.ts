@@ -117,30 +117,56 @@ const LABELS: Record<AlertCheck['key'], string> = {
 
 export type SendFn = (text: string) => Promise<void>;
 
-/**
- * One tick's worth of edge-triggering: message only on ok->bad or bad->ok,
- * mutating `lastBad` in place. Pulled out of the loop so it's testable
- * without a live Telegram call or a live timer.
- */
+export interface AlertStateStore {
+  load: () => Promise<Map<AlertCheck['key'], boolean>>;
+  save: (key: AlertCheck['key'], bad: boolean) => Promise<void>;
+}
+
+const prismaAlertStateStore = (chatId: string): AlertStateStore => {
+  // A new destination receives its own first alert, even if the old chat had
+  // already been notified. Versioning also prevents changed semantics from
+  // silently inheriting an earlier check's state.
+  const prefix = `v1:${chatId}:`;
+  return {
+    load: async () => {
+      const rows = await prisma.alertDeliveryState.findMany({
+        where: { key: { startsWith: prefix } },
+        select: { key: true, lastBad: true },
+      });
+      return new Map(rows.map((row) => [row.key.slice(prefix.length) as AlertCheck['key'], row.lastBad]));
+    },
+    save: async (key, bad) => {
+      const scopedKey = `${prefix}${key}`;
+      await prisma.alertDeliveryState.upsert({
+        where: { key: scopedKey },
+        create: { key: scopedKey, lastBad: bad },
+        update: { lastBad: bad },
+      });
+    },
+  };
+};
+
+/** Send each transition, then remember it. Failed sends stay eligible to retry. */
 export async function applyAlertTransitions(
   checks: AlertCheck[],
   lastBad: Map<AlertCheck['key'], boolean>,
   send: SendFn,
+  persist?: AlertStateStore['save'],
 ): Promise<void> {
   for (const c of checks) {
     const was = lastBad.get(c.key) ?? false;
-    if (c.bad && !was) {
-      await send(`\u{1F6A8} ${LABELS[c.key]}: ${c.detail}`).catch((e) =>
-        // eslint-disable-next-line no-console
-        console.error('[alerts] send failed', e instanceof Error ? e.message : e),
-      );
-    } else if (!c.bad && was) {
-      await send(`✅ recovered — ${LABELS[c.key]}: ${c.detail}`).catch((e) =>
-        // eslint-disable-next-line no-console
-        console.error('[alerts] send failed', e instanceof Error ? e.message : e),
-      );
+    if (c.bad === was) continue;
+    const message = c.bad
+      ? `\u{1F6A8} ${LABELS[c.key]}: ${c.detail}`
+      : `✅ recovered — ${LABELS[c.key]}: ${c.detail}`;
+    try {
+      await send(message);
+    } catch (err) {
+      console.error('[alerts] send failed', err instanceof Error ? err.message : err);
+      continue;
     }
     lastBad.set(c.key, c.bad);
+    if (persist) await persist(c.key, c.bad);
   }
 }
 
@@ -157,9 +183,11 @@ export interface AlertLoopDeps {
   evaluate?: typeof evaluateAlerts;
   /** injectable for tests — defaults to a real Telegram sendMessage call */
   send?: SendFn;
+  /** injectable durable state; defaults to Postgres */
+  state?: AlertStateStore;
 }
 
-/** Every tick, evaluate all four checks and message only on a state transition. */
+/** Every tick, evaluate checks and send only on a durable state transition. */
 export async function runAlertLoop(
   signal: StopSignal,
   opts: AlertLoopOptions,
@@ -168,20 +196,39 @@ export async function runAlertLoop(
   const intervalMs = opts.intervalMs ?? 60_000;
   const evaluate = deps.evaluate ?? evaluateAlerts;
   const send = deps.send ?? makeTelegramSender(opts.botToken, opts.chatId);
-  const lastBad = new Map<AlertCheck['key'], boolean>();
+  const state = deps.state ?? prismaAlertStateStore(opts.chatId);
+  let lastBad: Map<AlertCheck['key'], boolean> | undefined;
+  const unsaved = new Map<AlertCheck['key'], boolean>();
 
-  // eslint-disable-next-line no-console
   console.log(`[alerts] operational alert loop every ${intervalMs / 1000}s`);
   while (!signal.stopped) {
     try {
+      // A failed load must not silently treat previously-alerted checks as new.
+      lastBad ??= await state.load();
+      // Retry a state write that failed after Telegram accepted its message.
+      for (const [key, bad] of unsaved) {
+        try {
+          await state.save(key, bad);
+          unsaved.delete(key);
+        } catch (err) {
+          console.error('[alerts] state retry failed', err instanceof Error ? err.message : err);
+        }
+      }
       const checks = await evaluate({
         commitLagSec: opts.commitLagSec,
         watcherStalledSec: opts.watcherStalledSec,
       });
-      await applyAlertTransitions(checks, lastBad, send);
+      await applyAlertTransitions(checks, lastBad, send, async (key, bad) => {
+        unsaved.set(key, bad);
+        try {
+          await state.save(key, bad);
+          unsaved.delete(key);
+        } catch (err) {
+          console.error('[alerts] state save failed', err instanceof Error ? err.message : err);
+        }
+      });
     } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error('[alerts] evaluate failed', err instanceof Error ? err.message : err);
+      console.error('[alerts] evaluate/state failed', err instanceof Error ? err.message : err);
     }
     await new Promise((res) => setTimeout(res, intervalMs));
   }

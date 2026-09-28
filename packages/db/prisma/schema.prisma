@@ -570,3 +570,14 @@ model CatchSiteFailure {
 
   @@map("catch_site_failures")
 }
+
+// Operational alert transitions survive worker restarts. A row is written only
+// after Telegram accepts the message; a crash between send and write can
+// re-send once, so delivery is at least once rather than exactly once.
+model AlertDeliveryState {
+  key       String   @id
+  lastBad   Boolean
+  updatedAt DateTime @updatedAt
+
+  @@map("alert_delivery_states")
+}

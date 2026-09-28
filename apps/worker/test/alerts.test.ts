@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyAlertTransitions, evaluateAlerts, runAlertLoop, type AlertCheck, type AlertReaders } from '../src/alerts';
+import { applyAlertTransitions, evaluateAlerts, runAlertLoop, type AlertCheck, type AlertReaders, type AlertStateStore } from '../src/alerts';
 import type { StopSignal } from '../src/watcher/poller';
 
 const NOW = new Date('2026-09-12T12:00:00.000Z');
@@ -118,14 +118,26 @@ describe('applyAlertTransitions', () => {
     expect(sent).toHaveLength(0);
   });
 
-  it('does not let one failed send stop tracking that check\'s new state', async () => {
+  it('retries a failed send on the next tick', async () => {
     const lastBad = new Map<AlertCheck['key'], boolean>();
     await applyAlertTransitions([CHECK('ids_trip', true)], lastBad, async () => {
       throw new Error('telegram down');
     });
+    expect(lastBad.get('ids_trip')).toBeUndefined();
+    const sent: string[] = [];
+    await applyAlertTransitions([CHECK('ids_trip', true)], lastBad, async (text) => void sent.push(text));
+    expect(sent).toHaveLength(1);
     expect(lastBad.get('ids_trip')).toBe(true);
   });
 });
+
+const inMemoryState = (): AlertStateStore => {
+  const rows = new Map<AlertCheck['key'], boolean>();
+  return {
+    load: async () => new Map(rows),
+    save: async (key, bad) => { rows.set(key, bad); },
+  };
+};
 
 describe('runAlertLoop', () => {
   it('over three ticks: alerts once on the first bad tick, stays quiet on the second, and sends a recovery on the third', async () => {
@@ -149,11 +161,73 @@ describe('runAlertLoop', () => {
           return checks;
         },
         send: async (t) => void sent.push(t),
+        state: inMemoryState(),
       },
     );
 
     expect(sent).toHaveLength(2);
     expect(sent[0]).toContain('STARVED');
     expect(sent[1]).toContain('recovered');
+  });
+
+  it('loads a prior alert after restart and sends only the recovery', async () => {
+    const state = inMemoryState();
+    const sent: string[] = [];
+    const runOnce = async (bad: boolean) => {
+      const signal: StopSignal = { stopped: false };
+      await runAlertLoop(signal, { botToken: 'tkn', chatId: 'chat', intervalMs: 1 }, {
+        state,
+        evaluate: async () => { signal.stopped = true; return [CHECK('starved', bad)]; },
+        send: async (text) => void sent.push(text),
+      });
+    };
+    await runOnce(true);
+    await runOnce(true);
+    await runOnce(false);
+    expect(sent).toHaveLength(2);
+    expect(sent[0]).toContain('STARVED');
+    expect(sent[1]).toContain('recovered');
+  });
+
+  it('waits for persisted state when the initial read fails', async () => {
+    let loads = 0;
+    const state: AlertStateStore = {
+      load: async () => {
+        if (++loads === 1) throw new Error('db unavailable');
+        return new Map([['starved', true]]);
+      },
+      save: async () => {},
+    };
+    const sent: string[] = [];
+    const signal: StopSignal = { stopped: false };
+    await runAlertLoop(signal, { botToken: 'tkn', chatId: 'chat', intervalMs: 1 }, {
+      state,
+      evaluate: async () => { signal.stopped = true; return [CHECK('starved', true)]; },
+      send: async (text) => void sent.push(text),
+    });
+    expect(loads).toBe(2);
+    expect(sent).toHaveLength(0);
+  });
+
+  it('retries a failed state write without repeating a sent alert', async () => {
+    const rows = new Map<AlertCheck['key'], boolean>();
+    let failOnce = true;
+    const state: AlertStateStore = {
+      load: async () => new Map(rows),
+      save: async (key, bad) => {
+        if (failOnce) { failOnce = false; throw new Error('db unavailable'); }
+        rows.set(key, bad);
+      },
+    };
+    const sent: string[] = [];
+    const signal: StopSignal = { stopped: false };
+    let tick = 0;
+    await runAlertLoop(signal, { botToken: 'tkn', chatId: 'chat', intervalMs: 1 }, {
+      state,
+      evaluate: async () => { if (++tick === 2) signal.stopped = true; return [CHECK('ids_trip', true)]; },
+      send: async (text) => void sent.push(text),
+    });
+    expect(sent).toHaveLength(1);
+    expect(rows.get('ids_trip')).toBe(true);
   });
 });
