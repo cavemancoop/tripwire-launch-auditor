@@ -17,7 +17,7 @@ vi.mock('bullmq', () => ({
   },
 }));
 
-import { makeAssessEnqueuer } from '../src/assess-queue';
+import { makeAssessEnqueuer, parseRedisUrl } from '../src/assess-queue';
 
 beforeEach(() => {
   fake.add.mockReset().mockResolvedValue({ id: 'actual-job' });
@@ -27,6 +27,11 @@ beforeEach(() => {
 });
 
 describe('assessment queue producer', () => {
+  it('parses Redis database, TLS and encoded credentials for both API queues', () => {
+    expect(parseRedisUrl('rediss://user:p%40ss@localhost:6380/7')).toMatchObject({
+      host: 'localhost', port: 6380, username: 'user', password: 'p@ss', db: 7, tls: {},
+    });
+  });
   it('uses BullMQ token deduplication and returns the retained job ID', async () => {
     const enqueue = makeAssessEnqueuer('redis://localhost:6379');
     const result = await enqueue({ tokenAddress: '0xAbCd' });

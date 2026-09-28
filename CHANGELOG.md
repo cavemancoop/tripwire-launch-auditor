@@ -14,7 +14,7 @@ forever after a partial Redis restore.
 
 Free assessments now use their own RPC priority below scheduled watcher,
 commit and outcome work. The API and worker parse Redis database, TLS and
-credentials consistently.
+credentials consistently for both assessment and deep-dive queues.
 
 The disposable Redis integration suite covers concurrent producers, successful
 and failed job finalization, orphan repair, and shared per-IP/global limits.

@@ -243,7 +243,7 @@ deferred — see spec §9, "payments only if time remains"). Base URL: `http://l
 | `GET /v1/launches?limit=&before=` | Live launch feed, newest first, with each launch's `det_v0` forecast and commit pointer. Paged: follow `nextCursor` as `?before=` until it is null to walk every live launch. |
 | `GET /v1/report/:token` | Every forecaster's latest forecast for a token, with evidence and proof status. |
 | `GET /v1/launch/:token` | The inputs behind those forecasts: primary-pool evidence (pool kind/address/fee, `poolFeeSuspect`, `tokenAgeAtPoolSec`), the raw feature vector + provenance, and every outcome row (status/value/evidence/coverage). Added M11b so the published benchmark can be reproduced from public data, not just asserted (Codex Phase A #2 / B #2). |
-| `POST /v1/assess/:token` | Enqueues one on-demand report for an already-indexed token, any age. Repeated requests for the same token share the pending job. Free calls are limited to 12 per client IP and 30 total per minute; HTTP 429 includes `Retry-After`. *Scope note:* the spec's "daily re-scores for 7 days" is the recurring/event-aware re-scoring layer (v0.3 Watch, spec §10.1) — not built; this triggers a single immediate report. |
+| `POST /v1/assess/:token` | Enqueues one on-demand report for an already-indexed token, any age. Repeated requests for the same token share the pending job. Free calls are limited to 30 total per minute (also 12 per client IP when the verified edge-header option is enabled); HTTP 429 includes `Retry-After`. *Scope note:* the spec's "daily re-scores for 7 days" is the recurring/event-aware re-scoring layer (v0.3 Watch, spec §10.1) — not built; this triggers a single immediate report. |
 | `POST /v1/deepdive/:token` | Enqueues an on-demand `llm_deepdive_v0` run. |
 | `GET /v1/benchmark` | The public benchmark table (all forecasters, sample sizes). Served from a snapshot the worker recomputes every 5 minutes (`data/benchmark.json`) — the API does no scoring compute itself. Shape (M8): `{ generatedAt, all, live }`, both full `Benchmark` objects (`scope: 'both'` vs `'live'`); the dashboard diffs a cell's `n` between the two to badge how much of it is retrospective (backfill). |
 | `GET /v1/proof/:hash` | A report's Merkle proof, verified locally, plus a best-effort on-chain confirmation of its batch root (an RPC hiccup reports `onChainConfirmed: null`, never `false`). |
@@ -258,7 +258,8 @@ On Railway, set `TRUST_X_REAL_IP=true` on the API service only after verifying
 all public traffic passes through the edge and Railway overwrites incoming
 `X-Real-IP`. Until enabled, only the 30-per-minute global cap applies; no
 proxy socket address is mistaken for one user. With a verified edge IP, IPv6 callers share
-a /64 assessment bucket.
+a /64 assessment bucket. The global cap protects scheduled capacity, but
+a caller can still exhaust free-assessment availability within a minute.
 
 To test the Redis behavior locally, start a disposable Redis instance and run
 `pnpm --filter @launch-auditor/api test:redis` with `TEST_REDIS_URL` set to
@@ -384,8 +385,8 @@ deploy-time command — the migrations directory is already in the repo.
   no public domain). Process-local observation only (Packages 2a and 2b):
   `tripwire_worker_rpc_{started,completed,failed}_total`,
   `tripwire_worker_rpc_{queued,in_flight}` by `tier` (watcher, commit,
-  outcomes, deepdive, backfill, other), `tripwire_worker_memory_bytes` by
-  `kind`, `max_rss_bytes`, `heap_limit_bytes`, `uptime_seconds` (38 series);
+  outcomes, assess, deepdive, backfill, other), `tripwire_worker_memory_bytes` by
+  `kind`, `max_rss_bytes`, `heap_limit_bytes`, `uptime_seconds` (43 series);
   and for the outcome and scorer loops `tripwire_worker_outcome_sweeps_total`,
   `outcome_sweep_errors_total`, `outcome_sweep_last_duration_seconds`,
   `outcome_sweep_duration_seconds_sum`, `outcome_picked_total` by `label`
