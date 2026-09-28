@@ -1,15 +1,17 @@
 /**
  * M9 — operational alerts (build-guide M9): STARVED, IDS trip, commit lag,
- * watcher stalled, report lag. Edge-triggered: a Telegram message fires only when a
+ * watcher stalled, report lag, provider failures. Edge-triggered: a Telegram message fires only when a
  * check transitions ok->bad or bad->ok, not every tick, so a steady-state
  * problem doesn't spam the channel once per interval forever.
  */
 import { prisma } from '@launch-auditor/db';
+import { rpcWireStats, type RpcWireStats } from '@launch-auditor/rpc-budget';
+import { ProviderHealthTracker } from './provider-health';
 import { makeTelegramSender, TelegramSendError } from './telegram/poster';
 import type { StopSignal } from './watcher/poller';
 
 export interface AlertCheck {
-  key: 'starved' | 'ids_trip' | 'commit_lag' | 'watcher_stalled' | 'report_lag';
+  key: 'starved' | 'ids_trip' | 'commit_lag' | 'watcher_stalled' | 'report_lag' | 'provider_failure';
   bad: boolean;
   detail: string;
   /** Identity of the report behind the lag sample; repeated reads count once. */
@@ -146,6 +148,7 @@ const LABELS: Record<AlertCheck['key'], string> = {
   commit_lag: 'commit lag',
   watcher_stalled: 'watcher stalled',
   report_lag: 'deterministic report lag',
+  provider_failure: 'RPC provider failures',
 };
 
 export type SendFn = (text: string) => Promise<void>;
@@ -226,6 +229,8 @@ export interface AlertLoopDeps {
   send?: SendFn;
   /** injectable durable state; defaults to Postgres */
   state?: AlertStateStore;
+  /** injectable process-local transport counters; defaults to budgeted RPC telemetry */
+  readProviderStats?: () => RpcWireStats;
 }
 
 /** Every tick, evaluate checks and send only on a durable state transition. */
@@ -238,17 +243,32 @@ export async function runAlertLoop(
   const evaluate = deps.evaluate ?? evaluateAlerts;
   const send = deps.send ?? makeTelegramSender(opts.botToken, opts.chatId, 15_000);
   const state = deps.state ?? prismaAlertStateStore(opts.chatId);
+  const readProviderStats = deps.readProviderStats ?? rpcWireStats;
+  const providerHealth = new ProviderHealthTracker();
   let lastBad: Map<AlertCheck['key'], boolean> | undefined;
   const unsaved = new Map<AlertCheck['key'], boolean>();
   const retryUntil = new Map<AlertCheck['key'], number>();
+  let undeliveredProviderIncident: AlertCheck | undefined;
   let consecutiveLateReports = 0;
   let lastLateReportId: string | undefined;
 
   console.log(`[alerts] operational alert loop every ${intervalMs / 1000}s`);
   while (!signal.stopped) {
+    // Preserve the interval boundary even when a DB-backed check fails.
+    let provider: ReturnType<ProviderHealthTracker['sample']> = null;
+    try {
+      provider = providerHealth.sample(readProviderStats());
+    } catch (err) {
+      console.error('[alerts] provider counters failed', err instanceof Error ? err.message : err);
+    }
+    if (provider?.bad) {
+      if (lastBad?.get('provider_failure')) undeliveredProviderIncident = undefined;
+      else undeliveredProviderIncident = { key: 'provider_failure', ...provider };
+    }
     try {
       // A failed load must not silently treat previously-alerted checks as new.
       lastBad ??= await state.load();
+      if (lastBad.get('provider_failure')) undeliveredProviderIncident = undefined;
       // Retry a state write that failed after Telegram accepted its message.
       for (const [key, bad] of unsaved) {
         try {
@@ -263,6 +283,14 @@ export async function runAlertLoop(
         watcherStalledSec: opts.watcherStalledSec,
         reportLagSec: opts.reportLagSec,
       });
+      if (provider) checks.push({ key: 'provider_failure', ...provider });
+      // Keep a short incident pending if Telegram was unavailable until after
+      // two healthy traffic windows. Send the recovery on a later tick.
+      if (undeliveredProviderIncident && !lastBad.get('provider_failure')) {
+        const index = checks.findIndex((check) => check.key === 'provider_failure');
+        if (index >= 0) checks[index] = undeliveredProviderIncident;
+        else checks.push(undeliveredProviderIncident);
+      }
       const lag = checks.find((check) => check.key === 'report_lag');
       if (lag?.bad && lag.sampleId && lag.sampleId !== lastLateReportId) {
         consecutiveLateReports += 1;
@@ -274,6 +302,7 @@ export async function runAlertLoop(
       // Require two distinct late reports so repeated scrapes of one outlier
       // cannot alert. A missing/stale sample cannot clear a delivered alert.
       const confirmed = checks.filter((check) => check.key !== 'report_lag' || !check.bad || consecutiveLateReports >= 2);
+      const providerDeliveredBefore = lastBad.get('provider_failure') === true;
       await applyAlertTransitions(confirmed, lastBad, send, async (key, bad) => {
         unsaved.set(key, bad);
         try {
@@ -283,6 +312,7 @@ export async function runAlertLoop(
           console.error('[alerts] state save failed', err instanceof Error ? err.message : err);
         }
       }, retryUntil);
+      if (providerDeliveredBefore || lastBad.get('provider_failure')) undeliveredProviderIncident = undefined;
     } catch (err) {
       console.error('[alerts] evaluate/state failed', err instanceof Error ? err.message : err);
     }

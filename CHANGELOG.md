@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-09-28 — Provider failure and quota operational alert (Fable fifth check)
+
+The worker now compares budgeted RPC transport counters between alert ticks.
+Any new quota refusal or a provider failure rate above 5% raises one durable
+Telegram alarm. A failed send remains retryable while that worker process
+stays up, even if the incident clears before Telegram recovers.
+Recovery needs two windows with observed traffic at or below the threshold;
+zero traffic and counter resets never claim recovery. The default interval is
+60 seconds, so the rate normally covers one minute. This check does not cover
+wallet transaction or API RPC calls, and it cannot alert when the worker itself
+is down. No outcome rule, RPC admission, or provider budget changes.
+
+Verify with `pnpm verify`; after deployment inspect `rpcWire` in successive
+worker `[obs]` lines. A real quota or >5% incident remains to be observed.
+
 ## 2026-09-28 — RPC wire-attempt telemetry (Fable fifth-alert prerequisite)
 
 The budgeted public-client transport now counts each invocation, including
