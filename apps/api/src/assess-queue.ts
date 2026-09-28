@@ -29,10 +29,14 @@ export function makeAssessEnqueuer(redisUrl = process.env.REDIS_URL ?? 'redis://
   return async (job) => {
     queue ??= new Queue(ASSESS_QUEUE, { connection: parseRedisUrl(redisUrl) });
     const added = await queue.add('assess', job, {
-      jobId: `assess:${job.tokenAddress.toLowerCase()}:${Date.now()}`,
+      deduplication: { id: job.tokenAddress.toLowerCase() },
       removeOnComplete: 100,
       removeOnFail: 100,
     });
-    return { id: added.id };
+    // On a duplicate, BullMQ may return the ignored attempt's Job object.
+    // Never report its ID unless a job with that ID actually exists.
+    const retainedId = await queue.getDeduplicationJobId(job.tokenAddress.toLowerCase());
+    if (retainedId) return { id: retainedId };
+    return { id: (await queue.getJob(added.id!)) ? added.id : undefined };
   };
 }

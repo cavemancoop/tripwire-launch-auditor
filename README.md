@@ -243,7 +243,7 @@ deferred — see spec §9, "payments only if time remains"). Base URL: `http://l
 | `GET /v1/launches?limit=&before=` | Live launch feed, newest first, with each launch's `det_v0` forecast and commit pointer. Paged: follow `nextCursor` as `?before=` until it is null to walk every live launch. |
 | `GET /v1/report/:token` | Every forecaster's latest forecast for a token, with evidence and proof status. |
 | `GET /v1/launch/:token` | The inputs behind those forecasts: primary-pool evidence (pool kind/address/fee, `poolFeeSuspect`, `tokenAgeAtPoolSec`), the raw feature vector + provenance, and every outcome row (status/value/evidence/coverage). Added M11b so the published benchmark can be reproduced from public data, not just asserted (Codex Phase A #2 / B #2). |
-| `POST /v1/assess/:token` | Enqueues one on-demand report for an already-indexed token, any age. *Scope note:* the spec's "daily re-scores for 7 days" is the recurring/event-aware re-scoring layer (v0.3 Watch, spec §10.1) — not built; this triggers a single immediate report. |
+| `POST /v1/assess/:token` | Enqueues one on-demand report for an already-indexed token, any age. Repeated requests for the same token share the pending job. Free calls are limited to 12 per client IP and 30 total per minute; HTTP 429 includes `Retry-After`. *Scope note:* the spec's "daily re-scores for 7 days" is the recurring/event-aware re-scoring layer (v0.3 Watch, spec §10.1) — not built; this triggers a single immediate report. |
 | `POST /v1/deepdive/:token` | Enqueues an on-demand `llm_deepdive_v0` run. |
 | `GET /v1/benchmark` | The public benchmark table (all forecasters, sample sizes). Served from a snapshot the worker recomputes every 5 minutes (`data/benchmark.json`) — the API does no scoring compute itself. Shape (M8): `{ generatedAt, all, live }`, both full `Benchmark` objects (`scope: 'both'` vs `'live'`); the dashboard diffs a cell's `n` between the two to badge how much of it is retrospective (backfill). |
 | `GET /v1/proof/:hash` | A report's Merkle proof, verified locally, plus a best-effort on-chain confirmation of its batch root (an RPC hiccup reports `onChainConfirmed: null`, never `false`). |
@@ -251,8 +251,9 @@ deferred — see spec §9, "payments only if time remains"). Base URL: `http://l
 | `POST /mcp` | MCP server (Streamable HTTP, stateless): `get_report`, `get_benchmark`, `request_deepdive` — the same endpoints with no HTTP client needed. |
 
 `x-api-key` (checked against `DESIGN_PARTNER_API_KEYS`) is accepted and echoed back as
-`designPartner: true|false` on `/v1/assess` and `/v1/deepdive` — it doesn't gate
-anything yet, since nothing is priced yet.
+`designPartner: true|false` on `/v1/assess` and `/v1/deepdive`. Deep dives
+require a recognized key because they spend inference credits; assessments stay
+free but have shared admission limits to protect scheduled reports.
 
 ## Dashboard + free feed (M8)
 
