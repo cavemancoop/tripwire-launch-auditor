@@ -12,6 +12,8 @@ export interface AlertCheck {
   key: 'starved' | 'ids_trip' | 'commit_lag' | 'watcher_stalled' | 'report_lag';
   bad: boolean;
   detail: string;
+  /** Identity of the report behind the lag sample; repeated reads count once. */
+  sampleId?: string;
 }
 
 export interface AlertReaders {
@@ -19,7 +21,7 @@ export interface AlertReaders {
   latestPhantomEpoch: () => Promise<boolean>;
   latestCommitAt: () => Promise<Date | null>;
   latestWatcherUpdate: () => Promise<Date | null>;
-  latestDetReport: () => Promise<{ createdAt: Date; launchAt: Date | null } | null>;
+  latestDetReport: () => Promise<{ id: string; createdAt: Date; launchAt: Date | null } | null>;
 }
 
 const prismaReaders: AlertReaders = {
@@ -44,11 +46,11 @@ const prismaReaders: AlertReaders = {
     // On-demand reports can hide a late T+10m report; retrospective rows
     // cannot establish live report health.
     const row = await prisma.report.findFirst({
-      where: { forecaster: 'det_v0', retrospective: false, trigger: { in: ['launch', 'qualified'] }, launchId: { not: null } },
+      where: { forecaster: 'det_v0', trigger: 'launch', launch: { is: { retrospective: false } } },
       orderBy: { createdAt: 'desc' },
-      select: { createdAt: true, launch: { select: { launchAt: true } } },
+      select: { id: true, createdAt: true, launch: { select: { launchAt: true } } },
     });
-    return row ? { createdAt: row.createdAt, launchAt: row.launch?.launchAt ?? null } : null;
+    return row ? { id: row.id, createdAt: row.createdAt, launchAt: row.launch?.launchAt ?? null } : null;
   },
 };
 
@@ -58,7 +60,7 @@ export interface EvaluateAlertsOptions {
   commitLagSec?: number;
   /** default 300 (5 min) — spec: "watcher stalled > 5 min" */
   watcherStalledSec?: number;
-  /** default 900 (15 min); two consecutive live samples are required */
+  /** default 900 (15 min); two distinct late live reports are required */
   reportLagSec?: number;
   readers?: AlertReaders;
 }
@@ -131,6 +133,7 @@ export async function evaluateAlerts(opts: EvaluateAlertsOptions = {}): Promise<
         key: 'report_lag',
         bad: lagSec > reportLagSec,
         detail: `${Math.round(lagSec / 60)}min from launch to newest live det_v0 report (threshold ${reportLagSec / 60}min)`,
+        sampleId: detReport.id,
       });
     }
   }
@@ -239,6 +242,7 @@ export async function runAlertLoop(
   const unsaved = new Map<AlertCheck['key'], boolean>();
   const retryUntil = new Map<AlertCheck['key'], number>();
   let consecutiveLateReports = 0;
+  let lastLateReportId: string | undefined;
 
   console.log(`[alerts] operational alert loop every ${intervalMs / 1000}s`);
   while (!signal.stopped) {
@@ -260,9 +264,15 @@ export async function runAlertLoop(
         reportLagSec: opts.reportLagSec,
       });
       const lag = checks.find((check) => check.key === 'report_lag');
-      consecutiveLateReports = lag?.bad ? consecutiveLateReports + 1 : 0;
-      // The review calls for two scrapes above 900s. A missing/stale sample
-      // neither raises nor clears an already delivered report-lag alert.
+      if (lag?.bad && lag.sampleId && lag.sampleId !== lastLateReportId) {
+        consecutiveLateReports += 1;
+        lastLateReportId = lag.sampleId;
+      } else if (!lag?.bad) {
+        consecutiveLateReports = 0;
+        lastLateReportId = undefined;
+      }
+      // Require two distinct late reports so repeated scrapes of one outlier
+      // cannot alert. A missing/stale sample cannot clear a delivered alert.
       const confirmed = checks.filter((check) => check.key !== 'report_lag' || !check.bad || consecutiveLateReports >= 2);
       await applyAlertTransitions(confirmed, lastBad, send, async (key, bad) => {
         unsaved.set(key, bad);

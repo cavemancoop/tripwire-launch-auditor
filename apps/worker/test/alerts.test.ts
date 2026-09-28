@@ -11,7 +11,7 @@ function readers(overrides: Partial<AlertReaders> = {}): AlertReaders {
     latestPhantomEpoch: async () => false,
     latestCommitAt: async () => new Date(NOW.getTime() - 60_000),
     latestWatcherUpdate: async () => new Date(NOW.getTime() - 30_000),
-    latestDetReport: async () => ({ createdAt: new Date(NOW.getTime() - 60_000), launchAt: new Date(NOW.getTime() - 12 * 60_000) }),
+    latestDetReport: async () => ({ id: 'live-a', createdAt: new Date(NOW.getTime() - 60_000), launchAt: new Date(NOW.getTime() - 12 * 60_000) }),
     ...overrides,
   };
 }
@@ -86,7 +86,7 @@ describe('evaluateAlerts', () => {
 
   it('evaluates recent launch-to-report lag at the strict threshold', async () => {
     const at = (lagSec: number) => readers({
-      latestDetReport: async () => ({ createdAt: NOW, launchAt: new Date(NOW.getTime() - lagSec * 1000) }),
+      latestDetReport: async () => ({ id: 'live-a', createdAt: NOW, launchAt: new Date(NOW.getTime() - lagSec * 1000) }),
     });
     expect((await evaluateAlerts({ now: NOW, readers: at(900) })).find((c) => c.key === 'report_lag')?.bad).toBe(false);
     expect((await evaluateAlerts({ now: NOW, readers: at(901) })).find((c) => c.key === 'report_lag')?.bad).toBe(true);
@@ -95,8 +95,8 @@ describe('evaluateAlerts', () => {
   it('does not infer current report lag from missing or stale reports', async () => {
     for (const latestDetReport of [
       async () => null,
-      async () => ({ createdAt: NOW, launchAt: null }),
-      async () => ({ createdAt: new Date(NOW.getTime() - 21 * 60_000), launchAt: new Date(NOW.getTime() - 40 * 60_000) }),
+      async () => ({ id: 'no-anchor', createdAt: NOW, launchAt: null }),
+      async () => ({ id: 'old', createdAt: new Date(NOW.getTime() - 21 * 60_000), launchAt: new Date(NOW.getTime() - 40 * 60_000) }),
     ]) {
       const checks = await evaluateAlerts({ now: NOW, readers: readers({ latestDetReport }) });
       expect(checks.find((c) => c.key === 'report_lag')).toBeUndefined();
@@ -186,21 +186,28 @@ const inMemoryState = (): AlertStateStore => {
 };
 
 describe('runAlertLoop', () => {
-  it('alerts only after two late-report evaluations and recovers on a fresh on-time report', async () => {
+  it('counts two distinct late reports, not repeated reads of one report, and recovers on a fresh on-time report', async () => {
     const sent: string[] = [];
+    const sentAt: number[] = [];
     const signal: StopSignal = { stopped: false };
-    const samples = [true, true, true, false];
+    const samples = [
+      { id: 'late-a', bad: true },
+      { id: 'late-a', bad: true },
+      { id: 'late-b', bad: true },
+      { id: 'on-time-c', bad: false },
+    ];
     let tick = 0;
     await runAlertLoop(signal, { botToken: 'tkn', chatId: 'chat', intervalMs: 1 }, {
       state: inMemoryState(),
       evaluate: async () => {
-        const bad = samples[tick++]!;
+        const sample = samples[tick++]!;
         if (tick === samples.length) signal.stopped = true;
-        return [CHECK('report_lag', bad)];
+        return [{ ...CHECK('report_lag', sample.bad), sampleId: sample.id }];
       },
-      send: async (message) => void sent.push(message),
+      send: async (message) => { sent.push(message); sentAt.push(tick); },
     });
     expect(sent).toHaveLength(2);
+    expect(sentAt).toEqual([3, 4]);
     expect(sent[0]).toContain('deterministic report lag');
     expect(sent[1]).toContain('recovered');
   });

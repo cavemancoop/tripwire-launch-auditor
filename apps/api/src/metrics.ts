@@ -65,15 +65,16 @@ export const prismaMetricsReader: MetricsReader = async () => {
 
   const [newestDet, eligible, eligibleWithDet] = await Promise.all([
     prisma.report.findFirst({
-      where: { forecaster: 'det_v0', retrospective: false, trigger: { in: ['launch', 'qualified'] }, launchId: { not: null } },
+      where: { forecaster: 'det_v0', trigger: 'launch', launch: { is: { retrospective: false } } },
       orderBy: { createdAt: 'desc' },
       select: { createdAt: true, launch: { select: { launchAt: true } } },
     }),
-    prisma.launch.count({ where: { launchAt: { gte: new Date(now.getTime() - 2 * 3_600_000), lt: new Date(now.getTime() - 3_600_000) } } }),
+    prisma.launch.count({ where: { retrospective: false, launchAt: { gte: new Date(now.getTime() - 2 * 3_600_000), lt: new Date(now.getTime() - 3_600_000) } } }),
     prisma.launch.count({
       where: {
+        retrospective: false,
         launchAt: { gte: new Date(now.getTime() - 2 * 3_600_000), lt: new Date(now.getTime() - 3_600_000) },
-        reports: { some: { forecaster: 'det_v0' } },
+        reports: { some: { forecaster: 'det_v0', trigger: 'launch' } },
       },
     }),
   ]);
@@ -144,8 +145,8 @@ export function formatPrometheus(m: MetricsSnapshot): string {
   }
 
   if (m.newestDetReportAgeSec !== undefined) {
-    gauge('launch_auditor_det_report_age_seconds', 'Seconds since the newest det_v0 report was written', m.newestDetReportAgeSec);
-    gauge('launch_auditor_det_report_lag_seconds', 'Launch-to-report delay of the newest det_v0 report', m.newestDetReportLagSec ?? null);
+    gauge('launch_auditor_det_report_age_seconds', 'Seconds since the newest live launch det_v0 report was written', m.newestDetReportAgeSec);
+    gauge('launch_auditor_det_report_lag_seconds', 'Launch-to-report delay of the newest live launch det_v0 report', m.newestDetReportLagSec ?? null);
     gauge('launch_auditor_det_coverage_1to2h', 'Share of launches from 1-2h ago with a det_v0 report', m.detCoverage1to2h ?? null);
   }
 
