@@ -4,8 +4,9 @@ import { currentRpcSignal, throwIfRpcCancelled } from './cancel';
 import { rpcErrorKinds } from './errors';
 import type { RequestScheduler } from './scheduler';
 
-/** Process-local wire attempts, including retries. Cache hits and requests
- * cancelled before an HTTP send do not enter this denominator. */
+/** Process-local budgeted public-client transport attempts, including retries.
+ * Cache hits and requests cancelled before the viem request do not enter this
+ * denominator. viem may coalesce duplicate concurrent requests into one fetch. */
 export interface RpcWireStats {
   attempts: number;
   providerFailures: number;

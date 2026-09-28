@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { RpcRequestError } from 'viem';
 
 // Package 4a (review 896555be): the transport's in-slot retry decides from the
 // shared taxonomy — provider text in `details` counts, a URL does not, and a
@@ -64,5 +65,22 @@ describe('budgetedHttp — in-slot rate-limit retry (Package 4a)', () => {
     inner.request = fn;
     await expect(request()(args)).rejects.toThrow(/missing trie node/);
     expect(fn).toHaveBeenCalledOnce();
+  });
+
+  it('a 429 in request calldata does not retry a deterministic revert or count a provider failure', async () => {
+    const body = { method: 'eth_call', params: [{ to: '0x1111111111111111111111111111111111114290', data: '0x' }, 'latest'] };
+    const fn = vi.fn().mockRejectedValue(new RpcRequestError({ body, error: { code: 3, message: 'execution reverted' }, url: 'http://rpc.test' }));
+    inner.request = fn;
+    await expect(request()(args)).rejects.toThrow(/execution reverted/);
+    expect(fn).toHaveBeenCalledOnce();
+    expect(rpcWireStats()).toEqual({ attempts: 1, providerFailures: 0, quotaFailures: 0 });
+  });
+
+  it('an archive miss is an attempt but not a provider failure', async () => {
+    const fn = vi.fn().mockRejectedValue(new Error('missing trie node'));
+    inner.request = fn;
+    await expect(request()(args)).rejects.toThrow(/missing trie node/);
+    expect(fn).toHaveBeenCalledOnce();
+    expect(rpcWireStats()).toEqual({ attempts: 1, providerFailures: 0, quotaFailures: 0 });
   });
 });

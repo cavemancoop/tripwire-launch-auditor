@@ -40,6 +40,10 @@ const KIND_PATTERNS: ReadonlyArray<readonly [RpcErrorKind, RegExp]> = [
 
 /** any http(s)/ws(s) URL: provider keys ride in the path, query or host */
 const URL_IN_TEXT = /\b(?:https?|wss?):\/\/[^\s"'<>`]+/gi;
+// viem appends request params as a single `Request body: {...}` meta line to
+// error.message. Hex addresses, calldata and topics can contain `429`, which
+// must never turn a deterministic revert into a provider rate limit.
+const REQUEST_BODY_LINE = /^Request body:[^\r\n]*(?:\r?\n)?/gim;
 const AUTH_IN_TEXT = /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi;
 /** sk-orbio-…, sk-or-v1-…, sk-ant-… (same shape as the orbio probe's redaction) */
 const API_KEY_IN_TEXT = /\bsk-[a-z0-9]+-[A-Za-z0-9_-]{4,}/gi;
@@ -66,7 +70,7 @@ export function rpcErrorText(err: unknown): string {
     }
     e = o.cause;
   }
-  return parts.join('\n').replace(URL_IN_TEXT, ' ');
+  return parts.join('\n').replace(REQUEST_BODY_LINE, ' ').replace(URL_IN_TEXT, ' ');
 }
 
 /** Every kind the error's text (message, details, names and causes) shows, in

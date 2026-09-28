@@ -391,10 +391,13 @@ deploy-time command — the migrations directory is already in the repo.
   `tripwire_worker_rpc_{queued,in_flight}` by `tier` (watcher, commit,
   outcomes, assess, deepdive, backfill, other), `tripwire_worker_memory_bytes` by
   `kind`, `max_rss_bytes`, `heap_limit_bytes`, `uptime_seconds`, and three
-  process-local wire counters (46 series). The wire counters distinguish
-  HTTP attempts (including retries), provider failures, and quota refusals;
-  cache hits and pre-send cancellations are excluded. They provide the
-  denominator and typed incident signal for the pending fifth alert.
+  process-local budgeted-transport counters (46 series). The counters
+  distinguish transport attempts (including retries), provider failures, and
+  quota refusals; cache hits and pre-send cancellations are excluded. viem can
+  coalesce duplicate concurrent attempts into one HTTP fetch, and wallet
+  transaction calls use a separate transport. Thus these counters are an
+  operational error-rate denominator and quota signal for the budgeted worker
+  path, not provider billing or every RPC call made by the project.
   and for the outcome and scorer loops `tripwire_worker_outcome_sweeps_total`,
   `outcome_sweep_errors_total`, `outcome_sweep_last_duration_seconds`,
   `outcome_sweep_duration_seconds_sum`, `outcome_picked_total` by `label`

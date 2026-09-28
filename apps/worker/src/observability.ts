@@ -87,9 +87,9 @@ export function formatWorkerMetrics(o: WorkerObservation): string {
     for (const t of TIERS) lines.push(`tripwire_worker_${name}{tier="${t}"} ${o.tiers[t][field]}`);
   }
   for (const [name, help, value] of [
-    ['rpc_wire_attempts_total', 'HTTP RPC attempts sent, including retries', o.wire.attempts],
-    ['rpc_wire_provider_failures_total', 'HTTP RPC attempts rejected by quota, rate limit or transport failure', o.wire.providerFailures],
-    ['rpc_wire_quota_failures_total', 'HTTP RPC attempts classified as provider quota exhaustion', o.wire.quotaFailures],
+    ['rpc_wire_attempts_total', 'Budgeted public-client transport attempts, including retries; viem may dedupe concurrent fetches', o.wire.attempts],
+    ['rpc_wire_provider_failures_total', 'Budgeted transport attempts rejected by quota, rate limit or transport failure', o.wire.providerFailures],
+    ['rpc_wire_quota_failures_total', 'Budgeted transport attempts classified as provider quota exhaustion', o.wire.quotaFailures],
   ] as const) {
     head(name, 'counter', help);
     lines.push(`tripwire_worker_${name} ${value}`);
