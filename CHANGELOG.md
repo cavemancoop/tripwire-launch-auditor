@@ -6,10 +6,11 @@ Worker operational alerts now load their last delivered bad/ok state from
 Postgres at startup and save a transition only after Telegram accepts it.
 Failed sends remain eligible for the next tick, and alert sends have a
 15-second deadline so a stalled Telegram connection cannot stop the loop.
-Failed state writes retry without resending in the same process. State is scoped to the alert chat.
-A graceful shutdown retries pending state writes. An abrupt crash between
-Telegram acceptance and the Postgres write can duplicate an alarm or leave
-its recovery unsent if the condition clears before restart. This adds one
+Failed state writes retry without resending in the same process. Telegram
+400/403 errors back off for 10 minutes before another attempt. State is scoped to the alert chat.
+A graceful shutdown retries pending state writes, but that retry can fail.
+An abrupt crash or persistently failed write can duplicate or suppress
+either an alarm or a recovery after restart. This adds one
 empty, additive table and does not change alert thresholds or recipients.
 
 ## 2026-09-28 — Assessment admission protection candidate (Package 4c)

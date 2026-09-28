@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { applyAlertTransitions, evaluateAlerts, runAlertLoop, type AlertCheck, type AlertReaders, type AlertStateStore } from '../src/alerts';
 import type { StopSignal } from '../src/watcher/poller';
-import { makeTelegramSender } from '../src/telegram/poster';
+import { makeTelegramSender, TelegramSendError } from '../src/telegram/poster';
 
 const NOW = new Date('2026-09-12T12:00:00.000Z');
 
@@ -127,6 +127,21 @@ describe('applyAlertTransitions', () => {
     const lastBad = new Map<AlertCheck['key'], boolean>([['watcher_stalled', false]]);
     await applyAlertTransitions([CHECK('watcher_stalled', false)], lastBad, async (t) => void sent.push(t));
     expect(sent).toHaveLength(0);
+  });
+
+  it('backs off a permanent Telegram rejection instead of logging every tick', async () => {
+    const lastBad = new Map<AlertCheck['key'], boolean>();
+    const retryUntil = new Map<AlertCheck['key'], number>();
+    let now = 1_000;
+    let attempts = 0;
+    const send = async () => { attempts++; throw new TelegramSendError(403, 'forbidden'); };
+    await applyAlertTransitions([CHECK('ids_trip', true)], lastBad, send, undefined, retryUntil, () => now);
+    await applyAlertTransitions([CHECK('ids_trip', true)], lastBad, send, undefined, retryUntil, () => now);
+    expect(attempts).toBe(1);
+    now += 10 * 60_000;
+    await applyAlertTransitions([CHECK('ids_trip', true)], lastBad, send, undefined, retryUntil, () => now);
+    expect(attempts).toBe(2);
+    expect(lastBad.get('ids_trip')).toBeUndefined();
   });
 
   it('retries a failed send on the next tick', async () => {

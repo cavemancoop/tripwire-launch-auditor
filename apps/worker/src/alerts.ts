@@ -5,7 +5,7 @@
  * problem doesn't spam the channel once per interval forever.
  */
 import { prisma } from '@launch-auditor/db';
-import { makeTelegramSender } from './telegram/poster';
+import { makeTelegramSender, TelegramSendError } from './telegram/poster';
 import type { StopSignal } from './watcher/poller';
 
 export interface AlertCheck {
@@ -152,10 +152,13 @@ export async function applyAlertTransitions(
   lastBad: Map<AlertCheck['key'], boolean>,
   send: SendFn,
   persist?: AlertStateStore['save'],
+  retryUntil?: Map<AlertCheck['key'], number>,
+  now: () => number = Date.now,
 ): Promise<void> {
   for (const c of checks) {
     const was = lastBad.get(c.key) ?? false;
-    if (c.bad === was) continue;
+    if (c.bad === was) { retryUntil?.delete(c.key); continue; }
+    if ((retryUntil?.get(c.key) ?? 0) > now()) continue;
     const message = c.bad
       ? `\u{1F6A8} ${LABELS[c.key]}: ${c.detail}`
       : `✅ recovered — ${LABELS[c.key]}: ${c.detail}`;
@@ -163,8 +166,12 @@ export async function applyAlertTransitions(
       await send(message);
     } catch (err) {
       console.error('[alerts] send failed', err instanceof Error ? err.message : err);
+      if (err instanceof TelegramSendError && (err.status === 400 || err.status === 403)) {
+        retryUntil?.set(c.key, now() + 10 * 60_000);
+      }
       continue;
     }
+    retryUntil?.delete(c.key);
     lastBad.set(c.key, c.bad);
     if (persist) await persist(c.key, c.bad);
   }
@@ -199,6 +206,7 @@ export async function runAlertLoop(
   const state = deps.state ?? prismaAlertStateStore(opts.chatId);
   let lastBad: Map<AlertCheck['key'], boolean> | undefined;
   const unsaved = new Map<AlertCheck['key'], boolean>();
+  const retryUntil = new Map<AlertCheck['key'], number>();
 
   console.log(`[alerts] operational alert loop every ${intervalMs / 1000}s`);
   while (!signal.stopped) {
@@ -226,7 +234,7 @@ export async function runAlertLoop(
         } catch (err) {
           console.error('[alerts] state save failed', err instanceof Error ? err.message : err);
         }
-      });
+      }, retryUntil);
     } catch (err) {
       console.error('[alerts] evaluate/state failed', err instanceof Error ? err.message : err);
     }

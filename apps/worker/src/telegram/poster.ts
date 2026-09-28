@@ -178,6 +178,12 @@ export function formatTelegramMessage(
   return lines.join('\n');
 }
 
+export class TelegramSendError extends Error {
+  constructor(readonly status: number, body: string) {
+    super(`telegram sendMessage ${status}: ${body.slice(0, 200)}`);
+  }
+}
+
 export function makeTelegramSender(botToken: string, chatId: string, timeoutMs?: number): TelegramSender {
   return async (text) => {
     const res = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
@@ -188,7 +194,7 @@ export function makeTelegramSender(botToken: string, chatId: string, timeoutMs?:
     });
     if (!res.ok) {
       const body = await res.text().catch(() => '');
-      throw new Error(`telegram sendMessage ${res.status}: ${body.slice(0, 200)}`);
+      throw new TelegramSendError(res.status, body);
     }
   };
 }
