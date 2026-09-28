@@ -16,9 +16,9 @@ export interface MetricsSnapshot {
    *  and rows resolved in the trailing 24h. A label with a growing due backlog
    *  and ~0 resolved is a starved benchmark cell. Optional so older readers work. */
   outcomes?: Array<{ label: string; pendingDue: number; deferred: number; resolved24h: number }>;
-  /** seconds since the newest det_v0 report was written (report generation stalled if this grows) */
+  /** seconds since the newest live launch/qualified det_v0 report was written */
   newestDetReportAgeSec?: number | null;
-  /** launch -> report delay of that newest report (the T+10m job running behind if this grows) */
+  /** launch -> report delay of that newest live report (on-demand reports excluded) */
   newestDetReportLagSec?: number | null;
   /** share of launches from 1–2h ago that have a det_v0 report (coverage over eligible launches) */
   detCoverage1to2h?: number | null;
@@ -65,7 +65,7 @@ export const prismaMetricsReader: MetricsReader = async () => {
 
   const [newestDet, eligible, eligibleWithDet] = await Promise.all([
     prisma.report.findFirst({
-      where: { forecaster: 'det_v0' },
+      where: { forecaster: 'det_v0', retrospective: false, trigger: { in: ['launch', 'qualified'] }, launchId: { not: null } },
       orderBy: { createdAt: 'desc' },
       select: { createdAt: true, launch: { select: { launchAt: true } } },
     }),

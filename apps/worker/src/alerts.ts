@@ -1,6 +1,6 @@
 /**
  * M9 — operational alerts (build-guide M9): STARVED, IDS trip, commit lag,
- * watcher stalled. Edge-triggered: a Telegram message fires only when a
+ * watcher stalled, report lag. Edge-triggered: a Telegram message fires only when a
  * check transitions ok->bad or bad->ok, not every tick, so a steady-state
  * problem doesn't spam the channel once per interval forever.
  */
@@ -9,7 +9,7 @@ import { makeTelegramSender, TelegramSendError } from './telegram/poster';
 import type { StopSignal } from './watcher/poller';
 
 export interface AlertCheck {
-  key: 'starved' | 'ids_trip' | 'commit_lag' | 'watcher_stalled';
+  key: 'starved' | 'ids_trip' | 'commit_lag' | 'watcher_stalled' | 'report_lag';
   bad: boolean;
   detail: string;
 }
@@ -19,6 +19,7 @@ export interface AlertReaders {
   latestPhantomEpoch: () => Promise<boolean>;
   latestCommitAt: () => Promise<Date | null>;
   latestWatcherUpdate: () => Promise<Date | null>;
+  latestDetReport: () => Promise<{ createdAt: Date; launchAt: Date | null } | null>;
 }
 
 const prismaReaders: AlertReaders = {
@@ -39,6 +40,16 @@ const prismaReaders: AlertReaders = {
     const row = await prisma.watcherCursor.findFirst({ orderBy: { updatedAt: 'desc' }, select: { updatedAt: true } });
     return row?.updatedAt ?? null;
   },
+  latestDetReport: async () => {
+    // On-demand reports can hide a late T+10m report; retrospective rows
+    // cannot establish live report health.
+    const row = await prisma.report.findFirst({
+      where: { forecaster: 'det_v0', retrospective: false, trigger: { in: ['launch', 'qualified'] }, launchId: { not: null } },
+      orderBy: { createdAt: 'desc' },
+      select: { createdAt: true, launch: { select: { launchAt: true } } },
+    });
+    return row ? { createdAt: row.createdAt, launchAt: row.launch?.launchAt ?? null } : null;
+  },
 };
 
 export interface EvaluateAlertsOptions {
@@ -47,6 +58,8 @@ export interface EvaluateAlertsOptions {
   commitLagSec?: number;
   /** default 300 (5 min) — spec: "watcher stalled > 5 min" */
   watcherStalledSec?: number;
+  /** default 900 (15 min); two consecutive live samples are required */
+  reportLagSec?: number;
   readers?: AlertReaders;
 }
 
@@ -56,13 +69,15 @@ export async function evaluateAlerts(opts: EvaluateAlertsOptions = {}): Promise<
   const now = opts.now ?? new Date();
   const commitLagSec = opts.commitLagSec ?? 600;
   const watcherStalledSec = opts.watcherStalledSec ?? 300;
+  const reportLagSec = opts.reportLagSec ?? 900;
   const readers = opts.readers ?? prismaReaders;
 
-  const [lifecycle, phantom, commitAt, watcherAt] = await Promise.all([
+  const [lifecycle, phantom, commitAt, watcherAt, detReport] = await Promise.all([
     readers.latestLifecycle(),
     readers.latestPhantomEpoch(),
     readers.latestCommitAt(),
     readers.latestWatcherUpdate(),
+    readers.latestDetReport(),
   ]);
 
   const starved = lifecycle?.newState === 'STARVED';
@@ -74,7 +89,7 @@ export async function evaluateAlerts(opts: EvaluateAlertsOptions = {}): Promise<
   const watcherAgeSec = age(now, watcherAt);
   const watcherStalled = watcherAgeSec !== null && watcherAgeSec > watcherStalledSec;
 
-  return [
+  const checks: AlertCheck[] = [
     {
       key: 'starved',
       bad: starved,
@@ -106,6 +121,20 @@ export async function evaluateAlerts(opts: EvaluateAlertsOptions = {}): Promise<
           : `${Math.round(watcherAgeSec / 60)}min since the watcher last advanced (threshold ${watcherStalledSec / 60}min)`,
     },
   ];
+  // An old report is not evidence of current lag. A feed-silence check needs
+  // an eligible-candidate denominator before it can be truthful.
+  if (detReport?.launchAt) {
+    const reportAgeSec = age(now, detReport.createdAt)!;
+    const lagSec = (detReport.createdAt.getTime() - detReport.launchAt.getTime()) / 1000;
+    if (reportAgeSec >= 0 && reportAgeSec <= 20 * 60 && lagSec >= 0) {
+      checks.push({
+        key: 'report_lag',
+        bad: lagSec > reportLagSec,
+        detail: `${Math.round(lagSec / 60)}min from launch to newest live det_v0 report (threshold ${reportLagSec / 60}min)`,
+      });
+    }
+  }
+  return checks;
 }
 
 const LABELS: Record<AlertCheck['key'], string> = {
@@ -113,6 +142,7 @@ const LABELS: Record<AlertCheck['key'], string> = {
   ids_trip: 'IDS trip',
   commit_lag: 'commit lag',
   watcher_stalled: 'watcher stalled',
+  report_lag: 'deterministic report lag',
 };
 
 export type SendFn = (text: string) => Promise<void>;
@@ -183,6 +213,7 @@ export interface AlertLoopOptions {
   intervalMs?: number;
   commitLagSec?: number;
   watcherStalledSec?: number;
+  reportLagSec?: number;
 }
 
 export interface AlertLoopDeps {
@@ -207,6 +238,7 @@ export async function runAlertLoop(
   let lastBad: Map<AlertCheck['key'], boolean> | undefined;
   const unsaved = new Map<AlertCheck['key'], boolean>();
   const retryUntil = new Map<AlertCheck['key'], number>();
+  let consecutiveLateReports = 0;
 
   console.log(`[alerts] operational alert loop every ${intervalMs / 1000}s`);
   while (!signal.stopped) {
@@ -225,8 +257,14 @@ export async function runAlertLoop(
       const checks = await evaluate({
         commitLagSec: opts.commitLagSec,
         watcherStalledSec: opts.watcherStalledSec,
+        reportLagSec: opts.reportLagSec,
       });
-      await applyAlertTransitions(checks, lastBad, send, async (key, bad) => {
+      const lag = checks.find((check) => check.key === 'report_lag');
+      consecutiveLateReports = lag?.bad ? consecutiveLateReports + 1 : 0;
+      // The review calls for two scrapes above 900s. A missing/stale sample
+      // neither raises nor clears an already delivered report-lag alert.
+      const confirmed = checks.filter((check) => check.key !== 'report_lag' || !check.bad || consecutiveLateReports >= 2);
+      await applyAlertTransitions(confirmed, lastBad, send, async (key, bad) => {
         unsaved.set(key, bad);
         try {
           await state.save(key, bad);

@@ -71,6 +71,7 @@ export interface WorkerEnv {
   alertsIntervalMs: number;
   alertsCommitLagSec: number;
   alertsWatcherStalledSec: number;
+  alertsReportLagSec: number;
   /** M9: the worker's own /health listener. Not read from bare $PORT — this
    *  project's .env already sets PORT=3000 for the api, and both processes
    *  load the same .env locally, so a bare $PORT fallback would collide. */
@@ -183,6 +184,7 @@ export function loadEnv(): WorkerEnv {
     alertsIntervalMs: Number(process.env.ALERTS_INTERVAL_MS || 60_000),
     alertsCommitLagSec: Number(process.env.ALERTS_COMMIT_LAG_SEC || 600),
     alertsWatcherStalledSec: Number(process.env.ALERTS_WATCHER_STALLED_SEC || 300),
+    alertsReportLagSec: Number(process.env.ALERTS_REPORT_LAG_SEC || 900),
     healthPort: Number(process.env.WORKER_PORT || 3010),
   };
 }
