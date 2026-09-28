@@ -186,6 +186,61 @@ const inMemoryState = (): AlertStateStore => {
 };
 
 describe('runAlertLoop', () => {
+  it('retries a quota alert after a failed send and recovers only after two windows of healthy traffic', async () => {
+    const snapshots = [
+      { attempts: 0, providerFailures: 0, quotaFailures: 0 },
+      { attempts: 100, providerFailures: 1, quotaFailures: 1 },
+      { attempts: 100, providerFailures: 1, quotaFailures: 1 },
+      { attempts: 200, providerFailures: 1, quotaFailures: 1 },
+      { attempts: 300, providerFailures: 1, quotaFailures: 1 },
+    ];
+    const signal: StopSignal = { stopped: false };
+    const sent: string[] = [];
+    let tick = 0;
+    let sends = 0;
+    const state = inMemoryState();
+    await runAlertLoop(signal, { botToken: 'tkn', chatId: 'chat', intervalMs: 1 }, {
+      state,
+      evaluate: async () => { if (++tick === snapshots.length) signal.stopped = true; return []; },
+      readProviderStats: () => snapshots[tick - 1]!,
+      send: async (message) => {
+        if (++sends === 1) throw new Error('telegram down');
+        sent.push(message);
+      },
+    });
+    expect(sends).toBe(3); // failed alarm, retried alarm, recovery
+    expect(sent).toHaveLength(2);
+    expect(sent[0]).toContain('RPC provider failures');
+    expect(sent[1]).toContain('recovered');
+    expect((await state.load()).get('provider_failure')).toBe(false);
+  });
+
+  it('retains a delivered provider alarm across restart and no traffic', async () => {
+    const state = inMemoryState();
+    const sent: string[] = [];
+    const run = async (snapshots: Array<{ attempts: number; providerFailures: number; quotaFailures: number }>) => {
+      const signal: StopSignal = { stopped: false };
+      let tick = 0;
+      await runAlertLoop(signal, { botToken: 'tkn', chatId: 'chat', intervalMs: 1 }, {
+        state,
+        evaluate: async () => { if (++tick === snapshots.length) signal.stopped = true; return []; },
+        readProviderStats: () => snapshots[tick - 1]!,
+        send: async (message) => void sent.push(message),
+      });
+    };
+    await run([{ attempts: 100, providerFailures: 10, quotaFailures: 0 }]);
+    expect((await state.load()).get('provider_failure')).toBe(true);
+    await run([{ attempts: 0, providerFailures: 0, quotaFailures: 0 }]);
+    expect(sent).toHaveLength(1);
+    expect((await state.load()).get('provider_failure')).toBe(true);
+    await run([
+      { attempts: 100, providerFailures: 0, quotaFailures: 0 },
+      { attempts: 200, providerFailures: 0, quotaFailures: 0 },
+    ]);
+    expect(sent).toHaveLength(2);
+    expect(sent[1]).toContain('recovered');
+  });
+
   it('counts two distinct late reports, not repeated reads of one report, and recovers on a fresh on-time report', async () => {
     const sent: string[] = [];
     const sentAt: number[] = [];

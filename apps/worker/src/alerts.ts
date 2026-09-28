@@ -5,11 +5,13 @@
  * problem doesn't spam the channel once per interval forever.
  */
 import { prisma } from '@launch-auditor/db';
+import { rpcWireStats, type RpcWireStats } from '@launch-auditor/rpc-budget';
+import { ProviderHealthTracker } from './provider-health';
 import { makeTelegramSender, TelegramSendError } from './telegram/poster';
 import type { StopSignal } from './watcher/poller';
 
 export interface AlertCheck {
-  key: 'starved' | 'ids_trip' | 'commit_lag' | 'watcher_stalled' | 'report_lag';
+  key: 'starved' | 'ids_trip' | 'commit_lag' | 'watcher_stalled' | 'report_lag' | 'provider_failure';
   bad: boolean;
   detail: string;
   /** Identity of the report behind the lag sample; repeated reads count once. */
@@ -146,6 +148,7 @@ const LABELS: Record<AlertCheck['key'], string> = {
   commit_lag: 'commit lag',
   watcher_stalled: 'watcher stalled',
   report_lag: 'deterministic report lag',
+  provider_failure: 'RPC provider failures',
 };
 
 export type SendFn = (text: string) => Promise<void>;
@@ -226,6 +229,8 @@ export interface AlertLoopDeps {
   send?: SendFn;
   /** injectable durable state; defaults to Postgres */
   state?: AlertStateStore;
+  /** injectable process-local transport counters; defaults to budgeted RPC telemetry */
+  readProviderStats?: () => RpcWireStats;
 }
 
 /** Every tick, evaluate checks and send only on a durable state transition. */
@@ -238,6 +243,8 @@ export async function runAlertLoop(
   const evaluate = deps.evaluate ?? evaluateAlerts;
   const send = deps.send ?? makeTelegramSender(opts.botToken, opts.chatId, 15_000);
   const state = deps.state ?? prismaAlertStateStore(opts.chatId);
+  const readProviderStats = deps.readProviderStats ?? rpcWireStats;
+  const providerHealth = new ProviderHealthTracker();
   let lastBad: Map<AlertCheck['key'], boolean> | undefined;
   const unsaved = new Map<AlertCheck['key'], boolean>();
   const retryUntil = new Map<AlertCheck['key'], number>();
@@ -263,6 +270,8 @@ export async function runAlertLoop(
         watcherStalledSec: opts.watcherStalledSec,
         reportLagSec: opts.reportLagSec,
       });
+      const provider = providerHealth.sample(readProviderStats());
+      if (provider) checks.push({ key: 'provider_failure', ...provider });
       const lag = checks.find((check) => check.key === 'report_lag');
       if (lag?.bad && lag.sampleId && lag.sampleId !== lastLateReportId) {
         consecutiveLateReports += 1;
