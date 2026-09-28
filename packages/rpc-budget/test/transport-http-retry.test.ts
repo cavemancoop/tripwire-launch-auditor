@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HttpRequestError } from 'viem';
-import { budgetedHttp, isTransientTransportError } from '../src/transport';
+import { budgetedHttp, isTransientTransportError, resetRpcWireStats, rpcWireStats } from '../src/transport';
 import { RequestScheduler } from '../src/scheduler';
 import { isRpcCancelled, runCancellableRpc } from '../src/cancel';
 
@@ -26,6 +26,7 @@ let fetches = 0;
 let replies: Reply[] = [];
 
 beforeEach(() => {
+  resetRpcWireStats();
   fetches = 0;
   replies = [];
   vi.stubGlobal('fetch', async () => {
@@ -68,6 +69,7 @@ describe('budgetedHttp — transient HTTP retry without cancellation (unchanged)
     await vi.advanceTimersByTimeAsync(1);
     await expect(p).resolves.toBe('0x10');
     expect(fetches).toBe(3);
+    expect(rpcWireStats()).toEqual({ attempts: 3, providerFailures: 2, quotaFailures: 0 });
   });
 
   it('gives up after two retries with the provider error', async () => {
@@ -78,6 +80,7 @@ describe('budgetedHttp — transient HTTP retry without cancellation (unchanged)
     await vi.advanceTimersByTimeAsync(5_000);
     await settled;
     expect(fetches).toBe(3);
+    expect(rpcWireStats()).toEqual({ attempts: 3, providerFailures: 3, quotaFailures: 0 });
   });
 
   it('honours a numeric Retry-After header', async () => {
@@ -128,6 +131,7 @@ describe('budgetedHttp — cancellation stops the transient HTTP retry (review f
     await settled;
     expect(isRpcCancelled(err)).toBe(true);
     expect(fetches).toBe(1);
+    expect(rpcWireStats().attempts).toBe(1);
   });
 
   it('a request already sent when cancelled is left to settle', async () => {

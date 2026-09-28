@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { RpcRequestError } from 'viem';
 import { classifyRpcError, hasProviderFailure, isProviderFailureKind, rpcErrorKinds, type RpcErrorKind } from '../src/errors';
 
 // The exact provider text from the 2026-09-18 outage (CHANGELOG.md).
@@ -72,6 +73,16 @@ describe('classifyRpcError (Package 4a)', () => {
     const e = new Error('upstream RPC error') as Error & { cause?: unknown };
     e.cause = e;
     expect(classifyRpcError(e)).toBe('unknown');
+  });
+
+  it('ignores a 429 in viem request-body params while preserving real provider details', () => {
+    const body = { method: 'eth_call', params: [{ to: '0x1111111111111111111111111111111111114290', data: '0x' }, 'latest'] };
+    const revert = new RpcRequestError({ body, error: { code: 3, message: 'execution reverted' }, url: 'https://rpc.example/KEY' });
+    expect(classifyRpcError(revert)).toBe('revert');
+    expect(rpcErrorKinds(revert)).not.toContain('rate_limit');
+    expect(hasProviderFailure(revert)).toBe(false);
+    const quota = new RpcRequestError({ body, error: { code: 429, message: QUOTA_18_SEP }, url: 'https://rpc.example/KEY' });
+    expect(classifyRpcError(quota)).toBe('quota');
   });
 
   it('only provider-side kinds are provider failures', () => {
