@@ -4,6 +4,32 @@ import { currentRpcSignal, throwIfRpcCancelled } from './cancel';
 import { rpcErrorKinds } from './errors';
 import type { RequestScheduler } from './scheduler';
 
+/** Process-local wire attempts, including retries. Cache hits and requests
+ * cancelled before an HTTP send do not enter this denominator. */
+export interface RpcWireStats {
+  attempts: number;
+  providerFailures: number;
+  quotaFailures: number;
+}
+
+const wireCounts: RpcWireStats = { attempts: 0, providerFailures: 0, quotaFailures: 0 };
+export const rpcWireStats = (): RpcWireStats => ({ ...wireCounts });
+/** Test hook; never reset counters while a production worker is running. */
+export function resetRpcWireStats(): void {
+  wireCounts.attempts = 0;
+  wireCounts.providerFailures = 0;
+  wireCounts.quotaFailures = 0;
+}
+
+function recordWireFailure(err: unknown): void {
+  wireCounts.attempts++;
+  const kinds = rpcErrorKinds(err);
+  if (kinds.includes('quota')) wireCounts.quotaFailures++;
+  if (kinds.some((kind) => kind === 'quota' || kind === 'rate_limit' || kind === 'transport')) {
+    wireCounts.providerFailures++;
+  }
+}
+
 export interface BudgetedHttpOptions {
   scheduler: RequestScheduler;
   priority: number;
@@ -103,8 +129,11 @@ export function budgetedHttp(rpcUrl: string, opts: BudgetedHttpOptions): Transpo
       for (let n = 0; ; n++) {
         throwIfRpcCancelled(signal);
         try {
-          return await innerRequest(args, reqOpts);
+          const result = await innerRequest(args, reqOpts);
+          wireCounts.attempts++;
+          return result;
         } catch (err) {
+          recordWireFailure(err);
           if (n >= retryCount || !isTransientTransportError(err) || signal?.aborted) throw err;
           await sleep(transientDelayMs(err, n, RETRY_DELAY_MS), signal);
         }

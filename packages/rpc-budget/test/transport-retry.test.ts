@@ -10,7 +10,7 @@ vi.mock('viem', async (importOriginal) => ({
   http: () => () => ({ config: {}, request: (...a: unknown[]) => inner.request(...a), value: {} }),
 }));
 
-const { budgetedHttp } = await import('../src/transport');
+const { budgetedHttp, resetRpcWireStats, rpcWireStats } = await import('../src/transport');
 const { RequestScheduler } = await import('../src/scheduler');
 
 const QUOTA_18_SEP = "You've reached your monthly quota of Request Units";
@@ -35,6 +35,7 @@ function request(): (a: { method: string; params: unknown[] }) => Promise<unknow
 const args = { method: 'eth_blockNumber', params: [] };
 
 beforeEach(() => {
+  resetRpcWireStats();
   inner.request = vi.fn();
 });
 
@@ -47,6 +48,7 @@ describe('budgetedHttp — in-slot rate-limit retry (Package 4a)', () => {
     inner.request = fn;
     await expect(request()(args)).resolves.toBe('0x10');
     expect(fn).toHaveBeenCalledTimes(2);
+    expect(rpcWireStats()).toEqual({ attempts: 2, providerFailures: 1, quotaFailures: 0 });
   });
 
   it('does not retry a quota refusal delivered as HTTP 429', async () => {
@@ -54,6 +56,7 @@ describe('budgetedHttp — in-slot rate-limit retry (Package 4a)', () => {
     inner.request = fn;
     await expect(request()(args)).rejects.toThrow(/monthly quota/);
     expect(fn).toHaveBeenCalledOnce();
+    expect(rpcWireStats()).toEqual({ attempts: 1, providerFailures: 1, quotaFailures: 1 });
   });
 
   it('a 429 in the endpoint host does not make an archive miss retryable', async () => {

@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-09-28 — RPC wire-attempt telemetry (Fable fifth-alert prerequisite)
+
+The budgeted HTTP transport now counts each actual RPC attempt, including
+in-slot retries, and classifies quota/rate-limit/transport failures before
+retry. Cache hits and cancellations before a send do not enter the count.
+The worker's private `/metrics` exports cumulative attempt, provider-failure,
+and quota-failure counters; its minute `[obs]` log includes the same three
+numbers. This changes observation only: admission, retry and outcome policy
+are unchanged. A fifth alert will use deltas between samples; cumulative
+counters alone are not an error-rate alert.
+
+Verify with `pnpm verify`; after deployment inspect two consecutive `[obs]`
+lines for nondecreasing `rpcWire` counts and no key-bearing strings.
+
 ## 2026-09-28 — Live deterministic report-lag alert (Package 4d)
 
 The worker now alerts after two distinct live-launch `det_v0` reports are

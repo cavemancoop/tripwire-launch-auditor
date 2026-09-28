@@ -38,12 +38,12 @@ describe('formatWorkerMetrics', () => {
   const text = formatWorkerMetrics(o);
   const samples = text.split('\n').filter((l) => l && !l.startsWith('#'));
 
-  it('emits exactly the 43 fixed series whatever the input', () => {
-    expect(samples).toHaveLength(43);
+  it('emits exactly the 46 fixed series whatever the input', () => {
+    expect(samples).toHaveLength(46);
     const many = formatWorkerMetrics(
       observe(() => Array.from({ length: 5 }, (_, i) => stats({ byPriority: { [100 + i]: 1 } }))),
     );
-    expect(many.split('\n').filter((l) => l && !l.startsWith('#'))).toHaveLength(43);
+    expect(many.split('\n').filter((l) => l && !l.startsWith('#'))).toHaveLength(46);
   });
 
   it('labels only with the fixed tier and memory-kind sets', () => {
@@ -55,6 +55,7 @@ describe('formatWorkerMetrics', () => {
     for (const l of labels) expect(allowed.has(l)).toBe(true);
     expect(text).toContain('tripwire_worker_rpc_started_total{tier="outcomes"} 3');
     expect(text).toContain('tripwire_worker_rpc_started_total{tier="other"} 1');
+    expect(text).toContain('tripwire_worker_rpc_wire_attempts_total ');
   });
 
   it('never carries a URL, even when a real scheduler exists for a key-bearing one', async () => {
@@ -75,9 +76,10 @@ describe('obsLogLine', () => {
     const line = obsLogLine(observe(() => [stats({ byPriority: { 0: 1 } })]));
     expect(line.startsWith('[obs] ')).toBe(true);
     const body = JSON.parse(line.slice(6));
-    expect(Object.keys(body)).toEqual(['rpc', 'memMb', 'uptimeS']);
+    expect(Object.keys(body)).toEqual(['rpc', 'rpcWire', 'memMb', 'uptimeS']);
     expect(Object.keys(body.rpc)).toEqual([...TIERS]);
     expect(body.rpc.watcher).toEqual([1, 0, 0, 0, 0]);
+    expect(body.rpcWire).toHaveLength(3);
     expect(Object.keys(body.memMb)).toEqual(['rss', 'heapUsed', 'heapTotal', 'maxRss']);
   });
 });
