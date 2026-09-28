@@ -175,6 +175,7 @@ async function main(): Promise<void> {
       intervalMs: env.alertsIntervalMs,
       commitLagSec: env.alertsCommitLagSec,
       watcherStalledSec: env.alertsWatcherStalledSec,
+      reportLagSec: env.alertsReportLagSec,
     });
   } else {
     console.log('[alerts] operational alerts disabled (TELEGRAM_BOT_TOKEN / TELEGRAM_CHANNEL_ID not set)');

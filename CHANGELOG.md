@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-09-28 — Live deterministic report-lag alert (Package 4d)
+
+The worker now alerts after two distinct live-launch `det_v0` reports are
+each written more than 15 minutes after launch. It sends
+one recovery when a fresh on-time report appears. Missing or old reports do
+not clear an existing alert. The public report age/lag gauges now exclude
+on-demand reports and reports linked to retrospective launches, which could
+mask a delayed T+10m path. The 1–2h coverage gauge uses that live scope too.
+`ALERTS_REPORT_LAG_SEC` changes the lag threshold; 900 seconds is the default.
+This is a report-lag check, not a feed-silence or provider-error-rate check.
+A complete T+10m pipeline stop may still alert nobody while the watcher runs;
+the external monitor remains a required follow-up.
+
+Verify with `pnpm verify` and inspect the API's `det_report_lag_seconds`
+after deployment. A real alert transition remains to be observed.
+
 ## 2026-09-28 — Durable operational alert transitions (Package 4c)
 
 Worker operational alerts now load their last delivered bad/ok state from

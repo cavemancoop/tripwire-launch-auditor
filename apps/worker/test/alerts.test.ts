@@ -11,6 +11,7 @@ function readers(overrides: Partial<AlertReaders> = {}): AlertReaders {
     latestPhantomEpoch: async () => false,
     latestCommitAt: async () => new Date(NOW.getTime() - 60_000),
     latestWatcherUpdate: async () => new Date(NOW.getTime() - 30_000),
+    latestDetReport: async () => ({ id: 'live-a', createdAt: new Date(NOW.getTime() - 60_000), launchAt: new Date(NOW.getTime() - 12 * 60_000) }),
     ...overrides,
   };
 }
@@ -81,6 +82,25 @@ describe('evaluateAlerts', () => {
       readers: readers({ latestCommitAt: async () => new Date(NOW.getTime() - 60_000) }),
     });
     expect(checks.find((c) => c.key === 'commit_lag')?.bad).toBe(true);
+  });
+
+  it('evaluates recent launch-to-report lag at the strict threshold', async () => {
+    const at = (lagSec: number) => readers({
+      latestDetReport: async () => ({ id: 'live-a', createdAt: NOW, launchAt: new Date(NOW.getTime() - lagSec * 1000) }),
+    });
+    expect((await evaluateAlerts({ now: NOW, readers: at(900) })).find((c) => c.key === 'report_lag')?.bad).toBe(false);
+    expect((await evaluateAlerts({ now: NOW, readers: at(901) })).find((c) => c.key === 'report_lag')?.bad).toBe(true);
+  });
+
+  it('does not infer current report lag from missing or stale reports', async () => {
+    for (const latestDetReport of [
+      async () => null,
+      async () => ({ id: 'no-anchor', createdAt: NOW, launchAt: null }),
+      async () => ({ id: 'old', createdAt: new Date(NOW.getTime() - 21 * 60_000), launchAt: new Date(NOW.getTime() - 40 * 60_000) }),
+    ]) {
+      const checks = await evaluateAlerts({ now: NOW, readers: readers({ latestDetReport }) });
+      expect(checks.find((c) => c.key === 'report_lag')).toBeUndefined();
+    }
   });
 });
 
@@ -166,6 +186,46 @@ const inMemoryState = (): AlertStateStore => {
 };
 
 describe('runAlertLoop', () => {
+  it('counts two distinct late reports, not repeated reads of one report, and recovers on a fresh on-time report', async () => {
+    const sent: string[] = [];
+    const sentAt: number[] = [];
+    const signal: StopSignal = { stopped: false };
+    const samples = [
+      { id: 'late-a', bad: true },
+      { id: 'late-a', bad: true },
+      { id: 'late-b', bad: true },
+      { id: 'on-time-c', bad: false },
+    ];
+    let tick = 0;
+    await runAlertLoop(signal, { botToken: 'tkn', chatId: 'chat', intervalMs: 1 }, {
+      state: inMemoryState(),
+      evaluate: async () => {
+        const sample = samples[tick++]!;
+        if (tick === samples.length) signal.stopped = true;
+        return [{ ...CHECK('report_lag', sample.bad), sampleId: sample.id }];
+      },
+      send: async (message) => { sent.push(message); sentAt.push(tick); },
+    });
+    expect(sent).toHaveLength(2);
+    expect(sentAt).toEqual([3, 4]);
+    expect(sent[0]).toContain('deterministic report lag');
+    expect(sent[1]).toContain('recovered');
+  });
+
+  it('does not recover an alerted lag from an absent sample', async () => {
+    const sent: string[] = [];
+    const state = inMemoryState();
+    await state.save('report_lag', true);
+    const signal: StopSignal = { stopped: false };
+    await runAlertLoop(signal, { botToken: 'tkn', chatId: 'chat', intervalMs: 1 }, {
+      state,
+      evaluate: async () => { signal.stopped = true; return []; },
+      send: async (message) => void sent.push(message),
+    });
+    expect(sent).toHaveLength(0);
+    expect((await state.load()).get('report_lag')).toBe(true);
+  });
+
   it('over three ticks: alerts once on the first bad tick, stays quiet on the second, and sends a recovery on the third', async () => {
     const sent: string[] = [];
     const ticks: AlertCheck[][] = [

@@ -412,8 +412,16 @@ deploy-time command — the migrations directory is already in the repo.
   `pnpm --filter @launch-auditor/worker exec vitest run test/observability.test.ts test/loop-metrics.test.ts test/outcomes-sweep-counts.test.ts`.
 - Telegram alerts (`apps/worker/src/alerts.ts`): STARVED, IDS trip
   (`idsMismatch` or a phantom-spend epoch), commit lag > 10 min, watcher
-  stalled > 5 min. Edge-triggered — one message when a check goes bad, one
-  recovery message when it clears, silence in between.
+  stalled > 5 min, and launch-to-`det_v0` report lag > 15 min on two
+  distinct live reports. The lag check uses only a report written within the
+  last 20 min for a non-retrospective launch; a missing or older report does
+  not imply recovery. The API's det report age/lag/coverage gauges use the
+  same live-launch scope, but its age/lag gauges show the latest raw sample
+  without the alert's freshness and two-report confirmation rules.
+  Edge-triggered — one message when a check goes bad, one recovery message
+  when it clears, silence in between. A dead T+10m report pipeline can still
+  go unalerted when the watcher advances but no new reports arrive; the
+  coverage gauge exposes this, but no external pager is configured yet.
 
 ### 5. Verify the deploy
 Per the build guide's own check: the production URL serves the dashboard;
