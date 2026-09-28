@@ -17,17 +17,25 @@ export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
 export interface RedisConnectionConfig {
   host: string;
   port: number;
+  username?: string;
   password?: string;
+  db?: number;
+  tls?: Record<string, never>;
 }
 
 /** Parse REDIS_URL into the shape BullMQ's `connection` option accepts. */
 export function parseRedisUrl(url: string): RedisConnectionConfig {
   const parsed = new URL(url);
+  if (parsed.protocol !== 'redis:' && parsed.protocol !== 'rediss:') throw new Error('Redis URL must use redis: or rediss:');
+  if (parsed.pathname && parsed.pathname !== '/' && !/^\/\d+$/.test(parsed.pathname)) throw new Error('Redis URL has an invalid database index');
   const config: RedisConnectionConfig = {
     host: parsed.hostname,
     port: parsed.port ? Number(parsed.port) : 6379,
   };
-  if (parsed.password) config.password = parsed.password;
+  if (parsed.username) config.username = decodeURIComponent(parsed.username);
+  if (parsed.password) config.password = decodeURIComponent(parsed.password);
+  if (parsed.pathname && parsed.pathname !== '/') config.db = Number(parsed.pathname.slice(1));
+  if (parsed.protocol === 'rediss:') config.tls = {};
   return config;
 }
 

@@ -31,7 +31,7 @@ import { startFeaturesWorker } from './watcher/t10';
  */
 async function bootRpcBudget(client: PublicClient, env: WorkerEnv): Promise<void> {
   console.log(
-    `[rpc-budget] ${env.rpcBudgetRpm} req/min shared · priority watcher>commit>outcomes>deepdive>backfill`,
+    `[rpc-budget] ${env.rpcBudgetRpm} req/min shared · priority watcher>commit>outcomes>assess>deepdive>backfill`,
   );
   if (env.rpcMaxGetLogsRange > 0) {
     setGetLogsMaxRange(env.rpcMaxGetLogsRange);
@@ -92,7 +92,8 @@ async function main(): Promise<void> {
   worker.on('ready', () => console.log('[worker] features queue ready'));
   worker.on('error', (err) => console.error('[worker] error', err));
 
-  const assessWorker = startAssessWorker(client);
+  const assessClient = getBudgetedClient(env.rpcUrl, { priority: PRIORITY.assess });
+  const assessWorker = startAssessWorker(assessClient);
   assessWorker.on('error', (err) => console.error('[assess] worker error', err));
 
   const shutdown = async (): Promise<void> => {

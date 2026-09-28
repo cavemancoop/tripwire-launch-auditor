@@ -38,12 +38,12 @@ describe('formatWorkerMetrics', () => {
   const text = formatWorkerMetrics(o);
   const samples = text.split('\n').filter((l) => l && !l.startsWith('#'));
 
-  it('emits exactly the 38 fixed series whatever the input', () => {
-    expect(samples).toHaveLength(38);
+  it('emits exactly the 43 fixed series whatever the input', () => {
+    expect(samples).toHaveLength(43);
     const many = formatWorkerMetrics(
       observe(() => Array.from({ length: 5 }, (_, i) => stats({ byPriority: { [100 + i]: 1 } }))),
     );
-    expect(many.split('\n').filter((l) => l && !l.startsWith('#'))).toHaveLength(38);
+    expect(many.split('\n').filter((l) => l && !l.startsWith('#'))).toHaveLength(43);
   });
 
   it('labels only with the fixed tier and memory-kind sets', () => {

@@ -2,13 +2,13 @@
  * Package 2a — worker process observation (docs/FABLE-REVIEW-IMPLEMENTATION.md).
  * Read-only snapshots of the shared RPC scheduler(s) by priority tier and of
  * process memory, served as Prometheus text on the private health port and as
- * one `[obs]` log line a minute. Fixed label sets only (38 series): never an
+ * one `[obs]` log line a minute. Fixed label sets only (43 series): never an
  * RPC URL (URLs embed provider keys), address, row id or error message.
  */
 import { getHeapStatistics } from 'node:v8';
 import { allSchedulerStats, PRIORITY, type SchedulerStats } from '@launch-auditor/rpc-budget';
 
-export const TIERS = ['watcher', 'commit', 'outcomes', 'deepdive', 'backfill', 'other'] as const;
+export const TIERS = ['watcher', 'commit', 'outcomes', 'assess', 'deepdive', 'backfill', 'other'] as const;
 export type Tier = (typeof TIERS)[number];
 
 const TIER_BY_PRIORITY = new Map<number, Tier>(Object.entries(PRIORITY).map(([name, p]) => [p, name as Tier]));

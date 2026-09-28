@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { isIP } from 'node:net';
 import {
   GENESIS_HASH,
   prisma,
@@ -9,6 +10,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { createPublicClient, http, parseAbiItem, type Hex } from 'viem';
 import { checkDesignPartner } from './auth';
 import { makeAssessEnqueuer, type AssessEnqueuer } from './assess-queue';
+import { makeAssessRateLimiter, type AssessRateLimiter } from './assess-rate-limit';
 import { memoizeProofReader, ProofCacheBusyError } from './proof-cache';
 import { budgetDisplay } from './budget-display';
 import { chainFundingReader, type FundingReader } from './funding';
@@ -444,6 +446,10 @@ export interface BuildServerOptions {
   enqueueDeepdive?: DeepdiveEnqueuer;
   /** injectable for tests — defaults to a BullMQ producer on the `assess` queue */
   enqueueAssess?: AssessEnqueuer;
+  /** shared Redis limit for the RPC-consuming free assessment route */
+  assessRateLimiter?: AssessRateLimiter;
+  /** trust Railway's client-IP header only when the deployment opts in */
+  trustXRealIp?: boolean;
   env?: ApiEnv;
 }
 
@@ -467,15 +473,17 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
   const getEnqueueDeepdive = (): DeepdiveEnqueuer => (enqueueDeepdive ??= makeDeepdiveEnqueuer());
   let enqueueAssess = opts.enqueueAssess;
   const getEnqueueAssess = (): AssessEnqueuer => (enqueueAssess ??= makeAssessEnqueuer());
+  let assessRateLimiter = opts.assessRateLimiter;
+  const getAssessRateLimiter = (): AssessRateLimiter => (assessRateLimiter ??= makeAssessRateLimiter());
 
   // M8 — the dashboard (apps/web) is served from its own port and reads these
-  // endpoints client-side. Everything here is public read data (or free,
-  // rate-unlimited writes during the contest — spec §9), so a wildcard is the
-  // honest CORS policy: no cookies, no credentials, nothing origin-scoped.
+  // endpoints client-side. Public reads and free, bounded writes use a wildcard
+  // because no cookies or origin-scoped credentials are involved.
   app.addHook('onRequest', async (req, reply) => {
     reply.header('Access-Control-Allow-Origin', '*');
     reply.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
     reply.header('Access-Control-Allow-Headers', 'Content-Type,X-Api-Key');
+    reply.header('Access-Control-Expose-Headers', 'Retry-After');
     if (req.method === 'OPTIONS') reply.code(204).send();
   });
 
@@ -552,6 +560,17 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
     }
     const auth = checkDesignPartner(req.headers['x-api-key'] as string | undefined, env.designPartnerApiKeys);
     try {
+      // Railway documents X-Real-IP as the client IP. Trust it only on
+      // deployments explicitly configured behind that edge. Until then use
+      // the global cap only; a proxy socket IP would group all public users.
+      const edgeIp = req.headers['x-real-ip'];
+      const trustEdgeIp = opts.trustXRealIp ?? process.env.TRUST_X_REAL_IP === 'true';
+      const ip = trustEdgeIp && typeof edgeIp === 'string' && isIP(edgeIp) ? edgeIp : null;
+      const admission = await getAssessRateLimiter()(ip);
+      if (!admission.allowed) {
+        reply.header('Retry-After', String(admission.retryAfterSeconds));
+        return reply.code(429).send({ error: 'assessment rate limit reached; retry shortly', retryAfterSeconds: admission.retryAfterSeconds });
+      }
       const { id } = await getEnqueueAssess()({ tokenAddress: token.toLowerCase() });
       return reply.code(202).send({
         queued: true,

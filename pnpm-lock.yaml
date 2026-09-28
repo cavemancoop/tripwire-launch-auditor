@@ -86,6 +86,9 @@ importers:
       fastify:
         specifier: 'catalog:'
         version: 5.12.1
+      ipaddr.js:
+        specifier: 2.5.0
+        version: 2.5.0
       viem:
         specifier: 'catalog:'
         version: 2.56.3(typescript@5.9.3)(zod@4.6.1)
