@@ -415,9 +415,17 @@ deploy-time command — the migrations directory is already in the repo.
   `rpcWire` → [attempts, providerFailures, quotaFailures], plus rss, heapUsed,
   heapTotal and maxRss rounded to MB, and uptime. It omits `external`,
   `array_buffers` and `heap_limit_bytes`. The outcomes `swept` log line ends
-  with the sweep duration. Read them with
+  with the sweep duration. Each nonempty sweep also writes one bounded
+  `[outcomes-cell] {json}` line: counts of picked, RESOLVED status,
+  `withValue` (RESOLVED with a boolean value), N/A,
+  unresolvable, retry, failed and claim-contention rows keyed by
+  `live|retrospective:LABEL@horizon:index|qualified|unknown`. The lane is
+  the linked launch's current lane when the row was selected. These are
+  service counts, not due-arrival rates, claim-eligible scored counts or proof
+  of cohort completeness.
+  Read them with
   `railway logs --service worker`. Check with
-  `pnpm --filter @launch-auditor/worker exec vitest run test/observability.test.ts test/loop-metrics.test.ts test/outcomes-sweep-counts.test.ts`.
+  `pnpm verify`.
 - Telegram alerts (`apps/worker/src/alerts.ts`): STARVED, IDS trip
   (`idsMismatch` or a phantom-spend epoch), commit lag > 10 min, watcher
   stalled > 5 min, and launch-to-`det_v0` report lag > 15 min on two

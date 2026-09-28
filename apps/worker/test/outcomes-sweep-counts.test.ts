@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // so the per-label pick split and the row-result counts it reports can be
 // checked against what it actually selected and wrote.
 const db = vi.hoisted(() => ({
-  rows: [] as Array<{ id: string; label: string; horizon: string; tokenAddress: string; evidence: unknown }>,
+  rows: [] as Array<{ id: string; label: string; horizon: string; tokenAddress: string; evidence: unknown; retrospective: boolean; launch: { lane: 'index' | 'qualified' } | null }>,
   findMany: [] as unknown[],
   updates: [] as Array<{ where: { id: string }; data: { status?: string; claimToken?: string | null } }>,
 }));
@@ -28,10 +28,10 @@ vi.mock('@launch-auditor/db', () => ({
   },
 }));
 vi.mock('../src/outcomes/resolve', () => ({
-  resolveOneOutcome: async (_client: unknown, row: { label: string }) => {
+  resolveOneOutcome: async (_client: unknown, row: { id: string; label: string }) => {
     switch (row.label) {
       case 'INSIDER_EXIT':
-        return { status: 'RESOLVED', value: true, evidence: {} };
+        return { status: 'RESOLVED', value: row.id === 'i2' ? null : true, evidence: {} };
       case 'SELL_IMPAIRED':
         return { status: 'NA', value: null, reason: 'not applicable', evidence: {} };
       case 'LIQ_IMPAIRED':
@@ -46,7 +46,20 @@ vi.mock('../src/outcomes/resolve', () => ({
 
 const { sweepDueOutcomes } = await import('../src/outcomes/loop');
 
-const row = (id: string, label: string) => ({ id, label, horizon: '24h', tokenAddress: `0x${id}`, evidence: null });
+const row = (id: string, label: string, lane: 'index' | 'qualified' = 'index') =>
+  ({ id, label, horizon: '24h', tokenAddress: `0x${id}`, evidence: null, retrospective: false, launch: { lane } });
+
+const counts = (picked: number, disposition: string) => ({
+  picked,
+  resolved: disposition === 'resolved' ? picked : 0,
+  withValue: disposition === 'resolved' ? picked : 0,
+  na: disposition === 'na' ? picked : 0,
+  unresolvable: disposition === 'unresolvable' ? picked : 0,
+  retryLater: disposition === 'retryLater' ? picked : 0,
+  failed: disposition === 'failed' ? picked : 0,
+  claimSkipped: 0,
+  lostClaim: 0,
+});
 
 beforeEach(() => {
   db.rows = [];
@@ -60,6 +73,7 @@ describe('sweepDueOutcomes — Package 2b counts', () => {
     expect(r).toEqual({
       picked: 0,
       pickedByLabel: {},
+      byCellLane: {},
       resolved: 0,
       na: 0,
       unresolvable: 0,
@@ -74,16 +88,24 @@ describe('sweepDueOutcomes — Package 2b counts', () => {
   it('splits picks by label and counts each row result once', async () => {
     db.rows = [
       row('i1', 'INSIDER_EXIT'),
-      row('i2', 'INSIDER_EXIT'),
-      row('s1', 'SELL_IMPAIRED'),
-      row('l1', 'LIQ_IMPAIRED'),
+      row('i2', 'INSIDER_EXIT', 'qualified'),
+      row('s1', 'SELL_IMPAIRED', 'qualified'),
+      { ...row('l1', 'LIQ_IMPAIRED'), retrospective: true, launch: null },
       row('d1', 'DRAWDOWN_80'),
-      row('t1', 'TRADING_ALIVE'),
+      row('t1', 'TRADING_ALIVE', 'qualified'),
     ];
     const r = await sweepDueOutcomes({} as never, 25, { order: 'fair', concurrency: 3 });
     expect(r).toEqual({
       picked: 6,
       pickedByLabel: { INSIDER_EXIT: 2, SELL_IMPAIRED: 1, LIQ_IMPAIRED: 1, DRAWDOWN_80: 1, TRADING_ALIVE: 1 },
+      byCellLane: {
+        'live:INSIDER_EXIT@24h:index': counts(1, 'resolved'),
+        'live:INSIDER_EXIT@24h:qualified': { ...counts(1, 'resolved'), withValue: 0 },
+        'live:SELL_IMPAIRED@24h:qualified': counts(1, 'na'),
+        'retrospective:LIQ_IMPAIRED@24h:unknown': counts(1, 'unresolvable'),
+        'live:DRAWDOWN_80@24h:index': counts(1, 'retryLater'),
+        'live:TRADING_ALIVE@24h:qualified': counts(1, 'failed'),
+      },
       resolved: 2,
       na: 1,
       unresolvable: 1,
@@ -110,7 +132,7 @@ describe('sweepDueOutcomes — Package 2b counts', () => {
     db.rows = [row('i1', 'INSIDER_EXIT'), row('i2', 'INSIDER_EXIT'), row('s1', 'SELL_IMPAIRED')];
     const r = await sweepDueOutcomes({} as never, 2, { order: 'fair' });
     expect(db.findMany).toHaveLength(5);
-    for (const q of db.findMany) expect(q).toMatchObject({ orderBy: { horizonAt: 'asc' }, take: 2 });
+    for (const q of db.findMany) expect(q).toMatchObject({ orderBy: { horizonAt: 'asc' }, take: 2, include: { launch: { select: { lane: true } } } });
     expect(r.picked).toBe(2);
     expect(r.pickedByLabel).toEqual({ INSIDER_EXIT: 1, SELL_IMPAIRED: 1 });
   });

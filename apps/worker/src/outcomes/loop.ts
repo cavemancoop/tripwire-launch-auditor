@@ -19,6 +19,8 @@ export interface SweepResult {
   picked: number;
   /** Package 2b: rows selected per outcome label (observation only) */
   pickedByLabel?: Partial<Record<string, number>>;
+  /** Bounded service counts by live/retrospective, cell and current launch lane. */
+  byCellLane?: Record<string, CellServiceCounts>;
   resolved: number;
   na: number;
   unresolvable: number;
@@ -30,6 +32,24 @@ export interface SweepResult {
    *  owned the row; counted in none of the result fields above */
   lostClaim?: number;
 }
+
+export interface CellServiceCounts {
+  picked: number;
+  resolved: number;
+  /** RESOLVED with a boolean value; report eligibility is not checked here. */
+  withValue: number;
+  na: number;
+  unresolvable: number;
+  retryLater: number;
+  failed: number;
+  claimSkipped: number;
+  lostClaim: number;
+}
+
+const emptyCellCounts = (): CellServiceCounts => ({
+  picked: 0, resolved: 0, withValue: 0, na: 0, unresolvable: 0,
+  retryLater: 0, failed: 0, claimSkipped: 0, lostClaim: 0,
+});
 
 /** A deferred row is not picked again for this long. Without it, the oldest
  *  horizon-due rows that fail on RPC errors were re-picked every minute and took
@@ -195,6 +215,7 @@ export async function sweepDueOutcomes(
           where: { ...where, label },
           orderBy: { horizonAt: 'asc' },
           take: limit,
+          include: { launch: { select: { lane: true } } },
         }),
       ),
     );
@@ -204,6 +225,7 @@ export async function sweepDueOutcomes(
       where,
       orderBy: filter.order === 'spread' ? { id: 'asc' } : { horizonAt: 'asc' },
       take: limit,
+      include: { launch: { select: { lane: true } } },
     });
   }
 
@@ -213,6 +235,7 @@ export async function sweepDueOutcomes(
   const out: SweepResult = {
     picked: due.length,
     pickedByLabel,
+    byCellLane: {},
     resolved: 0,
     na: 0,
     unresolvable: 0,
@@ -222,11 +245,19 @@ export async function sweepDueOutcomes(
     lostClaim: 0,
   };
 
+  const cellCounts = (row: (typeof due)[number]): CellServiceCounts => {
+    const lane = row.launch?.lane === 'index' || row.launch?.lane === 'qualified' ? row.launch.lane : 'unknown';
+    const key = `${row.retrospective ? 'retrospective' : 'live'}:${row.label}@${row.horizon}:${lane}`;
+    return (out.byCellLane![key] ??= emptyCellCounts());
+  };
+  for (const row of due) cellCounts(row).picked++;
+
   type DeferEvidence = { firstDeferredAt?: string; deferrals?: number; quotaPausedMs?: number };
 
   /** Package 4b: this attempt's lease ended (or another attempt took the row) before its write */
   const claimLost = (row: (typeof due)[number], label: string, what: string) => {
     out.lostClaim!++;
+    cellCounts(row).lostClaim++;
     // eslint-disable-next-line no-console
     console.warn(`[outcomes] ${label} ${row.tokenAddress} ${what} not written: claim lost (lease expired or row taken over)`);
   };
@@ -256,6 +287,7 @@ export async function sweepDueOutcomes(
       });
       if (!written) return claimLost(row, label, 'give-up');
       out.unresolvable++;
+      cellCounts(row).unresolvable++;
       // eslint-disable-next-line no-console
       console.warn(`[outcomes] ${label} ${row.tokenAddress} gave up (unresolvable) after ${deferrals} deferrals: ${safe}`);
       return;
@@ -272,6 +304,7 @@ export async function sweepDueOutcomes(
     });
     if (!written) return claimLost(row, label, 'deferral');
     out.retryLater++;
+    cellCounts(row).retryLater++;
     // eslint-disable-next-line no-console
     console.warn(`[outcomes] ${label} ${row.tokenAddress} deferred (${deferrals}): ${safe}`);
   };
@@ -299,6 +332,7 @@ export async function sweepDueOutcomes(
     });
     if (!written) return claimLost(row, label, 'quota deferral');
     out.retryLater++;
+    cellCounts(row).retryLater++;
     // eslint-disable-next-line no-console
     console.warn(`[outcomes] ${label} ${row.tokenAddress} deferred on provider quota (give-up clock not advanced): ${safe}`);
   };
@@ -312,10 +346,12 @@ export async function sweepDueOutcomes(
     try {
       if (!(await claimRow(row.id, token, where, leaseMs))) {
         out.claimSkipped!++;
+        cellCounts(row).claimSkipped++;
         return;
       }
     } catch (err) {
       out.failed++;
+      cellCounts(row).failed++;
       // eslint-disable-next-line no-console
       console.error(`[outcomes] ${label} ${row.tokenAddress} claim failed:`, redactRpcDiagnostic(err instanceof Error ? err.message : String(err)));
       await recordFailure('outcomes.claim_failed', err);
@@ -360,9 +396,13 @@ export async function sweepDueOutcomes(
       });
       if (!written) return claimLost(row, label, status);
 
-      if (status === 'RESOLVED') out.resolved++;
-      else if (status === 'NA') out.na++;
-      else out.unresolvable++;
+      if (status === 'RESOLVED') {
+        out.resolved++;
+        cellCounts(row).resolved++;
+        if (typeof res.value === 'boolean') cellCounts(row).withValue++;
+      }
+      else if (status === 'NA') { out.na++; cellCounts(row).na++; }
+      else { out.unresolvable++; cellCounts(row).unresolvable++; }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       const disposition = sweepDisposition(err);
@@ -380,11 +420,13 @@ export async function sweepDueOutcomes(
         backedOff = await writeOwned(row.id, token, { measuredAt: new Date() });
       } catch (writeError) {
         out.failed++;
+        cellCounts(row).failed++;
         await recordFailure('outcomes.resolve_failed', writeError);
         return;
       }
       if (!backedOff) return claimLost(row, label, 'failed backoff');
       out.failed++;
+      cellCounts(row).failed++;
       // eslint-disable-next-line no-console
       console.error(
         `[outcomes] ${row.label}@${row.horizon} ${row.tokenAddress} failed:`,
@@ -463,6 +505,7 @@ export async function runOutcomesLoop(
           `[outcomes] swept ${r.picked}: ${r.resolved} resolved · ${r.na} n/a · ${r.unresolvable} unresolvable · ${r.retryLater} retry · ${r.failed} error` +
             `${contended > 0 ? ` · ${r.claimSkipped ?? 0} claimed elsewhere · ${r.lostClaim ?? 0} claim lost` : ''} in ${(ms / 1000).toFixed(1)}s`,
         );
+        if (r.byCellLane) console.log(`[outcomes-cell] ${JSON.stringify(r.byCellLane)}`);
       }
     } catch (err) {
       observeSafely(() => observer.outcomeSweep(clock() - started, undefined, clock()));

@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-09-28 — Outcome service counts by cell and lane
+
+Each nonempty worker outcome sweep now logs bounded counts by outcome cell,
+current launch lane and retrospective flag. Picked, RESOLVED status,
+RESOLVED with a boolean value (`withValue`),
+N/A, UNRESOLVABLE, retry, failure and claim-contention counts follow the
+same successful-write rules as the existing sweep totals. Selection loads
+only the linked launch's lane; resolution policy, row status, RPC admission
+and provider budget are unchanged. These logs measure service, not eligible
+due arrivals. A matched-window arrival denominator remains the next capacity
+instrumentation step before a net service-rate claim. Report commitment and
+scorer eligibility are not applied to these raw outcome counts.
+
+Verify with `pnpm verify`; after deployment compare an `[outcomes-cell]`
+line's summed counts with its adjacent `[outcomes] swept` summary.
+
 ## 2026-09-28 — Provider failure and quota operational alert (Fable fifth check)
 
 The worker now compares budgeted RPC transport counters between alert ticks.
