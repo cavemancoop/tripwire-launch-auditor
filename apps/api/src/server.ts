@@ -448,6 +448,8 @@ export interface BuildServerOptions {
   enqueueAssess?: AssessEnqueuer;
   /** shared Redis limit for the RPC-consuming free assessment route */
   assessRateLimiter?: AssessRateLimiter;
+  /** trust Railway's client-IP header only when the deployment opts in */
+  trustXRealIp?: boolean;
   env?: ApiEnv;
 }
 
@@ -481,6 +483,7 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
     reply.header('Access-Control-Allow-Origin', '*');
     reply.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
     reply.header('Access-Control-Allow-Headers', 'Content-Type,X-Api-Key');
+    reply.header('Access-Control-Expose-Headers', 'Retry-After');
     if (req.method === 'OPTIONS') reply.code(204).send();
   });
 
@@ -557,14 +560,16 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
     }
     const auth = checkDesignPartner(req.headers['x-api-key'] as string | undefined, env.designPartnerApiKeys);
     try {
-      // Railway sets X-Real-IP at its public edge. Fall back to the socket IP
-      // locally; never accept an arbitrary string as a Redis identity/key.
+      // Railway documents X-Real-IP as the client IP. Trust it only on
+      // deployments explicitly configured behind that edge; otherwise use
+      // the socket IP. The limiter also has a global cap.
       const edgeIp = req.headers['x-real-ip'];
-      const ip = typeof edgeIp === 'string' && isIP(edgeIp) ? edgeIp : req.ip;
+      const trustEdgeIp = opts.trustXRealIp ?? process.env.TRUST_X_REAL_IP === 'true';
+      const ip = trustEdgeIp && typeof edgeIp === 'string' && isIP(edgeIp) ? edgeIp : req.ip;
       const admission = await getAssessRateLimiter()(ip);
       if (!admission.allowed) {
         reply.header('Retry-After', String(admission.retryAfterSeconds));
-        return reply.code(429).send({ error: 'assessment rate limit reached; retry shortly' });
+        return reply.code(429).send({ error: 'assessment rate limit reached; retry shortly', retryAfterSeconds: admission.retryAfterSeconds });
       }
       const { id } = await getEnqueueAssess()({ tokenAddress: token.toLowerCase() });
       return reply.code(202).send({

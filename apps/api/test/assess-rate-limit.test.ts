@@ -6,6 +6,8 @@ const fake = vi.hoisted(() => ({
 }));
 vi.mock('bullmq', () => ({
   Queue: class {
+    on = vi.fn();
+    disconnect = vi.fn().mockResolvedValue(undefined);
     client = Promise.resolve(fake);
   },
 }));
@@ -13,6 +15,7 @@ vi.mock('bullmq', () => ({
 import {
   ASSESS_GLOBAL_PER_MINUTE,
   ASSESS_PER_IP_PER_MINUTE,
+  assessClientBucket,
   makeAssessRateLimiter,
 } from '../src/assess-rate-limit';
 
@@ -22,6 +25,11 @@ beforeEach(() => {
 });
 
 describe('assessment admission wiring', () => {
+  it('normalizes IPv4-mapped addresses and groups IPv6 clients by /64', () => {
+    expect(assessClientBucket('::ffff:192.0.2.1')).toBe(assessClientBucket('192.0.2.1'));
+    expect(assessClientBucket('2001:db8::1')).toBe(assessClientBucket('2001:0db8:0:0::9999'));
+    expect(assessClientBucket('2001:db8:1::1')).not.toBe(assessClientBucket('2001:db8::1'));
+  });
   it('shares a global bucket and separates hashed client IPs in one Redis command', async () => {
     const limit = makeAssessRateLimiter('redis://localhost:6379', () => 61_000);
     expect((await limit('203.0.113.1')).allowed).toBe(true);

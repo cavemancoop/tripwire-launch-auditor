@@ -170,18 +170,41 @@ describe('POST /v1/assess/:token', () => {
   it('returns 429 with retry guidance before touching the queue', async () => {
     const enqueue = vi.fn();
     const limit = vi.fn(async () => ({ allowed: false, retryAfterSeconds: 17 }));
-    const app = buildServer({ enqueueAssess: enqueue as never, assessRateLimiter: limit });
+    const app = buildServer({ enqueueAssess: enqueue as never, assessRateLimiter: limit, trustXRealIp: true });
     const res = await app.inject({ method: 'POST', url: `/v1/assess/${TOKEN}`, headers: { 'x-real-ip': '203.0.113.8' } });
     expect(res.statusCode).toBe(429);
     expect(res.headers['retry-after']).toBe('17');
+    expect(res.headers['access-control-expose-headers']).toBe('Retry-After');
+    expect(res.json().retryAfterSeconds).toBe(17);
     expect(limit).toHaveBeenCalledWith('203.0.113.8');
     expect(enqueue).not.toHaveBeenCalled();
     await app.close();
   });
 
+  it('fails closed with 503 when Redis admission is unavailable', async () => {
+    const enqueue = vi.fn();
+    const app = buildServer({
+      enqueueAssess: enqueue as never,
+      assessRateLimiter: async () => { throw new Error('redis unavailable'); },
+    });
+    const res = await app.inject({ method: 'POST', url: `/v1/assess/${TOKEN}` });
+    expect(res.statusCode).toBe(503);
+    expect(enqueue).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('does not trust X-Real-IP unless explicitly enabled', async () => {
+    const limit = vi.fn(admit);
+    const app = buildServer({ enqueueAssess: async () => ({ id: 'a' }), assessRateLimiter: limit, trustXRealIp: false });
+    const res = await app.inject({ method: 'POST', url: `/v1/assess/${TOKEN}`, headers: { 'x-real-ip': '203.0.113.8' } });
+    expect(res.statusCode).toBe(202);
+    expect(limit).toHaveBeenCalledWith('127.0.0.1');
+    await app.close();
+  });
+
   it('ignores a malformed X-Real-IP value', async () => {
     const limit = vi.fn(admit);
-    const app = buildServer({ enqueueAssess: async () => ({ id: 'a' }), assessRateLimiter: limit });
+    const app = buildServer({ enqueueAssess: async () => ({ id: 'a' }), assessRateLimiter: limit, trustXRealIp: true });
     const res = await app.inject({ method: 'POST', url: `/v1/assess/${TOKEN}`, headers: { 'x-real-ip': 'not-an-ip' } });
     expect(res.statusCode).toBe(202);
     expect(limit).toHaveBeenCalledWith('127.0.0.1');

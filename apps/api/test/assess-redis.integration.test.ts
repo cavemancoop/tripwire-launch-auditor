@@ -1,7 +1,7 @@
 import { randomInt } from 'node:crypto';
 import { afterAll, describe, expect, it } from 'vitest';
 import { Queue, Worker } from 'bullmq';
-import { ASSESS_QUEUE, makeAssessEnqueuer } from '../src/assess-queue';
+import { ASSESS_QUEUE, makeAssessEnqueuer, parseRedisUrl } from '../src/assess-queue';
 import {
   ASSESS_GLOBAL_PER_MINUTE,
   ASSESS_PER_IP_PER_MINUTE,
@@ -10,8 +10,11 @@ import {
 
 const redisUrl = process.env.TEST_REDIS_URL;
 const integration = redisUrl ? describe : describe.skip;
-const u = new URL(redisUrl ?? 'redis://127.0.0.1:6379');
-const connection = { host: u.hostname, port: Number(u.port || 6379), maxRetriesPerRequest: null };
+const u = new URL(redisUrl ?? 'redis://127.0.0.1:6379/15');
+if (redisUrl && (!['localhost', '127.0.0.1', '[::1]'].includes(u.hostname) || u.pathname !== '/15')) {
+  throw new Error('TEST_REDIS_URL must target localhost Redis database 15; refusing to obliterate a shared queue');
+}
+const connection = { ...parseRedisUrl(u.href), maxRetriesPerRequest: null };
 let queue: Queue | undefined;
 let worker: Worker | undefined;
 
@@ -75,6 +78,29 @@ integration('real Redis assessment admission', () => {
     expect(next.id).not.toBe(first.id);
   }, 20_000);
 
+  it('repairs a deduplication key whose referenced job hash was lost', async () => {
+    queue ??= new Queue(ASSESS_QUEUE, { connection });
+    await queue.obliterate({ force: true });
+    const enqueue = makeAssessEnqueuer(redisUrl);
+    const token = '0x00000000000000000000000000000000facecafe';
+    const first = await enqueue({ tokenAddress: token });
+    const client = await queue.client;
+    await client.del(queue.toKey(first.id!));
+    expect(await queue.getDeduplicationJobId(token)).toBe(first.id);
+    expect(await queue.getJob(first.id!)).toBeUndefined();
+    const repaired = await enqueue({ tokenAddress: token });
+    expect(repaired.id).toBeTruthy();
+    expect(repaired.id).not.toBe(first.id);
+    expect(await queue.getJob(repaired.id!)).toBeDefined();
+  }, 20_000);
+
+  it('fails closed promptly when its Redis socket is unavailable', async () => {
+    const dead = makeAssessRateLimiter('redis://127.0.0.1:6390/15');
+    const started = Date.now();
+    await expect(dead('203.0.113.9')).rejects.toThrow();
+    expect(Date.now() - started).toBeLessThan(7_000);
+  }, 10_000);
+
   it('shares per-IP and global minute limits across separate limiter instances', async () => {
     const minute = Math.floor(Date.now() / 60_000) + randomInt(1_000_000, 2_000_000);
     const now = () => minute * 60_000 + 1_000;
@@ -84,7 +110,8 @@ integration('real Redis assessment admission', () => {
       expect((await (i % 2 ? a : b)('203.0.113.44')).allowed).toBe(true);
     }
     expect((await a('203.0.113.44')).allowed).toBe(false);
-    for (let i = ASSESS_PER_IP_PER_MINUTE + 1; i < ASSESS_GLOBAL_PER_MINUTE; i++) {
+    // The denied 13th request must not consume a global slot.
+    for (let i = ASSESS_PER_IP_PER_MINUTE; i < ASSESS_GLOBAL_PER_MINUTE; i++) {
       expect((await (i % 2 ? a : b)(`198.51.100.${i}`)).allowed).toBe(true);
     }
     expect((await b('198.51.100.250')).allowed).toBe(false);

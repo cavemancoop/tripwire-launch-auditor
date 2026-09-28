@@ -2,23 +2,28 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fake = vi.hoisted(() => ({
   add: vi.fn(),
-  getDeduplicationJobId: vi.fn(),
   getJob: vi.fn(),
+  defineCommand: vi.fn(),
+  runCommand: vi.fn(),
 }));
 vi.mock('bullmq', () => ({
   Queue: class {
+    on = vi.fn();
+    disconnect = vi.fn().mockResolvedValue(undefined);
     add = fake.add;
-    getDeduplicationJobId = fake.getDeduplicationJobId;
     getJob = fake.getJob;
+    client = Promise.resolve({ defineCommand: fake.defineCommand, runCommand: fake.runCommand });
+    toKey = (key: string) => `bull:assess:${key}`;
   },
 }));
 
 import { makeAssessEnqueuer } from '../src/assess-queue';
 
 beforeEach(() => {
-  fake.add.mockReset().mockResolvedValue({ id: 'ignored-attempt' });
-  fake.getDeduplicationJobId.mockReset().mockResolvedValue('actual-job');
-  fake.getJob.mockReset().mockResolvedValue({ id: 'ignored-attempt' });
+  fake.add.mockReset().mockResolvedValue({ id: 'actual-job' });
+  fake.getJob.mockReset().mockResolvedValue({ id: 'actual-job' });
+  fake.defineCommand.mockReset();
+  fake.runCommand.mockReset().mockResolvedValue(0);
 });
 
 describe('assessment queue producer', () => {
@@ -30,21 +35,24 @@ describe('assessment queue producer', () => {
       removeOnComplete: 100,
       removeOnFail: 100,
     });
-    expect(fake.getDeduplicationJobId).toHaveBeenCalledWith('0xabcd');
+    expect(fake.getJob).toHaveBeenCalledWith('actual-job');
+    expect(fake.runCommand).not.toHaveBeenCalled();
     expect(result.id).toBe('actual-job');
   });
 
-  it('returns the added job ID when the job exists after the dedup key clears', async () => {
-    fake.getDeduplicationJobId.mockResolvedValue(null);
-    const result = await makeAssessEnqueuer('redis://localhost:6379')({ tokenAddress: '0xabc' });
-    expect(result.id).toBe('ignored-attempt');
-    expect(fake.getJob).toHaveBeenCalledWith('ignored-attempt');
-  });
-
-  it('does not return an ignored attempt ID when the retained job finishes during lookup', async () => {
-    fake.getDeduplicationJobId.mockResolvedValue(null);
+  it('returns no nonexistent job ID after a fast completion', async () => {
     fake.getJob.mockResolvedValue(undefined);
     const result = await makeAssessEnqueuer('redis://localhost:6379')({ tokenAddress: '0xabc' });
     expect(result.id).toBeUndefined();
+    expect(fake.runCommand).toHaveBeenCalledWith('tripwireRepairAssessDedupV1', ['bull:assess:de:0xabc', 'bull:assess:']);
+  });
+
+  it('retries once after atomically removing an orphaned dedup key', async () => {
+    fake.add.mockResolvedValueOnce({ id: 'orphan' }).mockResolvedValueOnce({ id: 'new-job' });
+    fake.getJob.mockResolvedValueOnce(undefined).mockResolvedValueOnce({ id: 'new-job' });
+    fake.runCommand.mockResolvedValue(1);
+    const result = await makeAssessEnqueuer('redis://localhost:6379')({ tokenAddress: '0xabc' });
+    expect(result.id).toBe('new-job');
+    expect(fake.add).toHaveBeenCalledTimes(2);
   });
 });

@@ -254,6 +254,15 @@ deferred — see spec §9, "payments only if time remains"). Base URL: `http://l
 `designPartner: true|false` on `/v1/assess` and `/v1/deepdive`. Deep dives
 require a recognized key because they spend inference credits; assessments stay
 free but have shared admission limits to protect scheduled reports.
+On Railway, set `TRUST_X_REAL_IP=true` on the API service only after verifying
+all public traffic passes through the edge. The default uses the socket IP.
+IPv6 callers share a /64 assessment bucket.
+
+To test the Redis behavior locally, start a disposable Redis instance and run
+`pnpm --filter @launch-auditor/api test:redis` with `TEST_REDIS_URL` set to
+`redis://127.0.0.1:<port>/15`. The test refuses non-local hosts or any
+database other than 15 and cleans only its assessment queue there. The normal
+test suite skips this integration test when `TEST_REDIS_URL` is unset.
 
 ## Dashboard + free feed (M8)
 
