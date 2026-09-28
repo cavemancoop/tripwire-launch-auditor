@@ -96,9 +96,13 @@ async function main(): Promise<void> {
   const assessWorker = startAssessWorker(assessClient);
   assessWorker.on('error', (err) => console.error('[assess] worker error', err));
 
+  let alertLoop: Promise<void> | undefined;
   const shutdown = async (): Promise<void> => {
     signal.stopped = true;
-    await Promise.all([worker.close(), assessWorker.close()]);
+    const alertDrain = alertLoop
+      ? Promise.race([alertLoop, new Promise<void>((resolve) => setTimeout(resolve, 10_000))])
+      : Promise.resolve();
+    await Promise.all([worker.close(), assessWorker.close(), alertDrain]);
     healthServer.close();
     process.exit(0);
   };
@@ -165,7 +169,7 @@ async function main(): Promise<void> {
 
   if (env.telegramBotToken && env.telegramAlertsChatId) {
     console.log('[alerts] operational alerts enabled ->', env.telegramAlertsChatId);
-    void runAlertLoop(signal, {
+    alertLoop = runAlertLoop(signal, {
       botToken: env.telegramBotToken,
       chatId: env.telegramAlertsChatId,
       intervalMs: env.alertsIntervalMs,

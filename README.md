@@ -378,7 +378,8 @@ deploy-time command — the migrations directory is already in the repo.
 ### 4. Health, metrics, alerts
 - `GET /health` — on api and worker. Operational alert transition state is
   stored in Postgres, scoped to the alert chat; failed Telegram sends retry.
-  A crash after send but before the state write can duplicate one alert.
+  A graceful shutdown retries pending state writes. An abrupt crash after
+  send but before the write can duplicate an alarm or miss its recovery.
 - `GET /metrics` — on api; Prometheus text exposition (`launch_auditor_*`
   gauges: watcher staleness, commit age, metabolism state, IDS/phantom flag,
   24h launch/report counts). Point a Prometheus scrape config or Railway's

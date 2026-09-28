@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { applyAlertTransitions, evaluateAlerts, runAlertLoop, type AlertCheck, type AlertReaders, type AlertStateStore } from '../src/alerts';
 import type { StopSignal } from '../src/watcher/poller';
+import { makeTelegramSender } from '../src/telegram/poster';
 
 const NOW = new Date('2026-09-12T12:00:00.000Z');
 
@@ -111,6 +112,16 @@ describe('applyAlertTransitions', () => {
     expect(lastBad.get('commit_lag')).toBe(false);
   });
 
+  it('retries a failed recovery send without changing the remembered bad state', async () => {
+    const lastBad = new Map<AlertCheck['key'], boolean>([['commit_lag', true]]);
+    await applyAlertTransitions([CHECK('commit_lag', false)], lastBad, async () => { throw new Error('telegram down'); });
+    expect(lastBad.get('commit_lag')).toBe(true);
+    const sent: string[] = [];
+    await applyAlertTransitions([CHECK('commit_lag', false)], lastBad, async (text) => void sent.push(text));
+    expect(sent).toHaveLength(1);
+    expect(lastBad.get('commit_lag')).toBe(false);
+  });
+
   it('stays quiet on ok->ok', async () => {
     const sent: string[] = [];
     const lastBad = new Map<AlertCheck['key'], boolean>([['watcher_stalled', false]]);
@@ -209,6 +220,28 @@ describe('runAlertLoop', () => {
     expect(sent).toHaveLength(0);
   });
 
+  it('flushes a failed state write on graceful stop', async () => {
+    const rows = new Map<AlertCheck['key'], boolean>();
+    let saves = 0;
+    const state: AlertStateStore = {
+      load: async () => new Map(rows),
+      save: async (key, bad) => {
+        if (++saves === 1) throw new Error('db unavailable');
+        rows.set(key, bad);
+      },
+    };
+    const signal: StopSignal = { stopped: false };
+    const sent: string[] = [];
+    await runAlertLoop(signal, { botToken: 'tkn', chatId: 'chat', intervalMs: 1 }, {
+      state,
+      evaluate: async () => { signal.stopped = true; return [CHECK('ids_trip', true)]; },
+      send: async (text) => void sent.push(text),
+    });
+    expect(sent).toHaveLength(1);
+    expect(saves).toBe(2);
+    expect(rows.get('ids_trip')).toBe(true);
+  });
+
   it('retries a failed state write without repeating a sent alert', async () => {
     const rows = new Map<AlertCheck['key'], boolean>();
     let failOnce = true;
@@ -229,5 +262,20 @@ describe('runAlertLoop', () => {
     });
     expect(sent).toHaveLength(1);
     expect(rows.get('ids_trip')).toBe(true);
+  });
+});
+
+describe('operational Telegram transport', () => {
+  it('aborts a hanging alert send within its deadline', async () => {
+    const hangingFetch = vi.fn((_url: string, init: RequestInit) => new Promise<Response>((_, reject) => {
+      init.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+    }));
+    vi.stubGlobal('fetch', hangingFetch);
+    try {
+      await expect(makeTelegramSender('bot', 'chat', 5)('alert')).rejects.toThrow();
+      expect(hangingFetch).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

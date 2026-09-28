@@ -195,7 +195,7 @@ export async function runAlertLoop(
 ): Promise<void> {
   const intervalMs = opts.intervalMs ?? 60_000;
   const evaluate = deps.evaluate ?? evaluateAlerts;
-  const send = deps.send ?? makeTelegramSender(opts.botToken, opts.chatId);
+  const send = deps.send ?? makeTelegramSender(opts.botToken, opts.chatId, 15_000);
   const state = deps.state ?? prismaAlertStateStore(opts.chatId);
   let lastBad: Map<AlertCheck['key'], boolean> | undefined;
   const unsaved = new Map<AlertCheck['key'], boolean>();
@@ -230,6 +230,20 @@ export async function runAlertLoop(
     } catch (err) {
       console.error('[alerts] evaluate/state failed', err instanceof Error ? err.message : err);
     }
-    await new Promise((res) => setTimeout(res, intervalMs));
+    // Stop within one second on SIGTERM, so a graceful deploy can persist a
+    // successful send whose first state write failed.
+    let remaining = intervalMs;
+    while (!signal.stopped && remaining > 0) {
+      const step = Math.min(remaining, 1_000);
+      await new Promise((res) => setTimeout(res, step));
+      remaining -= step;
+    }
+  }
+  for (const [key, bad] of unsaved) {
+    try {
+      await state.save(key, bad);
+    } catch (err) {
+      console.error('[alerts] shutdown state save failed', err instanceof Error ? err.message : err);
+    }
   }
 }
