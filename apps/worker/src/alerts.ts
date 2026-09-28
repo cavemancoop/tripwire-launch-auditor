@@ -262,11 +262,13 @@ export async function runAlertLoop(
       console.error('[alerts] provider counters failed', err instanceof Error ? err.message : err);
     }
     if (provider?.bad) {
-      undeliveredProviderIncident = { key: 'provider_failure', ...provider };
+      if (lastBad?.get('provider_failure')) undeliveredProviderIncident = undefined;
+      else undeliveredProviderIncident = { key: 'provider_failure', ...provider };
     }
     try {
       // A failed load must not silently treat previously-alerted checks as new.
       lastBad ??= await state.load();
+      if (lastBad.get('provider_failure')) undeliveredProviderIncident = undefined;
       // Retry a state write that failed after Telegram accepted its message.
       for (const [key, bad] of unsaved) {
         try {
@@ -300,6 +302,7 @@ export async function runAlertLoop(
       // Require two distinct late reports so repeated scrapes of one outlier
       // cannot alert. A missing/stale sample cannot clear a delivered alert.
       const confirmed = checks.filter((check) => check.key !== 'report_lag' || !check.bad || consecutiveLateReports >= 2);
+      const providerDeliveredBefore = lastBad.get('provider_failure') === true;
       await applyAlertTransitions(confirmed, lastBad, send, async (key, bad) => {
         unsaved.set(key, bad);
         try {
@@ -309,7 +312,7 @@ export async function runAlertLoop(
           console.error('[alerts] state save failed', err instanceof Error ? err.message : err);
         }
       }, retryUntil);
-      if (lastBad.get('provider_failure')) undeliveredProviderIncident = undefined;
+      if (providerDeliveredBefore || lastBad.get('provider_failure')) undeliveredProviderIncident = undefined;
     } catch (err) {
       console.error('[alerts] evaluate/state failed', err instanceof Error ? err.message : err);
     }

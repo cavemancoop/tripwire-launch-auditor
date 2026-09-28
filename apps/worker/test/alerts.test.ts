@@ -186,6 +186,36 @@ const inMemoryState = (): AlertStateStore => {
 };
 
 describe('runAlertLoop', () => {
+  it('does not replay a delivered incident after evaluation fails during recovery', async () => {
+    const snapshots = [
+      { attempts: 100, providerFailures: 10, quotaFailures: 0 },
+      { attempts: 200, providerFailures: 10, quotaFailures: 0 },
+      { attempts: 300, providerFailures: 10, quotaFailures: 0 },
+      { attempts: 400, providerFailures: 10, quotaFailures: 0 },
+      { attempts: 500, providerFailures: 10, quotaFailures: 0 },
+    ];
+    const signal: StopSignal = { stopped: false };
+    const sent: string[] = [];
+    let tick = 0;
+    let sampleTick = 0;
+    const state = inMemoryState();
+    await runAlertLoop(signal, { botToken: 'tkn', chatId: 'chat', intervalMs: 1 }, {
+      state,
+      evaluate: async () => {
+        tick++;
+        if (tick === snapshots.length) signal.stopped = true;
+        if (tick === 2) throw new Error('db blip');
+        return [];
+      },
+      readProviderStats: () => snapshots[sampleTick++]!,
+      send: async (message) => void sent.push(message),
+    });
+    expect(sent).toHaveLength(2);
+    expect(sent[0]).toContain('RPC provider failures');
+    expect(sent[1]).toContain('recovered');
+    expect((await state.load()).get('provider_failure')).toBe(false);
+  });
+
   it('keeps provider windows separate when a database-backed evaluation fails', async () => {
     const snapshots = [
       { attempts: 0, providerFailures: 0, quotaFailures: 0 },
