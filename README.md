@@ -376,7 +376,11 @@ pointed at Railway's Postgres) to apply the schema, or wire it as a Railway
 deploy-time command — the migrations directory is already in the repo.
 
 ### 4. Health, metrics, alerts
-- `GET /health` — on api and worker.
+- `GET /health` — on api and worker. Operational alert transition state is
+  stored in Postgres, scoped to the alert chat; failed Telegram sends retry.
+  A graceful shutdown retries pending state writes, but that retry can fail.
+  An abrupt crash or failed write can duplicate or suppress either an alarm
+  or a recovery after restart.
 - `GET /metrics` — on api; Prometheus text exposition (`launch_auditor_*`
   gauges: watcher staleness, commit age, metabolism state, IDS/phantom flag,
   24h launch/report counts). Point a Prometheus scrape config or Railway's
