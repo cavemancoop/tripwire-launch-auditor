@@ -4,7 +4,8 @@
 
 The worker now compares budgeted RPC transport counters between alert ticks.
 Any new quota refusal or a provider failure rate above 5% raises one durable
-Telegram alarm. A failed send remains retryable until the incident is delivered.
+Telegram alarm. A failed send remains retryable while that worker process
+stays up, even if the incident clears before Telegram recovers.
 Recovery needs two windows with observed traffic at or below the threshold;
 zero traffic and counter resets never claim recovery. The default interval is
 60 seconds, so the rate normally covers one minute. This check does not cover
