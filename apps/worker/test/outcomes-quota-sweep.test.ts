@@ -97,6 +97,16 @@ describe('sweepDueOutcomes — provider quota (Package 4a)', () => {
     const r = await sweepDueOutcomes({} as never, 25, { order: 'fair' });
 
     expect(r).toMatchObject({ picked: 6, resolved: 1, na: 0, unresolvable: 2, retryLater: 3, failed: 0 });
+    expect(r.byCellLane).toEqual({
+      'live:TRADING_ALIVE@24h:unknown': {
+        picked: 5, resolved: 1, withValue: 1, na: 0, unresolvable: 2,
+        retryLater: 2, failed: 0, claimSkipped: 0, lostClaim: 0,
+      },
+      'live:SELL_IMPAIRED@24h:unknown': {
+        picked: 1, resolved: 0, withValue: 0, na: 0, unresolvable: 0,
+        retryLater: 1, failed: 0, claimSkipped: 0, lostClaim: 0,
+      },
+    });
 
     // quota: no status, no value; the clock is neither started (q1) nor reset or tripped (q2, s1)
     for (const id of ['q1', 'q2', 's1']) {

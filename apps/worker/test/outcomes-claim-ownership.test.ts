@@ -132,6 +132,24 @@ function deferred() {
 }
 
 const rowById = (id: string) => st.rows.find((r) => r.id === id)!;
+const cellKey = 'live:TRADING_ALIVE@24h:unknown';
+
+function expectCellAccounting(r: Awaited<ReturnType<typeof sweepDueOutcomes>>) {
+  const cell = r.byCellLane?.[cellKey];
+  expect(cell).toBeDefined();
+  expect(cell).toMatchObject({
+    picked: r.picked,
+    resolved: r.resolved,
+    na: r.na,
+    unresolvable: r.unresolvable,
+    retryLater: r.retryLater,
+    failed: r.failed,
+    claimSkipped: r.claimSkipped,
+    lostClaim: r.lostClaim,
+  });
+  expect(cell!.picked).toBe(cell!.resolved + cell!.na + cell!.unresolvable +
+    cell!.retryLater + cell!.failed + cell!.claimSkipped + cell!.lostClaim);
+}
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
@@ -174,6 +192,8 @@ describe('outcome row ownership (Package 4b, review d17cd0c4)', () => {
     expect(ra.resolved + rb.resolved).toBe(3);
     expect((ra.claimSkipped ?? 0) + (rb.claimSkipped ?? 0)).toBe(3);
     expect((ra.lostClaim ?? 0) + (rb.lostClaim ?? 0)).toBe(0);
+    expectCellAccounting(ra);
+    expectCellAccounting(rb);
     for (const r of st.rows) {
       expect(r).toMatchObject({ status: 'RESOLVED', value: true, claimToken: null, claimExpiresAt: null });
       // the stored result is the claimant's own
@@ -200,6 +220,8 @@ describe('outcome row ownership (Package 4b, review d17cd0c4)', () => {
     gate.release();
     const rb = await b;
     expect(rb).toMatchObject({ picked: 2, resolved: 0, retryLater: 0, claimSkipped: 2, lostClaim: 0 });
+    expectCellAccounting(ra);
+    expectCellAccounting(rb);
     expect(st.calls.filter((c) => c.startsWith('B:'))).toEqual([]);
     expect(rowById('done')).toMatchObject({ status: 'RESOLVED', evidence: { by: 'A' } });
     expect(rowById('retry').evidence).toEqual(retryEvidence);
@@ -239,6 +261,8 @@ describe('outcome row ownership (Package 4b, review d17cd0c4)', () => {
     holdA.release();
     const ra = await a;
     expect(ra).toMatchObject({ picked: 1, resolved: 0, na: 0, unresolvable: 0, retryLater: 0, failed: 0, lostClaim: 1 });
+    expectCellAccounting(ra);
+    expectCellAccounting(rb);
     // B's terminal result stands
     expect(rowById('r1')).toMatchObject({ status: 'RESOLVED', value: false, evidence: { by: 'B' }, claimToken: null });
   });
@@ -256,6 +280,7 @@ describe('outcome row ownership (Package 4b, review d17cd0c4)', () => {
     const ra = await a;
 
     expect(ra).toMatchObject({ retryLater: 0, unresolvable: 0, lostClaim: 1 });
+    expectCellAccounting(ra);
     // the retry evidence and backoff stamp are the row's own, untouched
     expect(rowById('r1')).toMatchObject({ status: 'PENDING', measuredAt: null, evidence: { deferrals: 3 } });
     // the expired claim lapses on its own; the next sweep takes the row
@@ -274,6 +299,7 @@ describe('outcome row ownership (Package 4b, review d17cd0c4)', () => {
     hold.release();
     const result = await a;
     expect(result).toMatchObject({ failed: 0, lostClaim: 1, retryLater: 0 });
+    expectCellAccounting(result);
     expect(rowById('r1')).toMatchObject({ status: 'PENDING', measuredAt: null });
   });
 });
