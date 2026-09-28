@@ -18,7 +18,7 @@ describe('ProviderHealthTracker', () => {
     const tracker = new ProviderHealthTracker();
     const result = tracker.sample(stats(1000, 1, 1));
     expect(result?.bad).toBe(true);
-    expect(result?.detail).toContain('1 quota refusals');
+    expect(result?.detail).toContain('1 quota refusal;');
   });
 
   it('does not recover merely because no calls occurred', () => {
@@ -36,5 +36,14 @@ describe('ProviderHealthTracker', () => {
     expect(tracker.sample(stats(0))).toBeNull();
     expect(tracker.sample(stats(50))?.bad).toBe(true);
     expect(tracker.sample(stats(50, 60, 0))).toBeNull();
+  });
+
+  it('keeps the valid baseline after NaN rather than inventing a healthy window', () => {
+    const tracker = new ProviderHealthTracker();
+    expect(tracker.sample(stats(100, 10))?.bad).toBe(true);
+    expect(tracker.sample(stats(Number.NaN, 0))?.bad).toBeUndefined();
+    expect(tracker.sample(stats(200, 60))?.bad).toBe(true); // 50/100, not NaN
+    expect(tracker.sample(stats(300, 60))?.bad).toBe(true);
+    expect(tracker.sample(stats(400, 60))?.bad).toBe(false);
   });
 });

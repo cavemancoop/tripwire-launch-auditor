@@ -421,9 +421,9 @@ deploy-time command — the migrations directory is already in the repo.
 - Telegram alerts (`apps/worker/src/alerts.ts`): STARVED, IDS trip
   (`idsMismatch` or a phantom-spend epoch), commit lag > 10 min, watcher
   stalled > 5 min, and launch-to-`det_v0` report lag > 15 min on two
-  distinct live reports. The fifth check alerts on any new quota refusal or
+  distinct live reports. The provider check alerts on any new quota refusal or
   a provider failure rate above 5% among budgeted worker RPC attempts since
-  the prior evaluation (normally one minute). It requires two windows with
+  the prior alert tick (normally one minute). It requires two windows with
   observed healthy traffic before recovery; no calls are not recovery. Its
   counters exclude wallet transaction and API transports, so it is not a
   project-wide provider-error or billing gauge. The lag check uses only a

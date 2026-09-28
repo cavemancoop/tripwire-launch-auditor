@@ -186,6 +186,58 @@ const inMemoryState = (): AlertStateStore => {
 };
 
 describe('runAlertLoop', () => {
+  it('keeps provider windows separate when a database-backed evaluation fails', async () => {
+    const snapshots = [
+      { attempts: 0, providerFailures: 0, quotaFailures: 0 },
+      { attempts: 60, providerFailures: 6, quotaFailures: 0 },
+      { attempts: 120, providerFailures: 6, quotaFailures: 0 },
+    ];
+    const signal: StopSignal = { stopped: false };
+    const sent: string[] = [];
+    let tick = 0;
+    let sampleTick = 0;
+    await runAlertLoop(signal, { botToken: 'tkn', chatId: 'chat', intervalMs: 1 }, {
+      state: inMemoryState(),
+      evaluate: async () => {
+        tick++;
+        if (tick === snapshots.length) signal.stopped = true;
+        if (tick === 2) throw new Error('db query failed');
+        return [];
+      },
+      readProviderStats: () => snapshots[sampleTick++]!, // read before evaluate
+      send: async (message) => void sent.push(message),
+    });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain('6/60');
+  });
+
+  it('delivers a short provider incident after Telegram recovers, then sends recovery', async () => {
+    const snapshots = [
+      { attempts: 100, providerFailures: 10, quotaFailures: 0 },
+      { attempts: 200, providerFailures: 10, quotaFailures: 0 },
+      { attempts: 300, providerFailures: 10, quotaFailures: 0 },
+      { attempts: 400, providerFailures: 10, quotaFailures: 0 },
+    ];
+    const signal: StopSignal = { stopped: false };
+    const sent: string[] = [];
+    let tick = 0;
+    let sampleTick = 0;
+    let sends = 0;
+    await runAlertLoop(signal, { botToken: 'tkn', chatId: 'chat', intervalMs: 1 }, {
+      state: inMemoryState(),
+      evaluate: async () => { if (++tick === snapshots.length) signal.stopped = true; return []; },
+      readProviderStats: () => snapshots[sampleTick++]!,
+      send: async (message) => {
+        if (++sends < 3) throw new Error('telegram down');
+        sent.push(message);
+      },
+    });
+    expect(sends).toBe(4);
+    expect(sent).toHaveLength(2);
+    expect(sent[0]).toContain('RPC provider failures');
+    expect(sent[1]).toContain('recovered');
+  });
+
   it('retries a quota alert after a failed send and recovers only after two windows of healthy traffic', async () => {
     const snapshots = [
       { attempts: 0, providerFailures: 0, quotaFailures: 0 },
@@ -197,12 +249,13 @@ describe('runAlertLoop', () => {
     const signal: StopSignal = { stopped: false };
     const sent: string[] = [];
     let tick = 0;
+    let sampleTick = 0;
     let sends = 0;
     const state = inMemoryState();
     await runAlertLoop(signal, { botToken: 'tkn', chatId: 'chat', intervalMs: 1 }, {
       state,
       evaluate: async () => { if (++tick === snapshots.length) signal.stopped = true; return []; },
-      readProviderStats: () => snapshots[tick - 1]!,
+      readProviderStats: () => snapshots[sampleTick++]!,
       send: async (message) => {
         if (++sends === 1) throw new Error('telegram down');
         sent.push(message);
@@ -221,10 +274,11 @@ describe('runAlertLoop', () => {
     const run = async (snapshots: Array<{ attempts: number; providerFailures: number; quotaFailures: number }>) => {
       const signal: StopSignal = { stopped: false };
       let tick = 0;
+      let sampleTick = 0;
       await runAlertLoop(signal, { botToken: 'tkn', chatId: 'chat', intervalMs: 1 }, {
         state,
         evaluate: async () => { if (++tick === snapshots.length) signal.stopped = true; return []; },
-        readProviderStats: () => snapshots[tick - 1]!,
+        readProviderStats: () => snapshots[sampleTick++]!,
         send: async (message) => void sent.push(message),
       });
     };

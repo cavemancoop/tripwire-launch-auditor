@@ -20,12 +20,16 @@ export class ProviderHealthTracker {
   sample(current: RpcWireStats): ProviderHealthCheck | null {
     const values = [current.attempts, current.providerFailures, current.quotaFailures];
     if (values.some((value) => !Number.isSafeInteger(value) || value < 0) ||
-        current.attempts < this.previous.attempts ||
-        current.providerFailures < this.previous.providerFailures ||
-        current.quotaFailures < this.previous.quotaFailures ||
         current.providerFailures > current.attempts ||
         current.quotaFailures > current.providerFailures) {
-      // A counter reset or invalid sample must not produce a recovery.
+      // Do not poison the next delta with malformed counters.
+      this.healthyWindows = 0;
+      return null;
+    }
+    if (current.attempts < this.previous.attempts ||
+        current.providerFailures < this.previous.providerFailures ||
+        current.quotaFailures < this.previous.quotaFailures) {
+      // Rebase on a genuine reset, but never claim recovery from it.
       this.previous = { ...current };
       this.healthyWindows = 0;
       return null;
@@ -42,7 +46,7 @@ export class ProviderHealthTracker {
     if (quota > 0 || rate > ERROR_RATE_LIMIT) {
       this.bad = true;
       this.healthyWindows = 0;
-      this.lastDetail = `${quota} quota refusals; ${failures}/${attempts} budgeted RPC attempts failed (${(100 * rate).toFixed(1)}%, threshold 5%)`;
+      this.lastDetail = `${quota} quota refusal${quota === 1 ? '' : 's'}; ${failures}/${attempts} budgeted RPC attempts failed (${(100 * rate).toFixed(1)}%, threshold 5%)`;
       return { bad: true, detail: this.lastDetail };
     }
     if (++this.healthyWindows < 2) {
