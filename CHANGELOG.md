@@ -7,16 +7,22 @@ API limits free assessment requests to 12 per client IPv4 address or IPv6 /64
 and 30 accepted requests globally per minute in Redis. A rejected IP request
 does not consume a global slot; HTTP 429 includes `Retry-After`. Trust in
 Railway's `X-Real-IP` is opt-in through `TRUST_X_REAL_IP=true` on the API
-service. A missing job referenced by a deduplication key is repaired atomically
-so one token cannot be blocked forever after a partial Redis restore.
+service. Until that edge-header provenance is verified, the global limit
+applies without a per-client limit. A missing job referenced by a
+deduplication key is repaired atomically so one token cannot be blocked
+forever after a partial Redis restore.
+
+Free assessments now use their own RPC priority below scheduled watcher,
+commit and outcome work. The API and worker parse Redis database, TLS and
+credentials consistently.
 
 The disposable Redis integration suite covers concurrent producers, successful
 and failed job finalization, orphan repair, and shared per-IP/global limits.
 Run it with `TEST_REDIS_URL=redis://127.0.0.1:<port>/15 pnpm --filter
 @launch-auditor/api test:redis` (or set the environment variable in PowerShell
-before invoking pnpm). It refuses non-local or non-15 targets. Before release,
-verify the production ingress path and set the opt-in flag accordingly; check
-HTTP 429 behavior and core commitment timeliness after deployment.
+before invoking pnpm). It refuses non-local or non-15 targets. Before enabling per-client limits, verify the production ingress path and
+header provenance. Check HTTP 429 behavior and core commitment timeliness
+after deployment.
 
 Append-only. Each entry: what changed, deliberate scope calls, and what the human should verify.
 

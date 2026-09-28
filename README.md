@@ -255,8 +255,10 @@ deferred — see spec §9, "payments only if time remains"). Base URL: `http://l
 require a recognized key because they spend inference credits; assessments stay
 free but have shared admission limits to protect scheduled reports.
 On Railway, set `TRUST_X_REAL_IP=true` on the API service only after verifying
-all public traffic passes through the edge. The default uses the socket IP.
-IPv6 callers share a /64 assessment bucket.
+all public traffic passes through the edge and Railway overwrites incoming
+`X-Real-IP`. Until enabled, only the 30-per-minute global cap applies; no
+proxy socket address is mistaken for one user. With a verified edge IP, IPv6 callers share
+a /64 assessment bucket.
 
 To test the Redis behavior locally, start a disposable Redis instance and run
 `pnpm --filter @launch-auditor/api test:redis` with `TEST_REDIS_URL` set to

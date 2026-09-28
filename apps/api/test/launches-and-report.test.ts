@@ -193,12 +193,12 @@ describe('POST /v1/assess/:token', () => {
     await app.close();
   });
 
-  it('does not trust X-Real-IP unless explicitly enabled', async () => {
+  it('uses only the global cap until edge IP trust is explicitly enabled', async () => {
     const limit = vi.fn(admit);
     const app = buildServer({ enqueueAssess: async () => ({ id: 'a' }), assessRateLimiter: limit, trustXRealIp: false });
     const res = await app.inject({ method: 'POST', url: `/v1/assess/${TOKEN}`, headers: { 'x-real-ip': '203.0.113.8' } });
     expect(res.statusCode).toBe(202);
-    expect(limit).toHaveBeenCalledWith('127.0.0.1');
+    expect(limit).toHaveBeenCalledWith(null);
     await app.close();
   });
 
@@ -207,7 +207,7 @@ describe('POST /v1/assess/:token', () => {
     const app = buildServer({ enqueueAssess: async () => ({ id: 'a' }), assessRateLimiter: limit, trustXRealIp: true });
     const res = await app.inject({ method: 'POST', url: `/v1/assess/${TOKEN}`, headers: { 'x-real-ip': 'not-an-ip' } });
     expect(res.statusCode).toBe(202);
-    expect(limit).toHaveBeenCalledWith('127.0.0.1');
+    expect(limit).toHaveBeenCalledWith(null);
     await app.close();
   });
 });

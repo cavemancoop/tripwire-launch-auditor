@@ -64,7 +64,7 @@ return redis.call('DEL', KEYS[1])
 /** Real enqueuer backed by BullMQ. Lazily opens one connection. */
 export function makeAssessEnqueuer(redisUrl = process.env.REDIS_URL ?? 'redis://localhost:6379'): AssessEnqueuer {
   let queue: Queue | undefined;
-  let repairDefined = false;
+  const clientsWithRepair = new WeakSet<object>();
   return async (job) => {
     if (!queue) {
       queue = new Queue(ASSESS_QUEUE, { connection: parseRedisUrl(redisUrl) });
@@ -80,20 +80,20 @@ export function makeAssessEnqueuer(redisUrl = process.env.REDIS_URL ?? 'redis://
           removeOnFail: 100,
         };
         // BullMQ returns the retained job ID when a duplicate is ignored.
-        const added = await queue.add('assess', job, options);
-        if (added.id && await queue.getJob(added.id)) return { id: added.id };
+        const added = await activeQueue.add('assess', job, options);
+        if (added.id && await activeQueue.getJob(added.id)) return { id: added.id };
 
-        const client = await queue.client;
-        if (!repairDefined) {
+        const client = await activeQueue.client;
+        if (!clientsWithRepair.has(client)) {
           client.defineCommand('tripwireRepairAssessDedupV1', { numberOfKeys: 1, lua: REPAIR_ORPHANED_DEDUP });
-          repairDefined = true;
+          clientsWithRepair.add(client);
         }
         const repaired = await client.runCommand('tripwireRepairAssessDedupV1', [
-          queue.toKey(`de:${token}`), queue.toKey(''),
+          activeQueue.toKey(`de:${token}`), activeQueue.toKey(''),
         ]);
         if (repaired === 1) {
-          const retry = await queue.add('assess', job, options);
-          if (retry.id && await queue.getJob(retry.id)) return { id: retry.id };
+          const retry = await activeQueue.add('assess', job, options);
+          if (retry.id && await activeQueue.getJob(retry.id)) return { id: retry.id };
         }
         // A very fast completed/removed job can leave no retrievable ID. Never
         // claim an ignored or orphaned ID as an active job.
@@ -103,7 +103,6 @@ export function makeAssessEnqueuer(redisUrl = process.env.REDIS_URL ?? 'redis://
       if (err instanceof AssessRedisTimeoutError) {
         if (queue === activeQueue) {
           queue = undefined;
-          repairDefined = false;
         }
         void activeQueue.disconnect().catch(() => {});
       }

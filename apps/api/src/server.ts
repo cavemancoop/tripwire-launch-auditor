@@ -561,11 +561,11 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
     const auth = checkDesignPartner(req.headers['x-api-key'] as string | undefined, env.designPartnerApiKeys);
     try {
       // Railway documents X-Real-IP as the client IP. Trust it only on
-      // deployments explicitly configured behind that edge; otherwise use
-      // the socket IP. The limiter also has a global cap.
+      // deployments explicitly configured behind that edge. Until then use
+      // the global cap only; a proxy socket IP would group all public users.
       const edgeIp = req.headers['x-real-ip'];
       const trustEdgeIp = opts.trustXRealIp ?? process.env.TRUST_X_REAL_IP === 'true';
-      const ip = trustEdgeIp && typeof edgeIp === 'string' && isIP(edgeIp) ? edgeIp : req.ip;
+      const ip = trustEdgeIp && typeof edgeIp === 'string' && isIP(edgeIp) ? edgeIp : null;
       const admission = await getAssessRateLimiter()(ip);
       if (!admission.allowed) {
         reply.header('Retry-After', String(admission.retryAfterSeconds));

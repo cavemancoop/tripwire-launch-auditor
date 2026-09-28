@@ -101,6 +101,15 @@ integration('real Redis assessment admission', () => {
     expect(Date.now() - started).toBeLessThan(7_000);
   }, 10_000);
 
+  it('uses the global cap without a shared proxy-socket per-IP ceiling', async () => {
+    const minute = Math.floor(Date.now() / 60_000) + randomInt(2_000_000, 3_000_000);
+    const limit = makeAssessRateLimiter(redisUrl, () => minute * 60_000 + 1_000);
+    for (let i = 0; i < ASSESS_GLOBAL_PER_MINUTE; i++) {
+      expect((await limit(null)).allowed).toBe(true);
+    }
+    expect((await limit(null)).allowed).toBe(false);
+  }, 20_000);
+
   it('shares per-IP and global minute limits across separate limiter instances', async () => {
     const minute = Math.floor(Date.now() / 60_000) + randomInt(1_000_000, 2_000_000);
     const now = () => minute * 60_000 + 1_000;

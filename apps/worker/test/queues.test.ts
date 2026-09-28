@@ -10,6 +10,12 @@ describe('parseRedisUrl', () => {
     });
   });
 
+  it('uses the same database, TLS and decoded credentials as the API producer', () => {
+    expect(parseRedisUrl('rediss://user:p%40ss@localhost:6380/7')).toEqual({
+      host: 'localhost', port: 6380, username: 'user', password: 'p@ss', db: 7, tls: {},
+    });
+  });
+
   it('defaults the port to 6379 and omits an absent password', () => {
     expect(parseRedisUrl('redis://localhost')).toEqual({
       host: 'localhost',
