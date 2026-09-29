@@ -1,9 +1,11 @@
 # Fable engineering release status
 
-Updated 2026-09-29 03:30 UTC. At that time public `main` was merge `e98d98b`,
+Updated 2026-09-29 03:59 UTC. Public `main` was merge `dd308ad`,
 including the bounded scorer-read repair ([PR #19](https://github.com/cavemancoop/tripwire-launch-auditor/pull/19)),
 staged M2 correction safety tooling ([PR #20](https://github.com/cavemancoop/tripwire-launch-auditor/pull/20)),
-and lane-stratified benchmark sections ([PR #22](https://github.com/cavemancoop/tripwire-launch-auditor/pull/22)).
+lane-stratified benchmark sections ([PR #22](https://github.com/cavemancoop/tripwire-launch-auditor/pull/22)),
+the descriptive lane dashboard ([PR #23](https://github.com/cavemancoop/tripwire-launch-auditor/pull/23)),
+and diagnostic-only lane API claim flags ([PR #24](https://github.com/cavemancoop/tripwire-launch-auditor/pull/24)).
 Railway API, worker and web reached SUCCESS on that exact commit. This page
 records the current release boundary; a passed test suite is not a seven-day capacity
 or outcome-quality claim.
@@ -28,8 +30,9 @@ or outcome-quality claim.
   prepare, apply and revert commands. The ordinary worker does not call them.
   Public policy-excluded gauges remained zero after deployment.
 - PR #22 added index and qualified sections to the live benchmark without
-  changing outcome truth, score eligibility or provider limits. At the dated
-  public-main check above, the dashboard still showed only the pooled table.
+  changing outcome truth, score eligibility or provider limits. PR #23 made
+  them visible as descriptive diagnostics on the public dashboard. PR #24
+  marked API lane sections diagnostic-only and withheld their claim flags.
 
 The scorer-read repair bounds snapshot reads. The preceding production
 worker fetched all validated reports before filtering against resolved
@@ -56,20 +59,25 @@ terminal writes made during September 28 served rows first due on September
 current launch lane and policy scope, and a five-second statement timeout.
 This is a dated status observation, not a prediction of eventual completion.
 
-## Dashboard change in this release
+## Lane benchmark release observation
 
 Panel 04 renders PR #22's lane sections below the existing pooled table as
-descriptive diagnostics without lane-specific beat badges. It labels their
-selected sample and current-lane limitations. This page records
-the local release candidate; the new dashboard view still requires an exact
-merge/deployment check and public render observation before it is called
-operationally verified.
+descriptive diagnostics without lane-specific beat or inverted-ranking badges.
+It labels the selected sample and current-lane limitations. After PR #23,
+Railway API, worker and web reached SUCCESS on the exact merge `468484a`.
+The public HTML showed the lane panel and served `app.js` matched the reviewed
+file byte-for-byte. After PR #24, all three services reached SUCCESS on exact
+merge `dd308ad`. The first new benchmark snapshot at 03:58:32 UTC contained
+73 lane cells and 162 lane comparisons: every lane `claimAllowed` and
+`invertedRanking` flag was false. Non-lane sections retained 63 allowed
+comparisons and 21 inverted-ranking flags. These counts describe one dated
+backlog-selected snapshot, not population quality.
 
 ## Verification
 
 Run `pnpm verify` for Prisma generation and validation, workspace typechecks
-and offline test suites. PR #22 passed 627 worker tests; the dashboard lane
-render has two focused Node tests. PR #20's guarded
+and offline test suites. PR #24 passed 627 worker tests and 61 scoring tests;
+the dashboard lane render has two focused Node tests. PR #20's guarded
 PostgreSQL 16 test passed separately with a real pre-change dump and restore.
 Foundry was unavailable, so contract tests were skipped. No contract
 changed.
