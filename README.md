@@ -18,12 +18,14 @@ What it claims:
 
 What it does **not** claim:
 - that the scores are calibrated probabilities (they rank launches);
-- that it pays for itself;
+- that it currently pays for itself;
 - that no human touched the server;
 - that a forecast is correct because it was committed.
 
 Since 16 Sep, the agent's compute has been funded by CREDIT activated into its own
 on-chain account, each activation a public transaction (dashboard → Funding).
+Self-funding is the commercial goal: earned revenue would need to cover ongoing
+inference, data and infrastructure costs. That has not been demonstrated.
 
 Full spec: [`launch-auditor-spec-v0.2.md`](./launch-auditor-spec-v0.2.md).
 
@@ -50,6 +52,13 @@ actually provable today.
 > The agent's research budget is CREDIT activated into its on-chain account,
 > capped at half the 24-hour inflow. The operator funds it, and each activation
 > is public. Its API key is a wallet signature without an expiring session.
+
+**Outcome-measurement limitation (29 Sep):** the current resolver caps its
+timestamp-to-block search at 18 probes. On a long chain, it can stop before
+finding the last block at or before an outcome boundary, selecting an earlier
+block for that boundary. The number of affected labels and their impact on
+benchmark results have not been measured. A signed forecast and a
+reproducible scorer do not establish that every outcome boundary was exact.
 
 ## Layout
 

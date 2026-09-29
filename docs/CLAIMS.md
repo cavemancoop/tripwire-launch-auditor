@@ -107,3 +107,21 @@ new launches. It is a result for the rows already graded.
 This addendum does not change the benchmark scorer, eligibility gates or the
 underlying outcome policy. Claims about the **population** need a prospective
 cohort-completeness and quality result, not a larger selected resolved sample.
+
+## 2026-09-29 outcome-boundary and funding-goal addendum
+
+The current resolver's `blockAtTime` helper searches from block 1 to chain
+head but stops after 18 midpoint probes, even if the interval has not
+converged. On a chain much taller than 262,144 blocks, it can return an early
+block and cache it. The [public feed](https://api-production-6a84.up.railway.app/v1/launches?limit=1)
+was above 75 million blocks on 29 Sep. An offline high-height replay reproduced
+early results; the precise number of affected production labels, elapsed-time
+shift and benchmark impact have **not** been measured. Until corrected and
+validated, interpret outcome-window boundaries with this limitation. This
+addendum neither rewrites old labels nor changes the live resolver.
+
+The baseline non-claim that Tripwire does not currently pay for itself remains
+true. Self-funding is an intended business result: earned revenue should
+cover continuing inference, data and infrastructure costs. Current CREDIT is
+operator-funded, and no unit-economics result yet supports a self-funding
+claim.
