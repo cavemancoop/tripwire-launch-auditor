@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-09-29 — M2 policy-exclusion read-path readiness
+
+Benchmark coverage and the dashboard now display `POLICY_EXCLUDED` outcome
+rows separately from pending, resolved, unresolvable and N/A rows. The API
+exports an all-time per-label `launch_auditor_outcomes_policy_excluded` gauge.
+This supports the already-staged enum status without changing any historical
+outcome row or activating a correction. Existing out-of-policy PENDING rows
+remain pending until a separately reviewed correction is approved.
+
+Verify with `pnpm verify`; after deployment, check the benchmark policy text
+and API metric while the excluded count remains zero.
+
 ## 2026-09-29 — Outcome-cell RPC attempt attribution
 
 The worker now tags each outcome resolver's budgeted transport attempts with

@@ -250,6 +250,14 @@ deferred — see spec §9, "payments only if time remains"). Base URL: `http://l
 | `GET /v1/lifecycle` | The signed key-lifecycle log, independently verifiable, plus (M5c) the metabolism's own cost-forecast error over the trailing 24h. |
 | `POST /mcp` | MCP server (Streamable HTTP, stateless): `get_report`, `get_benchmark`, `request_deepdive` — the same endpoints with no HTTP client needed. |
 
+Benchmark coverage now reports `policyExcluded` for live rows explicitly marked
+`POLICY_EXCLUDED`. Those rows apply to the launch but are outside the current
+grading policy; they are neither measured outcomes nor pending work. This
+read-only display does not reclassify historical `PENDING` rows. The API's
+`launch_auditor_outcomes_policy_excluded` metric reports the all-time count by
+label, including retrospective rows, separately from due backlog and 24-hour
+resolved throughput.
+
 `x-api-key` (checked against `DESIGN_PARTNER_API_KEYS`) is accepted and echoed back as
 `designPartner: true|false` on `/v1/assess` and `/v1/deepdive`. Deep dives
 require a recognized key because they spend inference credits; assessments stay

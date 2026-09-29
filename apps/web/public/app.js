@@ -337,7 +337,8 @@ function coverageLine(c, excl) {
     const parts = [`graded ${n(c.resolved)}`, `pending ${n(c.pendingDue)}`];
     if (c.unresolvable) parts.push(`unresolvable ${n(c.unresolvable)}`);
     if (c.na) parts.push(`n/a ${n(c.na)}`);
-    lines.push(`<span title="Live outcome rows whose horizon has passed. Pending = due but not yet graded.">${parts.join(' · ')}</span>`);
+    if (c.policyExcluded) parts.push(`outside grading policy ${n(c.policyExcluded)}`);
+    lines.push(`<span title="Live outcome rows. Pending = horizon due but not yet graded; policy exclusions can include future horizons.">${parts.join(' · ')}</span>`);
   }
   if (excl) {
     const out = ['late', 'replay', 'uncommitted', 'missing_time'].filter((k) => excl[k]).map((k) => `${k.replace('_', ' ')} ${n(excl[k])}`);
