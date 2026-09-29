@@ -27,6 +27,7 @@ describe('bounded scorer reads', () => {
     expect(query.sql).toContain('lower(r."tokenAddress") = k.token');
     expect(query.sql).toContain('r."reportTime" = k."anchorTime"');
     expect(query.sql).toContain('r."validatorPassed" = true');
+    expect(query.sql).toContain('r."createdAt" ASC, r.id ASC');
     expect(query.values).toEqual([false]);
 
     db.query.mockResolvedValueOnce([{ chainId: 4663, tokenAddress: '0xdef', reportTime: new Date(),

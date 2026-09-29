@@ -87,12 +87,39 @@ export interface Benchmark {
   minForClaims: number;
   minPositivesForClaims: number;
   sections: BenchmarkSection[];
+  /** Eligible duplicate forecaster/cell/observation rows omitted from metrics. */
+  duplicateRowsDropped?: number;
   /**
    * Every report-outcome pair counted by eligibility class, per outcome and
    * forecaster (eligible | replay | late | uncommitted | missing_time). Only
    * eligible pairs are in `sections`. Attached by the collector.
    */
   exclusions?: Record<string, Record<string, Partial<Record<string, number>>>>;
+}
+
+/** One forecast per forecaster, cell and observation may enter a statistical test.
+ * The collector reads report-backed forecasts oldest first, so a later stored
+ * duplicate cannot give an observation extra weight or replace its first
+ * eligible forecast. Computed forecasters obey the same invariant here. */
+function uniqueScoreRows(rows: ScoreRow[]): { rows: ScoreRow[]; dropped: number } {
+  const seen = new Map<string, Map<OutcomeKey, Set<string>>>();
+  const unique: ScoreRow[] = [];
+  for (const row of rows) {
+    let byOutcome = seen.get(row.forecaster);
+    if (!byOutcome) {
+      byOutcome = new Map();
+      seen.set(row.forecaster, byOutcome);
+    }
+    let obsIds = byOutcome.get(row.outcomeKey);
+    if (!obsIds) {
+      obsIds = new Set();
+      byOutcome.set(row.outcomeKey, obsIds);
+    }
+    if (obsIds.has(row.obsId)) continue;
+    obsIds.add(row.obsId);
+    unique.push(row);
+  }
+  return { rows: unique, dropped: rows.length - unique.length };
 }
 
 export interface ScoreOptions {
@@ -274,15 +301,16 @@ export function scoreBenchmark(rows: ScoreRow[], opts: ScoreOptions = {}): Bench
   const baselines = opts.baselines ?? ['base_rate', 'base_rate_fixed', 'heuristic_v1'];
   const now = (opts.now ?? (() => new Date()))();
 
-  const sections: BenchmarkSection[] = [sectionFor('all', 'all', rows, baselines, thresholds)];
-  for (const trig of [...new Set(rows.map((r) => r.trigger))].sort()) {
-    sections.push(sectionFor('trigger', trig, rows.filter((r) => r.trigger === trig), baselines, thresholds));
+  const { rows: uniqueRows, dropped } = uniqueScoreRows(rows);
+  const sections: BenchmarkSection[] = [sectionFor('all', 'all', uniqueRows, baselines, thresholds)];
+  for (const trig of [...new Set(uniqueRows.map((r) => r.trigger))].sort()) {
+    sections.push(sectionFor('trigger', trig, uniqueRows.filter((r) => r.trigger === trig), baselines, thresholds));
   }
-  for (const src of [...new Set(rows.map((r) => r.source))].sort()) {
-    sections.push(sectionFor('source', src, rows.filter((r) => r.source === src), baselines, thresholds));
+  for (const src of [...new Set(uniqueRows.map((r) => r.source))].sort()) {
+    sections.push(sectionFor('source', src, uniqueRows.filter((r) => r.source === src), baselines, thresholds));
   }
-  for (const lane of [...new Set(rows.map((r) => r.lane))].sort()) {
-    sections.push(sectionFor('lane', lane, rows.filter((r) => r.lane === lane), baselines, thresholds));
+  for (const lane of [...new Set(uniqueRows.map((r) => r.lane))].sort()) {
+    sections.push(sectionFor('lane', lane, uniqueRows.filter((r) => r.lane === lane), baselines, thresholds));
   }
 
   return {
@@ -292,6 +320,7 @@ export function scoreBenchmark(rows: ScoreRow[], opts: ScoreOptions = {}): Bench
     minForClaims: MIN_FOR_CLAIMS,
     minPositivesForClaims: MIN_POSITIVES_FOR_CLAIMS,
     sections,
+    duplicateRowsDropped: dropped,
   };
 }
 
