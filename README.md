@@ -32,25 +32,24 @@ Full spec: [`launch-auditor-spec-v0.2.md`](./launch-auditor-spec-v0.2.md).
 Text for an external submission form or one-pager — stays inside what's
 actually provable today.
 
-> Tripwire Launch Auditor scores new token launches on Robinhood Chain for five
-> mechanically defined outcomes: insider exit, sell impairment, liquidity
-> impairment, 80% drawdown and still trading, ten minutes after each pool
-> appears. Each report is signed and its hash committed on-chain,
-> normally within minutes. Anyone can check one without trusting our server.
+> Tripwire scores Robinhood Chain token launches for five defined outcomes:
+> insider exit, sell impairment, liquidity impairment, 80% drawdown and still
+> trading. About ten minutes after a pool appears, it signs a forecast, then
+> commits its hash on-chain minutes later; anyone can verify it.
 >
-> An open-source scorer grades forecasts against chain data and public
-> baselines, including existing scanners. It counts only forecasts committed
-> within 30 minutes of their anchor and before the outcome window closed, a
-> rule added when outage replays committed hours late turned up in 22% of
-> scored rows. On the rows that count, the model beats both base
-> rates at ranking insider exit and whether a token is still trading. It ranks drawdown and liquidity loss backwards, where an existing
-> scanner does better. The LLM deep-dive shows no added discrimination yet. The
-> scores rank launches; they are not calibrated probabilities.
+> An open-source scorer grades against chain data and public baselines. It
+> counts only forecasts committed within 30 minutes of their anchor and before
+> the outcome window closes. That cutoff excludes outage replays that made up
+> 22% of an earlier scored sample. In the selected, resolved sample, the model
+> ranks insider exit and still trading above both base rates; drawdown and
+> liquidity loss rank backwards, where an existing scanner does better. The
+> LLM deep-dive shows no added discrimination. The resolver's older backlog
+> makes graded rows non-random and unrepresentative of new launches. Scores
+> rank launches; they are not calibrated probabilities.
 >
-> The agent's research budget is drawn from CREDIT activated into its own
-> on-chain account, capped at half of what arrived in the last 24 hours. Its API
-> key is a wallet signature, so there is no session to expire. The operator
-> funds it; each activation is public.
+> The agent's research budget is CREDIT activated into its on-chain account,
+> capped at half the 24-hour inflow. The operator funds it, and each activation
+> is public. Its API key is a wallet signature without an expiring session.
 
 ## Layout
 

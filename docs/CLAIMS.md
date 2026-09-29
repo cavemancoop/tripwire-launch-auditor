@@ -1,8 +1,11 @@
-# Claims under test (current)
+# Claims inventory — 19 Sep baseline and 29 Sep addendum
 
-Every public claim the project makes, quoted from its source, with how it was
-checked. It replaces `docs/review-pack/CLAIMS.md`, the frozen 15 Sep snapshot
-that the first Codex review tested. That file is kept as a dated record.
+The tables below preserve the public claims checked on 19 Sep, quoted from
+their sources at that time. The dated addendum at the end covers current
+sample-selection and marketing wording; do not treat this baseline as an
+exhaustive inventory of today's live copy. This file replaces
+`docs/review-pack/CLAIMS.md`, the frozen 15 Sep snapshot that the first Codex
+review tested. That file is kept as a dated record.
 
 **Baseline:** deployed commit `0df3f67`, checked logged out on 2026-09-19 at
 about 09:30 UTC. Two lines, **A10** and **A11**, changed in the commit that
@@ -84,3 +87,23 @@ this week" (CHANGELOG entries dated 2026-09-18/19).
 
 - The lifecycle runner had a 13.7 h gap (18 Sep outage) and 2 forks
   (18–19 Sep deploys, since prevented).
+
+## 2026-09-29 current marketing and sample-selection addendum
+
+The table above is the frozen 19 Sep baseline. Its A5 and C5 wording is not a
+current population-performance claim. The live resolver works oldest due
+rows first within each label, so the resolved, commit-eligible benchmark is a
+selected older subset. The public dashboard discloses the backlog and warns
+that graded rows are not a random sample. The live benchmark may show pooled
+ranking gains on resolved rows, but that does not establish performance across
+new launches. It is a result for the rows already graded.
+
+| Surface | Current treatment | Remaining check |
+|---|---|---|
+| README external-submission summary | Says benchmark gains are in a selected, resolved sample and discloses the older backlog; does not call scores calibrated probabilities or claim self-funding. | Recheck any copied submission text before reuse. |
+| Public dashboard launch panel and benchmark | Launch panel qualifies the two displayed ranking claims; benchmark shows the non-random backlog warning before pooled metrics and labels current-lane comparisons diagnostic. | Observe served HTML after release and keep the warning next to future performance claims. |
+| `DEMO.md` | Dated figures and a separate explicit non-random-sample warning. | Refresh figures before a new live demonstration; do not present the 19 Sep snapshot as current. |
+
+This addendum does not change the benchmark scorer, eligibility gates or the
+underlying outcome policy. Claims about the **population** need a prospective
+cohort-completeness and quality result, not a larger selected resolved sample.
