@@ -502,6 +502,34 @@ produced a tautological ratio-1 `false`. Any different zero-swap rule needs its
 own rule version with an effective block. Check with
 `pnpm --filter @launch-auditor/worker exec vitest run test/outcomes-price.test.ts`.
 
+### M2 historical outcome correction (staged, inactive)
+
+`pnpm outcomes:policy-correction -- preview --cutoff <UTC ISO timestamp>`
+reads the currently PENDING insider-exit, sell-impairment and
+liquidity-impairment rows linked to index-lane launches whose T+10 feature
+pass completed. This prevents excluding a launch before its lane is final.
+Rows with incomplete T+10 work remain outside the manifest. It reports counts
+and anomalies by label. The ordinary worker never invokes this script.
+Adding the correction ledger tables does not modify historical outcomes.
+
+The write subcommands are intentionally separate: `prepare` freezes a
+cutoff-bounded manifest and original fields; `apply` changes at most 1,000
+manifest rows per transaction to `POLICY_EXCLUDED`; `revert` restores only
+rows still bearing that run's marker and update timestamp. Changed or claimed
+rows are skipped and counted. All writes require `--authorize`; `apply`
+additionally requires `--qualified-only-confirmed`, the expected candidate
+count and the SHA-256 of a pre-correction backup. These flags are operational
+guards, not approval to alter production data.
+
+Before production use, separately approve the historical policy correction,
+obtain a full logical backup outside the production volume, verify its SHA-256
+and restore it to an isolated database, and check live disk/WAL headroom for
+the manifest and batched updates. Pin the cutoff and expected count from a
+fresh preview. Monitor `summary` after each batch and stop on unexpected
+skips, failures or shrinking headroom. The disposable PostgreSQL integration
+rehearsal is explicitly gated by `M2_REHEARSAL=1`, a localhost-only database
+URL and `DOCKER_EXE`; routine `pnpm verify` skips it.
+
 ## Milestones
 
 Tracked in [`CHANGELOG.md`](./CHANGELOG.md). Current: **M9 — Railway deploy**.

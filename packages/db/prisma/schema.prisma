@@ -403,6 +403,45 @@ model Outcome {
   @@map("outcomes")
 }
 
+// M2 correction ledger. A prepared run freezes the exact candidate IDs and
+// their original fields before any outcome status changes. Operators can
+// resume bounded batches or compensate only rows still bearing this run's
+// provenance. Merely adding these tables never changes an outcome row.
+model PolicyExclusionRun {
+  id             String   @id
+  cutoffAt       DateTime
+  policyVersion  String
+  reasonCode     String
+  backupSha256   String
+  candidateCount Int
+  createdAt      DateTime @default(now())
+  candidates     PolicyExclusionCandidate[]
+
+  @@map("policy_exclusion_runs")
+}
+
+model PolicyExclusionCandidate {
+  runId              String
+  outcomeId          String
+  label              OutcomeLabel
+  originalValue      Boolean?
+  originalEvidence   Json?
+  originalMeasuredAt DateTime?
+  originalUpdatedAt  DateTime
+  appliedAt          DateTime?
+  skippedAt          DateTime?
+  skipReason         String?
+  revertedAt         DateTime?
+  revertSkippedAt    DateTime?
+  revertSkipReason   String?
+
+  run PolicyExclusionRun @relation(fields: [runId], references: [id], onDelete: Restrict)
+
+  @@id([runId, outcomeId])
+  @@index([runId, appliedAt, skippedAt, outcomeId])
+  @@map("policy_exclusion_candidates")
+}
+
 // ─────────────────────── Metabolism lifecycle log ───────────────────
 // Signed row for every state transition and every 60s snapshot (spec §8).
 
