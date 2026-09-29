@@ -47,14 +47,17 @@ export async function blockAtTime(
 ): Promise<bigint> {
   const targetSec = BigInt(Math.floor(when.getTime() / 1000));
   stats.lookups++;
-  const key = `${opts.chainId ?? 4663}:${targetSec}`;
+  const key = `${opts.chainId ?? 4663}:${targetSec}:${opts.minBlock ?? 1n}`;
   const cached = cache.get(key);
   if (cached !== undefined) {
     stats.cacheHits++;
     return cached;
   }
 
-  const maxIters = opts.maxIters ?? 18;
+  // A fixed 18 probes does not converge over the live chain's block range.
+  // Binary search needs at most 64 probes for a 64-bit range; if a caller
+  // supplies a lower cap, never treat the unfinished lower bound as a result.
+  const maxIters = opts.maxIters ?? 64;
   let lo = opts.minBlock ?? 1n;
   let reads = 0;
   const getBlock = async (blockNumber: bigint) => {
@@ -66,11 +69,12 @@ export async function blockAtTime(
 
     const headTs = (await getBlock(hi)).timestamp;
     if (targetSec >= headTs) {
-      cache.set(key, hi);
+      // The head can advance into this second; caching it would freeze an
+      // incomplete upper boundary for the rest of this process.
       return hi;
     }
     const loTs = (await getBlock(lo)).timestamp;
-    if (targetSec <= loTs) {
+    if (targetSec < loTs) {
       cache.set(key, lo);
       return lo;
     }
@@ -86,7 +90,10 @@ export async function blockAtTime(
         hi = mid - 1n;
       }
     }
-    if (lo <= hi) stats.unfinished++;
+    if (lo <= hi) {
+      stats.unfinished++;
+      throw new Error(`block-time search did not converge within ${maxIters} probes`);
+    }
     cache.set(key, answer);
     return answer;
   } catch (error) {

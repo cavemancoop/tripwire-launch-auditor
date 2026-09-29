@@ -53,12 +53,15 @@ actually provable today.
 > capped at half the 24-hour inflow. The operator funds it, and each activation
 > is public. Its API key is a wallet signature without an expiring session.
 
-**Outcome-measurement limitation (29 Sep):** the current resolver caps its
-timestamp-to-block search at 18 probes. On a long chain, it can stop before
-finding the last block at or before an outcome boundary, selecting an earlier
-block for that boundary. The number of affected labels and their impact on
-benchmark results have not been measured. A signed forecast and a
-reproducible scorer do not establish that every outcome boundary was exact.
+**Outcome-measurement limitation (29 Sep):** earlier resolver versions capped
+timestamp-to-block searches at 18 probes and cached an unfinished lower bound
+as though it were the last block at or before an outcome boundary. The current
+resolver completes the search or rejects the lookup; it also handles multiple
+blocks with the same timestamp at a search boundary. Existing outcome rows
+have not been remeasured. The number of affected historical labels and their
+impact on benchmark results remain unknown. A signed forecast and a
+reproducible scorer do not establish that historical outcome boundaries were
+exact.
 
 ## Layout
 

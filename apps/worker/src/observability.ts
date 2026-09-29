@@ -107,7 +107,7 @@ export function formatWorkerMetrics(o: WorkerObservation): string {
     ['block_time_lookups_total', 'Wall-clock-to-block lookups requested, including cache hits', o.blockTime.lookups],
     ['block_time_cache_hits_total', 'Wall-clock-to-block lookups served from the process cache', o.blockTime.cacheHits],
     ['block_time_block_reads_total', 'getBlock attempts made by wall-clock-to-block lookups', o.blockTime.blockReads],
-    ['block_time_unfinished_total', 'Lookups cached before the 18-probe binary search converged', o.blockTime.unfinished],
+    ['block_time_unfinished_total', 'Lookups rejected because the binary search cap was reached before convergence', o.blockTime.unfinished],
     ['block_time_failures_total', 'Wall-clock-to-block lookups that threw', o.blockTime.failures],
   ] as const) {
     head(name, 'counter', help);

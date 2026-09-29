@@ -115,7 +115,32 @@ describe('blockAtTime', () => {
     expect(b).toBe(1n);
   });
 
-  it('counts lookup reads, cache hits and unfinished high-height searches without changing results', async () => {
+  it('searches beyond a lower bound whose timestamp equals the target second', async () => {
+    const secondClock = {
+      getBlockNumber: vi.fn(async () => 1000n),
+      getBlock: vi.fn(async ({ blockNumber }: { blockNumber: bigint }) => ({
+        timestamp: blockNumber / 10n,
+      })),
+    };
+    expect(await blockAtTime(secondClock as never, new Date(50_000), { minBlock: 500n })).toBe(509n);
+  });
+
+  it('does not freeze a head clamp when more blocks arrive in the target second', async () => {
+    let head = 1000n;
+    const advancingClock = {
+      getBlockNumber: vi.fn(async () => head),
+      getBlock: vi.fn(async ({ blockNumber }: { blockNumber: bigint }) => ({
+        timestamp: blockNumber / 10n,
+      })),
+    };
+    const when = new Date(100_000);
+    expect(await blockAtTime(advancingClock as never, when)).toBe(1000n);
+    head = 1009n;
+    expect(await blockAtTime(advancingClock as never, when)).toBe(1009n);
+    expect(blockTimeStats().cacheHits).toBe(0);
+  });
+
+  it('finds the exact final block on a high-height chain and caches only that answer', async () => {
     const highClock = {
       getBlockNumber: vi.fn(async () => 100_000_000n),
       getBlock: vi.fn(async ({ blockNumber }: { blockNumber: bigint }) => ({
@@ -124,14 +149,45 @@ describe('blockAtTime', () => {
     };
     const when = new Date(4_000_000_000);
     const first = await blockAtTime(highClock as never, when);
+    expect(first).toBe(40_000_009n);
     expect(await blockAtTime(highClock as never, when)).toBe(first);
     const s = blockTimeStats();
     expect(s.lookups).toBe(2);
     expect(s.cacheHits).toBe(1);
     expect(s.blockReads).toBe(highClock.getBlock.mock.calls.length);
-    expect(s.readBuckets['11-20']).toBe(1);
-    expect(s.unfinished).toBe(1);
+    expect(s.readBuckets['21+']).toBe(1);
+    expect(s.unfinished).toBe(0);
     expect(s.failures).toBe(0);
+  });
+
+  it('rejects an unfinished capped search and does not cache its lower bound', async () => {
+    const highClock = {
+      getBlockNumber: vi.fn(async () => 100_000_000n),
+      getBlock: vi.fn(async ({ blockNumber }: { blockNumber: bigint }) => ({
+        timestamp: blockNumber / 10n,
+      })),
+    };
+    const when = new Date(4_000_000_000);
+    await expect(blockAtTime(highClock as never, when, { maxIters: 18 })).rejects.toThrow('did not converge');
+    expect(await blockAtTime(highClock as never, when)).toBe(40_000_009n);
+    const s = blockTimeStats();
+    expect(s.lookups).toBe(2);
+    expect(s.cacheHits).toBe(0);
+    expect(s.unfinished).toBe(1);
+    expect(s.failures).toBe(1);
+  });
+
+  it('keeps lower-bound cache entries separate from an unrestricted lookup', async () => {
+    const highClock = {
+      getBlockNumber: vi.fn(async () => 100_000_000n),
+      getBlock: vi.fn(async ({ blockNumber }: { blockNumber: bigint }) => ({
+        timestamp: blockNumber / 10n,
+      })),
+    };
+    const when = new Date(4_000_000_000);
+    expect(await blockAtTime(highClock as never, when, { minBlock: 50_000_000n })).toBe(50_000_000n);
+    expect(await blockAtTime(highClock as never, when)).toBe(40_000_009n);
+    expect(blockTimeStats().cacheHits).toBe(0);
   });
 
   it('counts a failed block-number read without inventing a block read', async () => {
