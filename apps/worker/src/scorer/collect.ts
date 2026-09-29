@@ -203,7 +203,16 @@ export async function collectScoreRows(opts: CollectOptions = {}): Promise<Colle
         horizonEnd: horizonEndOf(r.reportTime, key),
       });
       countExclusion(exclusions, key, r.forecaster, cls);
-      if (r.forecaster === REFERENCE_FORECASTER && !refClass.has(`${k}|${key}`)) refClass.set(`${k}|${key}`, cls);
+      if (r.forecaster === REFERENCE_FORECASTER) {
+        const referenceKey = `${k}|${key}`;
+        const previous = refClass.get(referenceKey);
+        // A later stored duplicate may be the first report that actually
+        // reached the chain in time. Computed baselines must follow the first
+        // eligible det_v0 forecast, not an earlier ineligible draft.
+        if (previous === undefined || (previous !== 'eligible' && cls === 'eligible')) {
+          refClass.set(referenceKey, cls);
+        }
+      }
       if (cls !== 'eligible') continue;
       rows.push({ obsId: k, forecaster: r.forecaster, outcomeKey: key, trigger: r.trigger, source, lane, prob, label: y });
     }

@@ -63,7 +63,7 @@ export async function readReportsForResolved(scope: ScoreScope): Promise<ScoreRe
     LEFT JOIN "launches" l ON l.id = r."launchId"
     LEFT JOIN "commits" c ON c.id = r."commitId"
     WHERE r."validatorPassed" = true
-    ORDER BY r."reportTime" ASC, r."createdAt" ASC
+    ORDER BY r."reportTime" ASC, r."createdAt" ASC, r.id ASC
   `);
   return raw.map(({ launchSource, commitBlockNumber, ...report }) => ({
     ...report,

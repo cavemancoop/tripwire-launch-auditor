@@ -75,6 +75,25 @@ beforeEach(() => {
 const blockTimeOf = async (b: bigint): Promise<Date | null> => BLOCK_TIME[b.toString()] ?? null;
 
 describe('collectScoreRows — timing eligibility', () => {
+  it('uses an eligible later det_v0 report when an earlier duplicate was late', async () => {
+    const lateDraft = {
+      ...report(TIMELY, 'det_v0', 0.1),
+      commitId: 'C-late-draft',
+      commit: { blockNumber: 200n },
+    };
+    db.reports = [lateDraft, ...db.reports];
+    const { rows, exclusions } = await collectScoreRows({ blockTimeOf });
+    for (const key of ['INSIDER_EXIT@6h', 'INSIDER_EXIT@24h']) {
+      const timely = rows.filter((r) => r.obsId.includes(TIMELY) && r.outcomeKey === key);
+      expect(timely.filter((r) => r.forecaster === 'det_v0')).toHaveLength(1);
+      expect(timely.some((r) => r.forecaster === 'base_rate')).toBe(true);
+      expect(timely.some((r) => r.forecaster === 'base_rate_fixed')).toBe(true);
+      expect(exclusions[key]!['base_rate']).toEqual(
+        key === 'INSIDER_EXIT@6h' ? { eligible: 1, late: 1 } : { eligible: 1, replay: 1 },
+      );
+    }
+  });
+
   it('scores only the timely launch; every forecaster for the replay is excluded', async () => {
     const { rows } = await collectScoreRows({ blockTimeOf });
     expect(rows.length).toBeGreaterThan(0);

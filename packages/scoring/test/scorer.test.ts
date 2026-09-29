@@ -21,6 +21,25 @@ function rows(n: number): ScoreRow[] {
 }
 
 describe('scoreBenchmark', () => {
+  it('scores each forecaster/cell/observation once, keeping the first eligible row', () => {
+    const original = rows(240);
+    const det = original.find((r) => r.forecaster === 'det_v0')!;
+    const baseline = original.find((r) => r.forecaster === 'base_rate')!;
+    const withDuplicates = [
+      ...original,
+      { ...det, prob: 1 - det.prob, trigger: 'qualified', lane: 'qualified' as const },
+      { ...baseline, prob: 1 - baseline.prob },
+    ];
+    const expected = scoreBenchmark(original);
+    const actual = scoreBenchmark(withDuplicates);
+    expect(actual.duplicateRowsDropped).toBe(2);
+    expect(actual.sections).toEqual(expected.sections);
+    const detCell = actual.sections[0]!.byOutcome['DRAWDOWN_80@24h']!
+      .find((c) => c.forecaster === 'det_v0')!;
+    expect(detCell.n).toBe(240);
+    expect(detCell.comparisons.find((c) => c.vs === 'base_rate')?.n).toBe(240);
+  });
+
   it('produces an all section plus trigger and source splits', () => {
     const b = scoreBenchmark(rows(20));
     expect(b.sections.find((s) => s.splitBy === 'all')).toBeDefined();

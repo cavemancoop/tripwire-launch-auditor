@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-09-29 — Count unique scorer observations
+
+The benchmark now keeps the first eligible forecast per forecaster, outcome
+cell and observation before computing metrics or paired comparisons. A later
+validated report for the same observation can no longer add weight to a
+sample or enter DeLong twice. The report read has a stable ID tie-breaker,
+and benchmark JSON exposes the number of eligible duplicate rows dropped.
+When an earlier `det_v0` duplicate is ineligible but a later one is eligible,
+the computed baselines now inherit that eligible classification, preserving
+their paired comparison.
+Signed reports, outcome truth, chain-time eligibility and provider calls are
+unchanged. The duplicate count is diagnostic; it does not make the still
+backlog-selected sample representative.
+
 ## 2026-09-29 — Index rolling base-rate lookups in the scorer
 
 Build one sorted timestamp and positive-count index per outcome cell, then
