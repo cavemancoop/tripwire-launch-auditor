@@ -17,6 +17,7 @@ import {
   type ExclusionCounts,
 } from './eligibility';
 import { launchContext, loadLaunchContexts, readReportsForResolved } from './read';
+import { buildTrailingBaseRate } from './trailing-base-rate';
 
 /** OutcomeKey -> the Report probability column that holds that forecast. */
 const P_COL: Partial<Record<OutcomeKey, string>> = {
@@ -36,7 +37,6 @@ const P_COL: Partial<Record<OutcomeKey, string>> = {
 /** Forecasters computed here rather than read from a committed report; they inherit det_v0's eligibility. */
 const REFERENCE_FORECASTER = 'det_v0';
 
-const THIRTY_DAYS_MS = 30 * 24 * 3600 * 1000;
 const obsKey = (chainId: number, token: string, anchor: Date): string =>
   `${chainId}|${token.toLowerCase()}|${anchor.toISOString()}`;
 const horizonEndOf = (anchor: Date, key: OutcomeKey): Date =>
@@ -153,24 +153,7 @@ export async function collectScoreRows(opts: CollectOptions = {}): Promise<Colle
       (perKey[key] ??= []).push({ t: e.anchor.getTime(), y });
     }
   }
-  for (const arr of Object.values(perKey)) arr.sort((a, b) => a.t - b.t);
-  const trailingBaseRate = (key: OutcomeKey, at: number): number => {
-    const arr = perKey[key] ?? [];
-    let pos = 0;
-    let tot = 0;
-    for (const r of arr) {
-      if (r.t >= at) break;
-      if (r.t >= at - THIRTY_DAYS_MS) {
-        tot++;
-        if (r.y) pos++;
-      }
-    }
-    if (tot === 0) {
-      const all = arr.filter((r) => r.t < at);
-      return all.length ? all.filter((r) => r.y).length / all.length : 0;
-    }
-    return pos / tot;
-  };
+  const trailingBaseRate = buildTrailingBaseRate(perKey);
 
   const rows: ScoreRow[] = [];
   /** `${obsKey}|${outcomeKey}` -> det_v0's class, which the computed forecasters inherit */
