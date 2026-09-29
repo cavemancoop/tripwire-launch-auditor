@@ -77,4 +77,19 @@ describe('report lane at first store', () => {
     await persistLaunchReports([report]);
     expect(db.reports.get(report.reportHash)?.laneAtFirstStore).toBe('index');
   });
+
+  it('keeps an early report unknown when T+10 later completes', async () => {
+    const launch = {
+      id: 'early', lane: 'index' as 'index' | 'qualified',
+      feature: { t10ComputedAt: null as Date | null },
+      lpLockedByConstruction: false, retrospective: false,
+    };
+    db.launches.set('early', launch);
+    const report = draft('e', 'early');
+    await persistLaunchReports([report]);
+    launch.lane = 'qualified';
+    launch.feature.t10ComputedAt = new Date('2026-09-28T00:11:00Z');
+    await persistLaunchReports([report]);
+    expect(db.reports.get(report.reportHash)?.laneAtFirstStore).toBeNull();
+  });
 });
