@@ -47,7 +47,7 @@ vi.mock('../src/outcomes/resolve', async () => {
 });
 
 const { sweepDueOutcomes } = await import('../src/outcomes/loop');
-const { budgetedHttp, RequestScheduler } = await import('@launch-auditor/rpc-budget');
+const { budgetedHttp, RequestScheduler, resetRpcWireStats, rpcOutcomeCellStats } = await import('@launch-auditor/rpc-budget');
 const { createPublicClient } = await import('viem');
 
 /** every eth_getLogs answers after 25 s (under the transport's 30 s timeout) */
@@ -60,6 +60,7 @@ beforeEach(() => {
   st.updates = [];
   st.scansFinished = 0;
   fetches = 0;
+  resetRpcWireStats();
   vi.stubGlobal('fetch', async () => {
     fetches++;
     await new Promise((r) => setTimeout(r, CHUNK_MS));
@@ -89,6 +90,7 @@ describe('sweepDueOutcomes — a timed-out row stops its RPC (Package 4b)', () =
 
     // chunks start at 0, 25, 50, 75 and 100 s; the fifth is in flight at the deadline
     expect(fetches).toBe(5);
+    expect(rpcOutcomeCellStats()).toEqual({ 'live:TRADING_ALIVE@24h:unknown': 4 });
     expect(r).toMatchObject({ picked: 1, resolved: 0, unresolvable: 0, retryLater: 1, failed: 0 });
     expect(st.updates).toHaveLength(1);
     const d = st.updates[0]!.data;
@@ -99,6 +101,7 @@ describe('sweepDueOutcomes — a timed-out row stops its RPC (Package 4b)', () =
     // without cancellation the scan would run on to all ten chunks and a verdict
     await vi.advanceTimersByTimeAsync(10 * CHUNK_MS);
     expect(fetches).toBe(5); // the in-flight chunk settled in its slot; the sixth never started
+    expect(rpcOutcomeCellStats()).toEqual({ 'live:TRADING_ALIVE@24h:unknown': 5 });
     expect(scheduler.stats.cancelled).toBe(1);
     expect(scheduler.stats.inFlight).toBe(0);
     expect(st.scansFinished).toBe(0);

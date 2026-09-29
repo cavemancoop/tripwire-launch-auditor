@@ -9,6 +9,8 @@ The bounded cumulative `rpcOutcomeCells` map appears in minute `[obs]` logs;
 invalid tags fold into `other`, and unrelated calls remain untagged. Retries
 and an already-sent request settling after its outcome deadline count. This
 measures attempts, not unique provider fetches or Chainstack request units.
+When viem shares or caches a request across rows, the attempt is credited to
+the row that issued it, not every row that reused the result.
 Resolution policy, RPC priority, cap and grading remain unchanged. A matched
 full-day per-cell attempt/completion comparison requires live observation
 after deployment.

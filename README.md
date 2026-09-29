@@ -425,6 +425,9 @@ deploy-time command — the migrations directory is already in the repo.
   watcher, commit and deep-dive calls have no outcome-cell tag. Method counts include
   retries but exclude cache hits and pre-send cancellations; they are not
   provider-billed request units or a full inventory of wallet/API traffic.
+  When viem shares or caches a request across rows, its transport attempt
+  belongs to the row that issued it; another row can use the result without
+  another cell increment.
   It omits `external`,
   `array_buffers` and `heap_limit_bytes`. The outcomes `swept` log line ends
   with the sweep duration. Each nonempty sweep also writes one bounded

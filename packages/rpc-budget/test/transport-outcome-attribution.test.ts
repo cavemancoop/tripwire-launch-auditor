@@ -15,9 +15,9 @@ const indexCell = 'live:TRADING_ALIVE@24h:index';
 const qualifiedCell = 'live:INSIDER_EXIT@6h:qualified';
 const args = { method: 'eth_getLogs', params: [] };
 
-function request(scheduler = new RequestScheduler({ rpm: 6000, maxInFlight: 1 })) {
+function request(scheduler = new RequestScheduler({ rpm: 6000, maxInFlight: 1 }), retryCount = 0) {
   return budgetedHttp('http://rpc.test', {
-    scheduler, priority: 2, chainId: 4663, retryCount: 0, rateLimitRetries: 1,
+    scheduler, priority: 2, chainId: 4663, retryCount, rateLimitRetries: 1,
   })({}).request as (a: typeof args) => Promise<unknown>;
 }
 
@@ -69,5 +69,12 @@ describe('budgeted transport outcome-cell attribution', () => {
     await withRpcOutcomeCell('secret-url-and-address', () => request()(args));
     expect(rpcOutcomeCellStats()).toEqual({ other: 1 });
     expect(JSON.stringify(rpcOutcomeCellStats())).not.toContain('secret-url-and-address');
+  });
+
+  it('keeps a transport-level retry in the owning cell', async () => {
+    inner.request.mockRejectedValueOnce(new Error('fetch failed')).mockResolvedValue('ok');
+    await expect(withRpcOutcomeCell(qualifiedCell, () => request(undefined, 1)(args))).resolves.toBe('ok');
+    expect(rpcWireStats().attempts).toBe(2);
+    expect(rpcOutcomeCellStats()).toEqual({ [qualifiedCell]: 2 });
   });
 });
