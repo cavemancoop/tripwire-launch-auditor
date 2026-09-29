@@ -16,7 +16,7 @@ import {
   type Eligibility,
   type ExclusionCounts,
 } from './eligibility';
-import { launchSource, readReportsForResolved, warmLaunchSources } from './read';
+import { launchContext, loadLaunchContexts, readReportsForResolved } from './read';
 
 /** OutcomeKey -> the Report probability column that holds that forecast. */
 const P_COL: Partial<Record<OutcomeKey, string>> = {
@@ -144,6 +144,7 @@ export async function collectScoreRows(opts: CollectOptions = {}): Promise<Colle
     entry.labels.set(`${o.label}@${o.horizon}` as OutcomeKey, o.value === true);
   }
   if (obs.size === 0) return { rows: [], exclusions };
+  const launchContexts = await loadLaunchContexts([...obs.values()].map((e) => e.launchId));
 
   // trailing-30-day base rate per outcome key
   const perKey: Record<string, Array<{ t: number; y: boolean }>> = {};
@@ -202,6 +203,7 @@ export async function collectScoreRows(opts: CollectOptions = {}): Promise<Colle
       launchAnchor.set(r.launchId, k);
     }
     const source = r.launch?.source ?? 'unknown';
+    const lane = launchContext(launchContexts, e.launchId).lane;
     const committed = r.commitId != null && r.commit?.blockNumber != null;
     const commitBlockTime = committed ? (blockTimes.get(r.commit!.blockNumber!.toString()) ?? null) : null;
     for (const key of ALL_OUTCOME_KEYS) {
@@ -220,7 +222,7 @@ export async function collectScoreRows(opts: CollectOptions = {}): Promise<Colle
       countExclusion(exclusions, key, r.forecaster, cls);
       if (r.forecaster === REFERENCE_FORECASTER && !refClass.has(`${k}|${key}`)) refClass.set(`${k}|${key}`, cls);
       if (cls !== 'eligible') continue;
-      rows.push({ obsId: k, forecaster: r.forecaster, outcomeKey: key, trigger: r.trigger, source, prob, label: y });
+      rows.push({ obsId: k, forecaster: r.forecaster, outcomeKey: key, trigger: r.trigger, source, lane, prob, label: y });
     }
   }
 
@@ -237,9 +239,8 @@ export async function collectScoreRows(opts: CollectOptions = {}): Promise<Colle
   }
 
   // base_rate / base_rate_fixed (one row per eligible obs/outcome)
-  await warmLaunchSources([...obs.values()].map((e) => e.launchId));
   for (const e of obs.values()) {
-    const source = launchSource(e.launchId);
+    const { source, lane } = launchContext(launchContexts, e.launchId);
     const k = obsKey(e.chainId, e.token, e.anchor);
     for (const [key, y] of e.labels) {
       // no committed det_v0 forecast for this observation → nothing to compare against
@@ -253,6 +254,7 @@ export async function collectScoreRows(opts: CollectOptions = {}): Promise<Colle
         outcomeKey: key,
         trigger: e.trigger,
         source,
+        lane,
         prob: round4(trailingBaseRate(key, e.anchor.getTime())),
         label: y,
       });
@@ -262,6 +264,7 @@ export async function collectScoreRows(opts: CollectOptions = {}): Promise<Colle
         outcomeKey: key,
         trigger: e.trigger,
         source,
+        lane,
         prob: round4(fixedBaseRate[key] ?? 0),
         label: y,
       });
@@ -290,6 +293,7 @@ export async function collectScoreRows(opts: CollectOptions = {}): Promise<Colle
     const e = obs.get(k);
     if (!e) continue;
     const source = f.launch.source;
+    const lane = launchContext(launchContexts, e.launchId).lane;
     const shProbs = scanhoodToProbabilities(f.scanhoodRaw as Record<string, unknown> | null);
     const gpProbs = goplusToProbabilities(f.goplusRaw as Record<string, unknown> | null);
     for (const [key, y] of e.labels) {
@@ -298,14 +302,14 @@ export async function collectScoreRows(opts: CollectOptions = {}): Promise<Colle
         const cls = ref === 'eligible' && !scannerFetchIsTimely(e.anchor, f.scanhoodFetchedAt) ? 'replay' : ref;
         countExclusion(exclusions, key, 'scanhood', cls);
         if (cls === 'eligible') {
-          rows.push({ obsId: k, forecaster: 'scanhood', outcomeKey: key, trigger: e.trigger, source, prob: shProbs[key]!, label: y });
+          rows.push({ obsId: k, forecaster: 'scanhood', outcomeKey: key, trigger: e.trigger, source, lane, prob: shProbs[key]!, label: y });
         }
       }
       if (gpProbs[key] !== undefined) {
         const cls = ref === 'eligible' && !scannerFetchIsTimely(e.anchor, f.goplusFetchedAt) ? 'replay' : ref;
         countExclusion(exclusions, key, 'goplus', cls);
         if (cls === 'eligible') {
-          rows.push({ obsId: k, forecaster: 'goplus', outcomeKey: key, trigger: e.trigger, source, prob: gpProbs[key]!, label: y });
+          rows.push({ obsId: k, forecaster: 'goplus', outcomeKey: key, trigger: e.trigger, source, lane, prob: gpProbs[key]!, label: y });
         }
       }
     }

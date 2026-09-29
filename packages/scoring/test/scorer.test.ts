@@ -9,12 +9,13 @@ function rows(n: number): ScoreRow[] {
     const obsId = `tok${i}@t`;
     const trigger = i < n / 2 ? 'launch' : 'qualified';
     const source = i % 3 === 0 ? 'pons' : 'raw';
+    const lane = i < n / 2 ? 'index' : 'qualified';
     const detWrong = i % 7 === 0;
     const detProb =
       label !== detWrong ? 0.62 + (i % 5) * 0.02 : 0.38 - (i % 5) * 0.02;
     const brProb = 0.4 + ((i % 4) - 1.5) * 0.02;
-    out.push({ obsId, forecaster: 'det_v0', outcomeKey: 'DRAWDOWN_80@24h', trigger, source, prob: detProb, label });
-    out.push({ obsId, forecaster: 'base_rate', outcomeKey: 'DRAWDOWN_80@24h', trigger, source, prob: brProb, label });
+    out.push({ obsId, forecaster: 'det_v0', outcomeKey: 'DRAWDOWN_80@24h', trigger, source, lane, prob: detProb, label });
+    out.push({ obsId, forecaster: 'base_rate', outcomeKey: 'DRAWDOWN_80@24h', trigger, source, lane, prob: brProb, label });
   }
   return out;
 }
@@ -30,6 +31,10 @@ describe('scoreBenchmark', () => {
     expect(b.sections.filter((s) => s.splitBy === 'source').map((s) => s.splitValue).sort()).toEqual([
       'pons',
       'raw',
+    ]);
+    expect(b.sections.filter((s) => s.splitBy === 'lane').map((s) => s.splitValue).sort()).toEqual([
+      'index',
+      'qualified',
     ]);
   });
 
@@ -71,8 +76,8 @@ describe('scoreBenchmark', () => {
     // — zero overlap, the "insufficient overlap / single class" DeLong branch.
     const disjoint: ScoreRow[] = [
       ...rows(120),
-      { obsId: 'other1', forecaster: 'base_rate_fixed', outcomeKey: 'DRAWDOWN_80@24h', trigger: 'launch', source: 'raw', prob: 0.4, label: true },
-      { obsId: 'other2', forecaster: 'base_rate_fixed', outcomeKey: 'DRAWDOWN_80@24h', trigger: 'launch', source: 'raw', prob: 0.4, label: false },
+      { obsId: 'other1', forecaster: 'base_rate_fixed', outcomeKey: 'DRAWDOWN_80@24h', trigger: 'launch', source: 'raw', lane: 'index', prob: 0.4, label: true },
+      { obsId: 'other2', forecaster: 'base_rate_fixed', outcomeKey: 'DRAWDOWN_80@24h', trigger: 'launch', source: 'raw', lane: 'index', prob: 0.4, label: false },
     ];
     const all = scoreBenchmark(disjoint).sections.find((s) => s.splitBy === 'all')!;
     const det = all.byOutcome['DRAWDOWN_80@24h']!.find((c) => c.forecaster === 'det_v0')!;
@@ -80,6 +85,26 @@ describe('scoreBenchmark', () => {
     expect(cmp.n).toBe(0);
     expect(cmp.claimAllowed).toBe(false);
     expect(cmp.note).toMatch(/insufficient overlap/);
+  });
+});
+
+describe('lane-stratified scoring', () => {
+  it('does not mistake lane mix for within-lane discrimination', () => {
+    const mixed: ScoreRow[] = [];
+    for (let i = 0; i < 240; i++) {
+      mixed.push({ obsId: `index-${i}`, forecaster: 'det_v0', outcomeKey: 'TRADING_ALIVE@24h',
+        trigger: 'launch', source: 'raw', lane: 'index', prob: 0.1, label: i < 12 });
+      mixed.push({ obsId: `qualified-${i}`, forecaster: 'det_v0', outcomeKey: 'TRADING_ALIVE@24h',
+        trigger: 'qualified', source: 'raw', lane: 'qualified', prob: 0.9, label: i < 120 });
+    }
+    const sections = scoreBenchmark(mixed, { baselines: [] }).sections;
+    const cell = (splitBy: 'all' | 'lane', splitValue: string) =>
+      sections.find((s) => s.splitBy === splitBy && s.splitValue === splitValue)!
+        .byOutcome['TRADING_ALIVE@24h']![0]!;
+    expect(cell('all', 'all').auroc!).toBeGreaterThan(0.7);
+    expect(cell('lane', 'index').auroc).toBe(0.5);
+    expect(cell('lane', 'qualified').auroc).toBe(0.5);
+    expect(cell('lane', 'index').n + cell('lane', 'qualified').n).toBe(cell('all', 'all').n);
   });
 });
 
@@ -99,6 +124,7 @@ describe('base_rate_fixed — a constant climatology baseline', () => {
         outcomeKey: 'DRAWDOWN_80@24h',
         trigger: 'launch',
         source: 'raw',
+        lane: 'index',
         prob: 0.5, // the whole-sample prevalence in this fixture is exactly 0.5
         label,
       });
@@ -112,8 +138,8 @@ describe('base_rate_fixed — a constant climatology baseline', () => {
     const rows: ScoreRow[] = [];
     for (let i = 0; i < 120; i++) {
       const label = i % 2 === 0;
-      rows.push({ obsId: `a${i}`, forecaster: 'det_v0', outcomeKey: 'DRAWDOWN_80@24h', trigger: 'launch', source: 'raw', prob: label ? 0.8 : 0.3, label });
-      rows.push({ obsId: `a${i}`, forecaster: 'base_rate_fixed', outcomeKey: 'DRAWDOWN_80@24h', trigger: 'launch', source: 'raw', prob: 0.5, label });
+      rows.push({ obsId: `a${i}`, forecaster: 'det_v0', outcomeKey: 'DRAWDOWN_80@24h', trigger: 'launch', source: 'raw', lane: 'index', prob: label ? 0.8 : 0.3, label });
+      rows.push({ obsId: `a${i}`, forecaster: 'base_rate_fixed', outcomeKey: 'DRAWDOWN_80@24h', trigger: 'launch', source: 'raw', lane: 'index', prob: 0.5, label });
     }
     const all = scoreBenchmark(rows).sections.find((s) => s.splitBy === 'all')!;
     const det = all.byOutcome['DRAWDOWN_80@24h']!.find((x) => x.forecaster === 'det_v0')!;
@@ -129,8 +155,8 @@ function rareRows(n: number, positives: number): ScoreRow[] {
     const obsId = `tok${i}@t`;
     // det_v0 discriminates well; base_rate is near-constant
     const detProb = label ? 0.8 - (i % 5) * 0.01 : 0.2 + (i % 5) * 0.01;
-    out.push({ obsId, forecaster: 'det_v0', outcomeKey: 'INSIDER_EXIT@6h', trigger: 'launch', source: 'raw', prob: detProb, label });
-    out.push({ obsId, forecaster: 'base_rate', outcomeKey: 'INSIDER_EXIT@6h', trigger: 'launch', source: 'raw', prob: 0.5 + ((i % 4) - 1.5) * 0.01, label });
+    out.push({ obsId, forecaster: 'det_v0', outcomeKey: 'INSIDER_EXIT@6h', trigger: 'launch', source: 'raw', lane: 'index', prob: detProb, label });
+    out.push({ obsId, forecaster: 'base_rate', outcomeKey: 'INSIDER_EXIT@6h', trigger: 'launch', source: 'raw', lane: 'index', prob: 0.5 + ((i % 4) - 1.5) * 0.01, label });
   }
   return out;
 }
@@ -188,7 +214,7 @@ describe('invertedRanking — "ranks backwards", but only when it is not noise',
     const rows: ScoreRow[] = [];
     for (let i = 0; i < 300; i++) {
       const label = i % 3 === 0; // 100 positives
-      rows.push({ obsId: `t${i}`, forecaster: 'det_v0', outcomeKey: 'DRAWDOWN_80@24h', trigger: 'launch', source: 'raw', prob: label ? 0.1 + (i % 7) * 0.01 : 0.8 + (i % 7) * 0.01, label });
+      rows.push({ obsId: `t${i}`, forecaster: 'det_v0', outcomeKey: 'DRAWDOWN_80@24h', trigger: 'launch', source: 'raw', lane: 'index', prob: label ? 0.1 + (i % 7) * 0.01 : 0.8 + (i % 7) * 0.01, label });
     }
     const c = scoreBenchmark(rows, { baselines: [] }).sections[0]!.byOutcome['DRAWDOWN_80@24h']![0]!;
     expect(c.auroc).toBe(0);
@@ -206,9 +232,9 @@ describe('claim gates from the 2026-09-19 audit', () => {
       // first 35 positives are unpaired; the paired 205 carry only 5 positives
       const label = i < 40;
       const detProb = label ? 0.9 - (i % 5) * 0.01 : 0.1 + (i % 5) * 0.01;
-      out.push({ obsId: `o${i}`, forecaster: 'det_v0', outcomeKey: 'INSIDER_EXIT@24h', trigger: 'launch', source: 'raw', prob: detProb, label });
+      out.push({ obsId: `o${i}`, forecaster: 'det_v0', outcomeKey: 'INSIDER_EXIT@24h', trigger: 'launch', source: 'raw', lane: 'index', prob: detProb, label });
       if (i >= 35) {
-        out.push({ obsId: `o${i}`, forecaster: 'base_rate', outcomeKey: 'INSIDER_EXIT@24h', trigger: 'launch', source: 'raw', prob: 0.2 + ((i % 4) - 1.5) * 0.01, label });
+        out.push({ obsId: `o${i}`, forecaster: 'base_rate', outcomeKey: 'INSIDER_EXIT@24h', trigger: 'launch', source: 'raw', lane: 'index', prob: 0.2 + ((i % 4) - 1.5) * 0.01, label });
       }
     }
     const det = scoreBenchmark(out).sections[0]!.byOutcome['INSIDER_EXIT@24h']!.find((c) => c.forecaster === 'det_v0')!;
@@ -229,8 +255,8 @@ describe('claim gates from the 2026-09-19 audit', () => {
       // det inverted but less so than the heuristic
       const det = label ? 0.4 + (i % 7) * 0.02 : 0.5 + (i % 7) * 0.02;
       const heur = label ? 0.1 + (i % 7) * 0.01 : 0.9 - (i % 7) * 0.01;
-      out.push({ obsId: `o${i}`, forecaster: 'det_v0', outcomeKey: 'LIQ_IMPAIRED@24h', trigger: 'launch', source: 'raw', prob: det, label });
-      out.push({ obsId: `o${i}`, forecaster: 'heuristic_v1', outcomeKey: 'LIQ_IMPAIRED@24h', trigger: 'launch', source: 'raw', prob: heur, label });
+      out.push({ obsId: `o${i}`, forecaster: 'det_v0', outcomeKey: 'LIQ_IMPAIRED@24h', trigger: 'launch', source: 'raw', lane: 'index', prob: det, label });
+      out.push({ obsId: `o${i}`, forecaster: 'heuristic_v1', outcomeKey: 'LIQ_IMPAIRED@24h', trigger: 'launch', source: 'raw', lane: 'index', prob: heur, label });
     }
     const det = scoreBenchmark(out).sections[0]!.byOutcome['LIQ_IMPAIRED@24h']!.find((c) => c.forecaster === 'det_v0')!;
     expect(det.auroc!).toBeLessThan(0.5);

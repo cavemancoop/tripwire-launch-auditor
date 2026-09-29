@@ -1,4 +1,5 @@
 import { Prisma, prisma, type $Enums } from '@launch-auditor/db';
+import type { ScoreLane } from '@launch-auditor/scoring';
 
 export type ScoreScope = 'live' | 'retrospective' | 'both';
 
@@ -72,19 +73,21 @@ export async function readReportsForResolved(scope: ScoreScope): Promise<ScoreRe
 }
 
 const LAUNCH_BATCH = 500;
-const sourceCache = new Map<string, string>();
+export interface LaunchContext { source: string; lane: ScoreLane }
+const UNKNOWN_LAUNCH: LaunchContext = { source: 'unknown', lane: 'unknown' };
 
-/** Batch baseline source lookups; never issue one query per observation. */
-export async function warmLaunchSources(ids: Iterable<string | null>): Promise<void> {
-  const missing = [...new Set([...ids].filter((id): id is string => id !== null && !sourceCache.has(id)))];
-  for (let i = 0; i < missing.length; i += LAUNCH_BATCH) {
-    const chunk = missing.slice(i, i + LAUNCH_BATCH);
-    const launches = await prisma.launch.findMany({ where: { id: { in: chunk } }, select: { id: true, source: true } });
-    for (const id of chunk) sourceCache.set(id, 'unknown');
-    for (const launch of launches) sourceCache.set(launch.id, launch.source);
+/** A fresh, bounded launch-context view for one scorer snapshot. */
+export async function loadLaunchContexts(ids: Iterable<string | null>): Promise<Map<string, LaunchContext>> {
+  const unique = [...new Set([...ids].filter((id): id is string => id !== null))];
+  const contexts = new Map<string, LaunchContext>();
+  for (let i = 0; i < unique.length; i += LAUNCH_BATCH) {
+    const chunk = unique.slice(i, i + LAUNCH_BATCH);
+    const launches = await prisma.launch.findMany({ where: { id: { in: chunk } }, select: { id: true, source: true, lane: true } });
+    for (const launch of launches) contexts.set(launch.id, { source: launch.source, lane: launch.lane });
   }
+  return contexts;
 }
 
-export function launchSource(launchId: string | null): string {
-  return launchId === null ? 'unknown' : sourceCache.get(launchId) ?? 'unknown';
+export function launchContext(contexts: Map<string, LaunchContext>, launchId: string | null): LaunchContext {
+  return (launchId && contexts.get(launchId)) || UNKNOWN_LAUNCH;
 }

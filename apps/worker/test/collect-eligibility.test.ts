@@ -5,6 +5,8 @@ const db = vi.hoisted(() => ({
   outcomes: [] as unknown[],
   reports: [] as unknown[],
   features: [] as unknown[],
+  lane: 'index' as 'index' | 'qualified',
+  lanes: {} as Record<string, 'index' | 'qualified'>,
 }));
 vi.mock('@launch-auditor/db', async (original) => ({
   ...(await original<typeof import('@launch-auditor/db')>()),
@@ -16,7 +18,7 @@ vi.mock('@launch-auditor/db', async (original) => ({
     }),
     feature: { findMany: async () => db.features },
     launch: { findMany: async ({ where }: { where: { id: { in: string[] } } }) =>
-      where.id.in.map((id) => ({ id, source: 'raw' })) },
+      where.id.in.map((id) => ({ id, source: 'raw', lane: db.lanes[id] ?? db.lane })) },
   },
 }));
 
@@ -49,6 +51,8 @@ function report(token: string, forecaster: string, p: number) {
 }
 
 beforeEach(() => {
+  db.lane = 'index';
+  db.lanes = {};
   db.outcomes = [
     outcome(TIMELY, 'INSIDER_EXIT', '6h', true),
     outcome(TIMELY, 'INSIDER_EXIT', '24h', true),
@@ -75,7 +79,24 @@ describe('collectScoreRows — timing eligibility', () => {
     const { rows } = await collectScoreRows({ blockTimeOf });
     expect(rows.length).toBeGreaterThan(0);
     expect(rows.every((r) => r.obsId.includes(TIMELY))).toBe(true);
+    expect(rows.every((r) => r.lane === 'index')).toBe(true);
     expect(new Set(rows.map((r) => r.forecaster))).toEqual(new Set(['det_v0', 'heuristic_v1', 'base_rate', 'base_rate_fixed', 'scanhood']));
+  });
+
+  it('uses the same refreshed outcome lane for every forecaster after promotion', async () => {
+    const first = await collectScoreRows({ blockTimeOf });
+    expect(first.rows.every((r) => r.lane === 'index')).toBe(true);
+    db.lane = 'qualified';
+    const second = await collectScoreRows({ blockTimeOf });
+    expect(second.rows.every((r) => r.lane === 'qualified')).toBe(true);
+  });
+
+  it('uses the outcome launch lane even when a report points to a different launch', async () => {
+    db.lanes[`L-${TIMELY}`] = 'qualified';
+    db.reports = db.reports.map((r) => ({ ...(r as object), launchId: 'report-only-launch' }));
+    const { rows } = await collectScoreRows({ blockTimeOf });
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((r) => r.lane === 'qualified')).toBe(true);
   });
 
   it('counts the replay as late on the ended 6h horizon and replay on the open 24h one', async () => {
