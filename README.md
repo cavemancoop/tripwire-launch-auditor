@@ -405,7 +405,8 @@ deploy-time command — the migrations directory is already in the repo.
   na, unresolvable, retry, failed), and `loop_iterations_total`,
   `loop_errors_total`, `loop_last_success_timestamp_seconds` by `loop`
   (outcomes, scorer; timestamp 0 = never) (23 series). There are 69 fixed
-  series and never an RPC URL, token address or error message. Sweep counts
+  series and never an RPC URL, token address or error message. The worker's
+  fixed method buckets add 13 series (82 total). Sweep counts
   come only from sweeps that returned; a sweep that threw adds to the error
   counters and its duration, and does not move the last-success timestamp.
   If collection fails it returns a fixed
@@ -413,7 +414,12 @@ deploy-time command — the migrations directory is already in the repo.
   A bounded operational subset is logged once a minute as `[obs] {json}`: rpc
   tier → [started, completed, failed, queued, inFlight],
   `rpcWire` → [attempts, providerFailures, quotaFailures], plus rss, heapUsed,
-  heapTotal and maxRss rounded to MB, and uptime. It omits `external`,
+  `rpcMethods` → cumulative budgeted transport attempts by a fixed JSON-RPC
+  method set (unknown methods go to `other`), plus rss, heapUsed,
+  heapTotal and maxRss rounded to MB, and uptime. These method counts include
+  retries but exclude cache hits and pre-send cancellations; they are not
+  provider-billed request units or a full inventory of wallet/API traffic.
+  It omits `external`,
   `array_buffers` and `heap_limit_bytes`. The outcomes `swept` log line ends
   with the sweep duration. Each nonempty sweep also writes one bounded
   `[outcomes-cell] {json}` line: counts of picked, RESOLVED status,

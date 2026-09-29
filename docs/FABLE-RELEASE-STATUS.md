@@ -1,43 +1,54 @@
 # Fable engineering release status
 
-This release candidate applies the reviewed repository-local work from the
-Fable implementation loop to the production base `23d81a4`. Its application
-source matches local checkpoint `67c1dbc` (round 9). It includes no schema
-migration, new environment variable, contract change, or change to the public
-API response shape.
+Updated 2026-09-29. Public `main` includes the independently reviewed Fable
+stabilization packages through [PR #15](https://github.com/cavemancoop/tripwire-launch-auditor/pull/15).
+It is running on the Railway API, worker and web services. This page records
+the current release boundary; a passed test suite is not a seven-day capacity
+or outcome-quality claim.
 
-## Included work
+## Shipped and observed
 
-- **Package 2a — worker observation:** fixed-label RPC scheduler counters,
-  process memory and uptime on the private worker `/metrics` route, and a
-  bounded one-minute `[obs]` log line. `/health` remains unchanged; metrics
-  collection failures return a fixed 503 response.
-- **Package 2b — loop observation:** outcome sweep timing, selection/result
-  counts, and outcomes/scorer loop success and error counters. These are
-  process-local and reset on restart. A sweep that throws may omit partial row
-  counts; the failure and duration still appear.
-- **Package 4a — provider failure safety:** shared typed RPC classification,
-  quota-aware deferral, credential redaction in new outcome diagnostics, and
-  regression coverage for nested provider errors. Quota failures and nested
-  429s leave affected outcome rows pending for retry. The existing v1
-  DRAWDOWN_80 grading interpretation remains in force for historical rows.
+- Same-block DRAWDOWN_80 v1 regression coverage; the proposed zero-swap
+  fallback that would have changed historical grading was held.
+- Worker and loop metrics, typed provider failures, quota-safe deferrals,
+  cancellable RPC retries, and expiring ownership of outcome rows. The claim
+  schema migration was deployed before outcome resolution was re-enabled.
+- Commitment ordering, bounded proof caching, assessment admission controls,
+  durable alert state, live deterministic report-lag checks, and a provider
+  quota/failure alert. These alerts cannot detect a worker that is itself down.
+- Budgeted worker transport attempt totals and per-outcome-cell sweep-service
+  counts. The first live 50-row cell log reconciled to its sweep summary.
 
-## Local verification
+The current candidate adds fixed JSON-RPC method buckets to the existing
+budgeted transport counters. These count attempts including retries, not
+provider-billed request units or wallet/API traffic. They do not change RPC
+admission, resolution, scoring, report commitments or the public API.
 
-On the publishable tree, `node scripts/verify.mjs` passed Prisma generation
-and validation, all workspace typechecks, and 829 Vitest tests across six
-packages. The test count was 34 chain, 8 database, 59 scoring, 70 RPC budget,
-76 API, and 582 worker. The checks ran in an isolated, network-disabled copy.
+## Verification
 
-Forge contract tests were skipped because Forge is unavailable. This change
-does not edit contracts. The local check does not prove behavior against a
-live RPC provider or production Postgres.
+Run `pnpm verify` for Prisma generation and validation, workspace typechecks
+and offline Vitest suites. The current candidate passed 621 worker tests;
+Foundry is unavailable, so contract tests were skipped. No contract changed.
+Each public change requires an independent review of its exact candidate,
+merge-SHA deployment checks and a live observation before its status is called
+shipped. The new method counters still need those release checks.
 
-## Remaining work and evidence
+## Open gates
 
-Package 4b cancellation and row ownership is still under development. The
-agent loop's later checkpoints are not part of this release. Deployment
-health, worker logs, and production observation must be recorded against the
-exact published commit. No seven-day throughput or quality target is claimed
-from local tests. Rule changes, corrections to historical data, and provider
-budget changes require separate decisions.
+- Measure Chainstack account request-unit burn with a second dated console
+  reading. A worker attempt is not necessarily one billed request unit.
+- Attribute attempts to outcome cells and measure representative, matched
+  arrival/service windows. The public benchmark already discloses that
+  graded rows are selected, not a random sample.
+- Decide any prospective workload narrowing, horizon pause or v2 outcome rule
+  against a frozen comparison cohort. Existing rows and the current provider
+  cap remain unchanged until that decision.
+- Rehearse and authorize any historical M2 correction separately. The
+  additive enum schema alone did not rewrite production rows.
+- Observe alerts, core-path health and cohort coverage for a full seven-day
+  window; configure external worker/feed-silence monitoring; test the event
+  index only if the measured gate warrants it.
+
+The original first-release record is in the Git history at PR #1. Its
+829-test count and pending-package list describe that earlier candidate, not
+the current public release.

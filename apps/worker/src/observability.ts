@@ -6,7 +6,7 @@
  * RPC URL (URLs embed provider keys), address, row id or error message.
  */
 import { getHeapStatistics } from 'node:v8';
-import { allSchedulerStats, PRIORITY, rpcWireStats, type RpcWireStats, type SchedulerStats } from '@launch-auditor/rpc-budget';
+import { allSchedulerStats, PRIORITY, rpcWireStats, rpcMethodStats, RPC_METHODS, type RpcWireStats, type RpcMethod, type SchedulerStats } from '@launch-auditor/rpc-budget';
 
 export const TIERS = ['watcher', 'commit', 'outcomes', 'assess', 'deepdive', 'backfill', 'other'] as const;
 export type Tier = (typeof TIERS)[number];
@@ -27,6 +27,7 @@ export const MEMORY_KINDS = ['rss', 'heap_used', 'heap_total', 'external', 'arra
 export interface WorkerObservation {
   tiers: Record<Tier, TierStats>;
   wire: RpcWireStats;
+  methods: Record<RpcMethod, number>;
   memory: Record<(typeof MEMORY_KINDS)[number], number>;
   maxRssBytes: number;
   heapLimitBytes: number;
@@ -56,6 +57,7 @@ export function observe(schedulers: () => SchedulerStats[] = allSchedulerStats):
   return {
     tiers: sumTiers(schedulers()),
     wire: rpcWireStats(),
+    methods: rpcMethodStats(),
     memory: {
       rss: m.rss,
       heap_used: m.heapUsed,
@@ -94,6 +96,8 @@ export function formatWorkerMetrics(o: WorkerObservation): string {
     head(name, 'counter', help);
     lines.push(`tripwire_worker_${name} ${value}`);
   }
+  head('rpc_method_attempts_total', 'counter', 'Budgeted transport attempts including retries, by fixed JSON-RPC method bucket');
+  for (const method of RPC_METHODS) lines.push(`tripwire_worker_rpc_method_attempts_total{method="${method}"} ${o.methods[method]}`);
   head('memory_bytes', 'gauge', 'process.memoryUsage() by kind');
   for (const k of MEMORY_KINDS) lines.push(`tripwire_worker_memory_bytes{kind="${k}"} ${o.memory[k]}`);
   head('max_rss_bytes', 'gauge', 'peak resident set size since process start');
@@ -118,6 +122,7 @@ export function obsLogLine(o: WorkerObservation): string {
   return `[obs] ${JSON.stringify({
     rpc,
     rpcWire: [o.wire.attempts, o.wire.providerFailures, o.wire.quotaFailures],
+    rpcMethods: o.methods,
     memMb: { rss: mb(o.memory.rss), heapUsed: mb(o.memory.heap_used), heapTotal: mb(o.memory.heap_total), maxRss: mb(o.maxRssBytes) },
     uptimeS: o.uptimeSeconds,
   })}`;
