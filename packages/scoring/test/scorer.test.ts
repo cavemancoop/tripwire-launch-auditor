@@ -71,6 +71,24 @@ describe('scoreBenchmark', () => {
     expect(cmp.n).toBe(240); // overlap n — Codex Phase A #4 wanted this published per comparison
   });
 
+  it('keeps snapshot-lane sections diagnostic even when pooled comparisons clear the claim gate', () => {
+    const benchmark = scoreBenchmark(rows(480));
+    const pooled = benchmark.sections.find((s) => s.splitBy === 'all')!;
+    const index = benchmark.sections.find((s) => s.splitBy === 'lane' && s.splitValue === 'index')!;
+    const qualified = benchmark.sections.find((s) => s.splitBy === 'lane' && s.splitValue === 'qualified')!;
+    expect(pooled.diagnosticOnly).toBe(false);
+    expect(index.diagnosticOnly).toBe(true);
+    const pooledDet = pooled.byOutcome['DRAWDOWN_80@24h']!.find((c) => c.forecaster === 'det_v0')!;
+    expect(pooledDet.comparisons.find((c) => c.vs === 'base_rate')!.claimAllowed).toBe(true);
+    for (const section of [index, qualified]) {
+      const det = section.byOutcome['DRAWDOWN_80@24h']!.find((c) => c.forecaster === 'det_v0')!;
+      expect(det.n).toBe(240);
+      expect(det.comparisons.find((c) => c.vs === 'base_rate')!.claimAllowed).toBe(false);
+      expect(det.comparisons.find((c) => c.vs === 'base_rate')!.note).toMatch(/diagnostic only/);
+      expect(section.byOutcome['DRAWDOWN_80@24h']!.every((c) => !c.invertedRanking)).toBe(true);
+    }
+  });
+
   it('publishes an insufficient-overlap comparison with n=0, never a bare null', () => {
     // base_rate_fixed rows exist for this cell but share no obsId with det_v0
     // — zero overlap, the "insufficient overlap / single class" DeLong branch.
@@ -219,6 +237,8 @@ describe('invertedRanking — "ranks backwards", but only when it is not noise',
     const c = scoreBenchmark(rows, { baselines: [] }).sections[0]!.byOutcome['DRAWDOWN_80@24h']![0]!;
     expect(c.auroc).toBe(0);
     expect(c.invertedRanking).toBe(true);
+    const lane = scoreBenchmark(rows, { baselines: [] }).sections.find((s) => s.splitBy === 'lane')!;
+    expect(lane.byOutcome['DRAWDOWN_80@24h']![0]!.invertedRanking).toBe(false);
   });
 });
 

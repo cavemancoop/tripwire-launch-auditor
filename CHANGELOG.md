@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-09-29 — Mark snapshot-lane benchmark cells diagnostic in the API
+
+Lane sections now carry `diagnosticOnly: true`; their comparison
+`claimAllowed` and `invertedRanking` flags are always false, with a diagnostic
+note. Lane is measured at snapshot time and can change after the forecast, so
+these cells cannot supply prospective lane-specific superiority claims.
+Pooled, trigger and source claim gates and all numeric lane metrics remain as
+before. No outcome policy or historical row changes.
+
 ## 2026-09-29 — Show launch-lane benchmark results on the dashboard
 
 Panel 04 now renders the live index and qualified benchmark sections below

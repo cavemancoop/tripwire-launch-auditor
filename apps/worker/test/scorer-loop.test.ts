@@ -17,6 +17,7 @@ const fakeBenchmark = (n: number): Benchmark => ({
     {
       splitBy: 'all',
       splitValue: 'all',
+      diagnosticOnly: false,
       byOutcome: {
         'INSIDER_EXIT@24h': [
           {

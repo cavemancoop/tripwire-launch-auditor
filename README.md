@@ -501,8 +501,9 @@ launches. These use the same resolved, commit-eligible report/outcome pairs as
 the pooled section, for a descriptive breakdown of the currently graded rows.
 Lane comes from the linked outcome launch at snapshot time and is refreshed on
 every scorer pass; it is not a historical lane-at-report field. The minimum
-sample and paired-comparison gates still apply in the JSON; the dashboard does
-not show lane-specific beat claims because lane can change after the forecast.
+sample threshold still applies. Lane sections have `diagnosticOnly: true` and
+their `claimAllowed` and `invertedRanking` flags remain false because lane can
+change after the forecast; paired comparison statistics remain descriptive.
 A lane-specific score on the
 currently graded subset does not establish population accuracy or remove the
 published backlog warning. The dashboard shows the pooled table and a separate
