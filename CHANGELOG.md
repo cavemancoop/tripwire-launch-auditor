@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-09-29 — Lane-stratified benchmark sections
+
+The scorer now adds index, qualified and, where present, unknown launch-lane
+sections to the existing benchmark JSON. Every section reuses the already
+commit-eligible paired score rows and existing sample/DeLong gates. Launch
+context is fetched in bounded 500-ID batches on each snapshot so a later
+T+10m lane promotion cannot remain hidden behind a process-long cache. The
+fresh reads add database work proportional to linked resolved launches; watch
+scorer duration against its five-minute cadence as history grows. The
+pooled, trigger and source sections retain their previous definitions; no
+outcome truth, selection, RPC cap or historical row changes.
+
+Verify with `pnpm verify`; after release require a fresh scorer snapshot and
+check that `GET /v1/benchmark` contains lane sections with sensible counts.
+These are current-lane, selected-row diagnostics, not population claims.
+
 ## 2026-09-29 — Current Fable release-status documentation
 
 Updated the public status page with PR #19 scorer recovery, PR #20's staged

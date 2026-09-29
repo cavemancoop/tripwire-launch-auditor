@@ -24,6 +24,8 @@ export const MIN_FOR_CLAIMS = 200;
  */
 export const MIN_POSITIVES_FOR_CLAIMS = 30;
 
+export type ScoreLane = 'index' | 'qualified' | 'unknown';
+
 /** One forecaster's prediction for one resolved outcome of one launch. */
 export interface ScoreRow {
   /** stable per-observation id (e.g. `${token}@${anchorTime}`) — aligns forecasters for DeLong */
@@ -32,6 +34,8 @@ export interface ScoreRow {
   outcomeKey: OutcomeKey;
   trigger: string;
   source: string;
+  /** Launch lane linked to the resolved observation, shared by all forecasters. */
+  lane: ScoreLane;
   prob: number;
   label: boolean;
 }
@@ -69,7 +73,7 @@ export interface ForecasterCell {
 }
 
 export interface BenchmarkSection {
-  splitBy: 'all' | 'trigger' | 'source';
+  splitBy: 'all' | 'trigger' | 'source' | 'lane';
   splitValue: string;
   byOutcome: Partial<Record<OutcomeKey, ForecasterCell[]>>;
 }
@@ -258,7 +262,7 @@ function sectionFor(
   return { splitBy, splitValue, byOutcome };
 }
 
-/** Build the full benchmark table (spec §2): all rows, then split by trigger, then by source. */
+/** Build the benchmark from the same eligible rows at each split. */
 export function scoreBenchmark(rows: ScoreRow[], opts: ScoreOptions = {}): Benchmark {
   const thresholds = opts.thresholds ?? [0.5];
   const baselines = opts.baselines ?? ['base_rate', 'base_rate_fixed', 'heuristic_v1'];
@@ -270,6 +274,9 @@ export function scoreBenchmark(rows: ScoreRow[], opts: ScoreOptions = {}): Bench
   }
   for (const src of [...new Set(rows.map((r) => r.source))].sort()) {
     sections.push(sectionFor('source', src, rows.filter((r) => r.source === src), baselines, thresholds));
+  }
+  for (const lane of [...new Set(rows.map((r) => r.lane))].sort()) {
+    sections.push(sectionFor('lane', lane, rows.filter((r) => r.lane === lane), baselines, thresholds));
   }
 
   return {

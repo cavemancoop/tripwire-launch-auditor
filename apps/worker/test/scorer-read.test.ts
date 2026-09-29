@@ -6,7 +6,7 @@ vi.mock('@launch-auditor/db', async (original) => ({
   prisma: { $queryRaw: db.query, launch: { findMany: db.launches } },
 }));
 
-import { launchSource, readReportsForResolved, warmLaunchSources } from '../src/scorer/read';
+import { launchContext, loadLaunchContexts, readReportsForResolved } from '../src/scorer/read';
 
 describe('bounded scorer reads', () => {
   it('selects exact resolved observation keys and preserves nullable report relations', async () => {
@@ -41,16 +41,19 @@ describe('bounded scorer reads', () => {
     expect((db.query.mock.calls[2]![0] as { values: unknown[] }).values).toEqual([]);
   });
 
-  it('fetches launch sources in bounded chunks and caches missing links as unknown', async () => {
+  it('fetches a fresh launch context in bounded chunks and keeps missing links unknown', async () => {
     db.launches.mockImplementation(async ({ where }: { where: { id: { in: string[] } } }) =>
-      where.id.in.filter((id) => id !== 'scorer-read-missing').map((id) => ({ id, source: 'raw' })));
+      where.id.in.filter((id) => id !== 'scorer-read-missing').map((id) => ({ id, source: 'raw', lane: 'qualified' })));
     const ids = Array.from({ length: 1201 }, (_, i) => `scorer-read-${i}`);
-    await warmLaunchSources([...ids, 'scorer-read-missing', null]);
+    const contexts = await loadLaunchContexts([...ids, 'scorer-read-missing', null]);
     expect(db.launches.mock.calls.map(([arg]) => arg.where.id.in.length)).toEqual([500, 500, 202]);
-    expect(launchSource(ids[1200]!)).toBe('raw');
-    expect(launchSource('scorer-read-missing')).toBe('unknown');
-    expect(launchSource(null)).toBe('unknown');
-    await warmLaunchSources([...ids, 'scorer-read-missing']);
-    expect(db.launches).toHaveBeenCalledTimes(3);
+    expect(launchContext(contexts, ids[1200]!)).toEqual({ source: 'raw', lane: 'qualified' });
+    expect(launchContext(contexts, 'scorer-read-missing')).toEqual({ source: 'unknown', lane: 'unknown' });
+    expect(launchContext(contexts, null)).toEqual({ source: 'unknown', lane: 'unknown' });
+    db.launches.mockImplementation(async ({ where }: { where: { id: { in: string[] } } }) =>
+      where.id.in.map((id) => ({ id, source: 'raw', lane: 'index' })));
+    const refreshed = await loadLaunchContexts([ids[1200]!]);
+    expect(launchContext(refreshed, ids[1200]!).lane).toBe('index');
+    expect(launchContext(contexts, ids[1200]!).lane).toBe('qualified');
   });
 });
