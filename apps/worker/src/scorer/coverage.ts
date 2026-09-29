@@ -16,6 +16,8 @@ export interface CellCoverage {
   pendingNotDue: number;
   unresolvable: number;
   na: number;
+  /** Outside the grading policy; applies to the launch but is not a measurement. */
+  policyExcluded: number;
   /** resolved backfill rows — counted from the rows' own flag, never inferred as all.n − live.n */
   retrospectiveResolved: number;
 }
@@ -23,7 +25,7 @@ export interface CellCoverage {
 export type CoverageByCell = Partial<Record<OutcomeKey, CellCoverage>>;
 export type CoverageReader = (now: Date) => Promise<CoverageByCell>;
 
-const empty = (): CellCoverage => ({ resolved: 0, pendingDue: 0, pendingNotDue: 0, unresolvable: 0, na: 0, retrospectiveResolved: 0 });
+const empty = (): CellCoverage => ({ resolved: 0, pendingDue: 0, pendingNotDue: 0, unresolvable: 0, na: 0, policyExcluded: 0, retrospectiveResolved: 0 });
 
 /** Live (non-retrospective) outcome rows per (label, horizon), by status, plus resolved backfill rows. */
 export const prismaCoverageReader: CoverageReader = async (now) => {
@@ -53,6 +55,7 @@ export const prismaCoverageReader: CoverageReader = async (now) => {
     if (g.status === 'RESOLVED') c.resolved += n;
     else if (g.status === 'UNRESOLVABLE') c.unresolvable += n;
     else if (g.status === 'NA') c.na += n;
+    else if (g.status === 'POLICY_EXCLUDED') c.policyExcluded += n;
     else if (g.status === 'PENDING') c.pendingNotDue += n;
   }
   for (const g of due) {
@@ -72,7 +75,8 @@ export function resolutionPolicy(qualifiedOnly: boolean): string {
   return (
     'Outcomes are graded after their horizon passes, in order of due time, sharing one RPC budget fairly across labels. ' +
     `${scope} ` +
-    'The resolver does not keep up with every forecast, so graded rows are not a random sample: they lean toward qualified launches and toward whichever launches were reached first.'
+    'The resolver does not keep up with every forecast, so graded rows are not a random sample: they lean toward qualified launches and toward whichever launches were reached first. ' +
+    'Rows explicitly marked POLICY_EXCLUDED appear separately in coverage; they are not measurements or pending work. Historical out-of-policy rows remain pending until corrected.'
   );
 }
 

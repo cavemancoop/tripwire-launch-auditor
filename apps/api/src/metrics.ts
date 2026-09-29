@@ -15,7 +15,7 @@ export interface MetricsSnapshot {
   /** per outcome label: horizon-due PENDING rows, of which deferred (retrying),
    *  and rows resolved in the trailing 24h. A label with a growing due backlog
    *  and ~0 resolved is a starved benchmark cell. Optional so older readers work. */
-  outcomes?: Array<{ label: string; pendingDue: number; deferred: number; resolved24h: number }>;
+  outcomes?: Array<{ label: string; pendingDue: number; deferred: number; resolved24h: number; policyExcluded?: number }>;
   /** seconds since the newest live launch/qualified det_v0 report was written */
   newestDetReportAgeSec?: number | null;
   /** launch -> report delay of that newest live report (on-demand reports excluded) */
@@ -37,7 +37,7 @@ export const prismaMetricsReader: MetricsReader = async () => {
   const now = new Date();
   const since24h = new Date(now.getTime() - 24 * 3_600_000);
 
-  const [watcherCursor, commit, lifecycle, epoch, launches24h, reports24h, due, deferred, resolved] = await Promise.all([
+  const [watcherCursor, commit, lifecycle, epoch, launches24h, reports24h, due, deferred, resolved, policyExcluded] = await Promise.all([
     prisma.watcherCursor.findFirst({ orderBy: { updatedAt: 'desc' } }),
     prisma.commit.findFirst({ orderBy: { createdAt: 'desc' } }),
     prisma.lifecycleLog.findFirst({ orderBy: { createdAt: 'desc' } }),
@@ -57,6 +57,11 @@ export const prismaMetricsReader: MetricsReader = async () => {
     prisma.outcome.groupBy({
       by: ['label'],
       where: { status: 'RESOLVED', measuredAt: { gte: since24h } },
+      _count: { _all: true },
+    }),
+    prisma.outcome.groupBy({
+      by: ['label'],
+      where: { status: 'POLICY_EXCLUDED' },
       _count: { _all: true },
     }),
   ]);
@@ -81,7 +86,7 @@ export const prismaMetricsReader: MetricsReader = async () => {
 
   const count = (rows: Array<{ label: string; _count: { _all: number } }>, label: string): number =>
     rows.find((r) => r.label === label)?._count._all ?? 0;
-  const labels = [...new Set([...due, ...deferred, ...resolved].map((r) => r.label))].sort();
+  const labels = [...new Set([...due, ...deferred, ...resolved, ...policyExcluded].map((r) => r.label))].sort();
 
   return {
     watcherStalenessSec: age(now, watcherCursor?.updatedAt),
@@ -101,6 +106,7 @@ export const prismaMetricsReader: MetricsReader = async () => {
       pendingDue: count(due, label),
       deferred: count(deferred, label),
       resolved24h: count(resolved, label),
+      policyExcluded: count(policyExcluded, label),
     })),
     catchFailures: catchFailureRows.map((r) => ({
       site: r.site,
@@ -159,6 +165,9 @@ export function formatPrometheus(m: MetricsSnapshot): string {
   series('launch_auditor_outcomes_pending_due', 'PENDING outcomes whose horizon has passed, per label', (o) => o.pendingDue);
   series('launch_auditor_outcomes_deferred', 'Horizon-due PENDING outcomes currently retrying after a transient failure, per label', (o) => o.deferred);
   series('launch_auditor_outcomes_resolved_24h', 'Outcomes resolved in the trailing 24h, per label', (o) => o.resolved24h);
+  if (m.outcomes?.some((o) => o.policyExcluded !== undefined)) {
+    series('launch_auditor_outcomes_policy_excluded', 'All-time POLICY_EXCLUDED rows outside grading scope; not a measurement or pending work', (o) => o.policyExcluded ?? 0);
+  }
 
   if (m.catchFailures?.length) {
     lines.push(

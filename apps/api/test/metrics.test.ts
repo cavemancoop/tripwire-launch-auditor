@@ -53,6 +53,17 @@ describe('formatPrometheus', () => {
     expect(text).toContain('launch_auditor_outcomes_pending_due{label="SELL_IMPAIRED"} 900');
     expect(text).toContain('launch_auditor_outcomes_deferred{label="SELL_IMPAIRED"} 850');
     expect(text).toContain('launch_auditor_outcomes_resolved_24h{label="SELL_IMPAIRED"} 3');
+    expect(text).not.toContain('launch_auditor_outcomes_policy_excluded');
+  });
+
+  it('reports policy exclusions separately from pending and resolved rows', () => {
+    const text = formatPrometheus({
+      ...SNAPSHOT,
+      outcomes: [{ label: 'INSIDER_EXIT', pendingDue: 900, deferred: 8, resolved24h: 3, policyExcluded: 400 }],
+    });
+    expect(text).toContain('launch_auditor_outcomes_pending_due{label="INSIDER_EXIT"} 900');
+    expect(text).toContain('launch_auditor_outcomes_policy_excluded{label="INSIDER_EXIT"} 400');
+    expect(text).toMatch(/All-time POLICY_EXCLUDED rows outside grading scope/);
   });
 
   it('flags ids_or_phantom as 1 when set', () => {

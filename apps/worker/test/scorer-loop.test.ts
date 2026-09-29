@@ -136,7 +136,7 @@ describe('runScorerLoop', () => {
     outFile = join(tmpdir(), `benchmark-loop-coverage-test-${Date.now()}.json`);
     const signal: StopSignal = { stopped: false };
     const persisted: BenchmarkSnapshot[] = [];
-    const cov = { 'INSIDER_EXIT@24h': { resolved: 1165, pendingDue: 20301, pendingNotDue: 40, unresolvable: 12, na: 0, retrospectiveResolved: 0 } };
+    const cov = { 'INSIDER_EXIT@24h': { resolved: 1165, pendingDue: 20301, pendingNotDue: 40, unresolvable: 12, na: 0, policyExcluded: 0, retrospectiveResolved: 0 } };
 
     await runScorerLoop(signal, {
       outFile,
