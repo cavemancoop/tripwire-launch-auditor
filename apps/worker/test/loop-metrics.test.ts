@@ -86,7 +86,7 @@ describe('formatLoopMetrics', () => {
 
   it('the /metrics default carries fixed process, method and loop series', () => {
     const text = defaultWorkerMetrics();
-    expect(samples(text)).toHaveLength(46 + RPC_METHODS.length + 23);
+    expect(samples(text)).toHaveLength(56 + RPC_METHODS.length + 23);
     expect(text).toContain('tripwire_worker_rpc_started_total{tier="watcher"}');
     expect(text).toContain('tripwire_worker_loop_last_success_timestamp_seconds{loop="scorer"}');
   });

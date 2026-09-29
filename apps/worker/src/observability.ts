@@ -7,6 +7,7 @@
  */
 import { getHeapStatistics } from 'node:v8';
 import { allSchedulerStats, PRIORITY, rpcWireStats, rpcMethodStats, rpcOutcomeCellStats, RPC_METHODS, type RpcWireStats, type RpcMethod, type SchedulerStats } from '@launch-auditor/rpc-budget';
+import { BLOCK_TIME_READ_BUCKETS, blockTimeStats } from './outcomes/block-time';
 
 export const TIERS = ['watcher', 'commit', 'outcomes', 'assess', 'deepdive', 'backfill', 'other'] as const;
 export type Tier = (typeof TIERS)[number];
@@ -29,6 +30,7 @@ export interface WorkerObservation {
   wire: RpcWireStats;
   methods: Record<RpcMethod, number>;
   outcomeCells: Record<string, number>;
+  blockTime: ReturnType<typeof blockTimeStats>;
   memory: Record<(typeof MEMORY_KINDS)[number], number>;
   maxRssBytes: number;
   heapLimitBytes: number;
@@ -60,6 +62,7 @@ export function observe(schedulers: () => SchedulerStats[] = allSchedulerStats):
     wire: rpcWireStats(),
     methods: rpcMethodStats(),
     outcomeCells: rpcOutcomeCellStats(),
+    blockTime: blockTimeStats(),
     memory: {
       rss: m.rss,
       heap_used: m.heapUsed,
@@ -100,6 +103,18 @@ export function formatWorkerMetrics(o: WorkerObservation): string {
   }
   head('rpc_method_attempts_total', 'counter', 'Budgeted transport attempts including retries, by fixed JSON-RPC method bucket');
   for (const method of RPC_METHODS) lines.push(`tripwire_worker_rpc_method_attempts_total{method="${method}"} ${o.methods[method]}`);
+  for (const [name, help, value] of [
+    ['block_time_lookups_total', 'Wall-clock-to-block lookups requested, including cache hits', o.blockTime.lookups],
+    ['block_time_cache_hits_total', 'Wall-clock-to-block lookups served from the process cache', o.blockTime.cacheHits],
+    ['block_time_block_reads_total', 'getBlock attempts made by wall-clock-to-block lookups', o.blockTime.blockReads],
+    ['block_time_unfinished_total', 'Lookups cached before the 18-probe binary search converged', o.blockTime.unfinished],
+    ['block_time_failures_total', 'Wall-clock-to-block lookups that threw', o.blockTime.failures],
+  ] as const) {
+    head(name, 'counter', help);
+    lines.push(`tripwire_worker_${name} ${value}`);
+  }
+  head('block_time_lookup_read_bucket_total', 'counter', 'Completed uncached lookups by getBlock read count, including failures');
+  for (const bucket of BLOCK_TIME_READ_BUCKETS) lines.push(`tripwire_worker_block_time_lookup_read_bucket_total{bucket="${bucket}"} ${o.blockTime.readBuckets[bucket]}`);
   head('memory_bytes', 'gauge', 'process.memoryUsage() by kind');
   for (const k of MEMORY_KINDS) lines.push(`tripwire_worker_memory_bytes{kind="${k}"} ${o.memory[k]}`);
   head('max_rss_bytes', 'gauge', 'peak resident set size since process start');
@@ -126,6 +141,7 @@ export function obsLogLine(o: WorkerObservation): string {
     rpcWire: [o.wire.attempts, o.wire.providerFailures, o.wire.quotaFailures],
     rpcMethods: o.methods,
     rpcOutcomeCells: o.outcomeCells,
+    blockTime: [o.blockTime.lookups, o.blockTime.cacheHits, o.blockTime.blockReads, o.blockTime.unfinished, o.blockTime.failures, o.blockTime.readBuckets],
     memMb: { rss: mb(o.memory.rss), heapUsed: mb(o.memory.heap_used), heapTotal: mb(o.memory.heap_total), maxRss: mb(o.maxRssBytes) },
     uptimeS: o.uptimeSeconds,
   })}`;

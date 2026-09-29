@@ -429,9 +429,12 @@ deploy-time command — the migrations directory is already in the repo.
   (five outcome labels, other), `outcome_rows_total` by `result` (resolved,
   na, unresolvable, retry, failed), and `loop_iterations_total`,
   `loop_errors_total`, `loop_last_success_timestamp_seconds` by `loop`
-  (outcomes, scorer; timestamp 0 = never) (23 series). The worker exports 82
-  fixed series, including 13 RPC method buckets, and never an RPC URL, token
-  address or error message. Sweep counts
+  (outcomes, scorer; timestamp 0 = never) (23 series). Ten additional
+  fixed series count wall-clock-to-block lookup requests, cache hits, block
+  reads, unfinished searches and failures, with five read-count buckets.
+  The worker exports 92 fixed series, including 13 RPC method buckets, and
+  never an RPC URL, token address or error message. Lookup counters measure
+  helper attempts, not provider-billed request units. Sweep counts
   come only from sweeps that returned; a sweep that threw adds to the error
   counters and its duration, and does not move the last-success timestamp.
   If collection fails it returns a fixed
