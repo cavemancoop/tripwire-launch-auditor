@@ -33,7 +33,7 @@ and offline Vitest suites. The current candidate passed 622 worker tests;
 Foundry is unavailable, so contract tests were skipped. No contract changed.
 Each public change requires an independent review of its exact candidate,
 merge-SHA deployment checks and a live observation before its status is called
-shipped. The new method counters still need those release checks.
+shipped. The per-cell attribution candidate still needs those release checks.
 
 ## Open gates
 
