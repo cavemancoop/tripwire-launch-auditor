@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-09-29 — Bounded scorer snapshot reads
+
+The scorer now joins validated reports to resolved outcome keys in Postgres
+before loading them. It preserves the existing chain/address/anchor matching,
+live/retrospective scope, commit eligibility and forecaster comparison rules.
+Baseline launch sources are fetched in 500-ID batches rather than one query
+per observation. In a read-only production rehearsal, the matching report set
+was about 31k rows from 338k validated reports, and the bounded join itself
+completed in under half a second. The pre-release scorer had repeatedly
+failed after long `prisma.report.findMany()` reads with a closed connection.
+
+Verify with `pnpm verify`; after deployment, require a successful fresh
+`[scorer] snapshot` and an advancing `/v1/benchmark.generatedAt`. This change
+does not alter grading, outcome policy or historical rows.
+
 ## 2026-09-29 — M2 policy-exclusion read-path readiness
 
 Benchmark coverage and the dashboard now display `POLICY_EXCLUDED` outcome

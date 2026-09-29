@@ -6,12 +6,17 @@ const db = vi.hoisted(() => ({
   reports: [] as unknown[],
   features: [] as unknown[],
 }));
-vi.mock('@launch-auditor/db', () => ({
+vi.mock('@launch-auditor/db', async (original) => ({
+  ...(await original<typeof import('@launch-auditor/db')>()),
   prisma: {
     outcome: { findMany: async () => db.outcomes },
-    report: { findMany: async () => db.reports },
+    $queryRaw: async () => db.reports.map((r) => {
+      const row = r as ReturnType<typeof report>;
+      return { ...row, launchSource: row.launch?.source ?? null, commitBlockNumber: row.commit?.blockNumber ?? null };
+    }),
     feature: { findMany: async () => db.features },
-    launch: { findUnique: async () => ({ source: 'raw' }) },
+    launch: { findMany: async ({ where }: { where: { id: { in: string[] } } }) =>
+      where.id.in.map((id) => ({ id, source: 'raw' })) },
   },
 }));
 

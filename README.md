@@ -258,6 +258,15 @@ read-only display does not reclassify historical `PENDING` rows. The API's
 label, including retrospective rows, separately from due backlog and 24-hour
 resolved throughput.
 
+The scorer builds each snapshot from resolved observation keys. It reads only
+validated reports at those exact token and anchor times, including reports
+without a linked launch, then loads baseline launch sources in batches of 500.
+This keeps the benchmark's sample and eligibility rules unchanged while
+avoiding a full read of every validated report and a query per observation.
+After deployment, `/v1/benchmark.generatedAt` should advance after a
+successful `[scorer] snapshot` log line; a worker restart alone does not prove
+the snapshot was rebuilt.
+
 `x-api-key` (checked against `DESIGN_PARTNER_API_KEYS`) is accepted and echoed back as
 `designPartner: true|false` on `/v1/assess` and `/v1/deepdive`. Deep dives
 require a recognized key because they spend inference credits; assessments stay
