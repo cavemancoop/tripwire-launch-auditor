@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-09-29 — Index rolling base-rate lookups in the scorer
+
+Build one sorted timestamp and positive-count index per outcome cell, then
+answer each trailing 30-day base-rate lookup by binary search. This replaces
+a repeated scan of earlier labels for every observation while preserving
+same-anchor exclusion, the inclusive 30-day boundary and the all-prior fallback
+for an empty window. Forecasts, outcome rows and benchmark claim gates do not
+change. Observe snapshot duration and memory after release as history grows.
+
 ## 2026-09-29 — Capture lane when a report is first stored
 
 New reports now store their linked launch's lane only after T+10 feature
