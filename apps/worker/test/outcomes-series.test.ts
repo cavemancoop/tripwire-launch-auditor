@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Hex } from 'viem';
-import { blockAtTime, clearBlockTimeCache } from '../src/outcomes/block-time';
+import { blockAtTime, blockTimeStats, clearBlockTimeCache, resetBlockTimeStats } from '../src/outcomes/block-time';
 import { buildLiquiditySeries, buildPriceSeries, type PoolRef } from '../src/outcomes/series';
 import { sqrtForPrice, v4ModLiqLog, v4SwapLog } from './fixtures/logs';
 
@@ -86,7 +86,10 @@ describe('buildLiquiditySeries (v4)', () => {
 });
 
 describe('blockAtTime', () => {
-  beforeEach(() => clearBlockTimeCache());
+  beforeEach(() => {
+    clearBlockTimeCache();
+    resetBlockTimeStats();
+  });
 
   // synthetic chain: timestamp === blockNumber (seconds)
   const clock = {
@@ -110,5 +113,51 @@ describe('blockAtTime', () => {
   it('clamps to the low bound when the time precedes it', async () => {
     const b = await blockAtTime(clock as never, new Date(0));
     expect(b).toBe(1n);
+  });
+
+  it('counts lookup reads, cache hits and unfinished high-height searches without changing results', async () => {
+    const highClock = {
+      getBlockNumber: vi.fn(async () => 100_000_000n),
+      getBlock: vi.fn(async ({ blockNumber }: { blockNumber: bigint }) => ({
+        timestamp: blockNumber / 10n,
+      })),
+    };
+    const when = new Date(4_000_000_000);
+    const first = await blockAtTime(highClock as never, when);
+    expect(await blockAtTime(highClock as never, when)).toBe(first);
+    const s = blockTimeStats();
+    expect(s.lookups).toBe(2);
+    expect(s.cacheHits).toBe(1);
+    expect(s.blockReads).toBe(highClock.getBlock.mock.calls.length);
+    expect(s.readBuckets['11-20']).toBe(1);
+    expect(s.unfinished).toBe(1);
+    expect(s.failures).toBe(0);
+  });
+
+  it('counts a failed block-number read without inventing a block read', async () => {
+    const broken = {
+      getBlockNumber: vi.fn(async () => { throw new Error('head unavailable'); }),
+      getBlock: vi.fn(),
+    };
+    await expect(blockAtTime(broken as never, new Date(500_000))).rejects.toThrow('head unavailable');
+    const s = blockTimeStats();
+    expect(s.lookups).toBe(1);
+    expect(s.failures).toBe(1);
+    expect(s.blockReads).toBe(0);
+    expect(s.readBuckets['0']).toBe(1);
+    expect(broken.getBlock).not.toHaveBeenCalled();
+  });
+
+  it('counts a failed getBlock invocation as a read attempt', async () => {
+    const broken = {
+      getBlockNumber: vi.fn(async () => 1000n),
+      getBlock: vi.fn(async () => { throw new Error('block unavailable'); }),
+    };
+    await expect(blockAtTime(broken as never, new Date(500_000))).rejects.toThrow('block unavailable');
+    const s = blockTimeStats();
+    expect(s.lookups).toBe(1);
+    expect(s.failures).toBe(1);
+    expect(s.blockReads).toBe(1);
+    expect(s.readBuckets['1-4']).toBe(1);
   });
 });
