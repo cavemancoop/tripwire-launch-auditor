@@ -404,21 +404,30 @@ deploy-time command — the migrations directory is already in the repo.
   (five outcome labels, other), `outcome_rows_total` by `result` (resolved,
   na, unresolvable, retry, failed), and `loop_iterations_total`,
   `loop_errors_total`, `loop_last_success_timestamp_seconds` by `loop`
-  (outcomes, scorer; timestamp 0 = never) (23 series). There are 69 fixed
-  series and never an RPC URL, token address or error message. The worker's
-  fixed method buckets add 13 series (82 total). Sweep counts
+  (outcomes, scorer; timestamp 0 = never) (23 series). The worker exports 82
+  fixed series, including 13 RPC method buckets, and never an RPC URL, token
+  address or error message. Sweep counts
   come only from sweeps that returned; a sweep that threw adds to the error
   counters and its duration, and does not move the last-success timestamp.
   If collection fails it returns a fixed
   `503 metrics unavailable` and never the error text; `/health` is unaffected.
   A bounded operational subset is logged once a minute as `[obs] {json}`: rpc
   tier → [started, completed, failed, queued, inFlight],
-  `rpcWire` → [attempts, providerFailures, quotaFailures], plus rss, heapUsed,
+  `rpcWire` → [attempts, providerFailures, quotaFailures],
   `rpcMethods` → cumulative budgeted transport attempts by a fixed JSON-RPC
-  method set (unknown methods go to `other`), plus rss, heapUsed,
-  heapTotal and maxRss rounded to MB, and uptime. These method counts include
+  method set (unknown methods go to `other`),
+  `rpcOutcomeCells` → cumulative attempts made while resolving an outcome,
+  keyed by the same fixed cell/lane set as `[outcomes-cell]` (invalid tags go
+  to `other`), plus rss, heapUsed, heapTotal and maxRss rounded to MB, and
+  uptime. The
+  per-cell map is logged, not exported as dynamic Prometheus series. Counts
+  include retries and requests already sent when a deadline fires; unrelated
+  watcher, commit and deep-dive calls have no outcome-cell tag. Method counts include
   retries but exclude cache hits and pre-send cancellations; they are not
   provider-billed request units or a full inventory of wallet/API traffic.
+  When viem shares or caches a request across rows, its transport attempt
+  belongs to the row that issued it; another row can use the result without
+  another cell increment.
   It omits `external`,
   `array_buffers` and `heap_limit_bytes`. The outcomes `swept` log line ends
   with the sweep duration. Each nonempty sweep also writes one bounded

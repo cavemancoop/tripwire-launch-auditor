@@ -78,11 +78,12 @@ describe('obsLogLine', () => {
     const line = obsLogLine(observe(() => [stats({ byPriority: { 0: 1 } })]));
     expect(line.startsWith('[obs] ')).toBe(true);
     const body = JSON.parse(line.slice(6));
-    expect(Object.keys(body)).toEqual(['rpc', 'rpcWire', 'rpcMethods', 'memMb', 'uptimeS']);
+    expect(Object.keys(body)).toEqual(['rpc', 'rpcWire', 'rpcMethods', 'rpcOutcomeCells', 'memMb', 'uptimeS']);
     expect(Object.keys(body.rpc)).toEqual([...TIERS]);
     expect(body.rpc.watcher).toEqual([1, 0, 0, 0, 0]);
     expect(body.rpcWire).toHaveLength(3);
     expect(Object.keys(body.rpcMethods)).toEqual([...RPC_METHODS]);
+    expect(body.rpcOutcomeCells).toEqual({});
     expect(Object.keys(body.memMb)).toEqual(['rss', 'heapUsed', 'heapTotal', 'maxRss']);
   });
 });

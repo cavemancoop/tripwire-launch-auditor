@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-09-29 — Outcome-cell RPC attempt attribution
+
+The worker now tags each outcome resolver's budgeted transport attempts with
+its selected live/retrospective cell and linked launch lane. Async context
+preserves attribution across concurrent rows and the shared scheduler queue.
+The bounded cumulative `rpcOutcomeCells` map appears in minute `[obs]` logs;
+invalid tags fold into `other`, and unrelated calls remain untagged. Retries
+and an already-sent request settling after its outcome deadline count. This
+measures attempts, not unique provider fetches or Chainstack request units.
+When viem shares or caches a request across rows, the attempt is credited to
+the row that issued it, not every row that reused the result.
+Resolution policy, RPC priority, cap and grading remain unchanged. A matched
+full-day per-cell attempt/completion comparison requires live observation
+after deployment.
+
+Verify with `pnpm verify`; after deployment inspect two `[obs]` lines to see
+cell counters rise without exceeding the aggregate `rpcWire` attempt count.
+
 ## 2026-09-29 — Budgeted RPC attempts by method
 
 The worker now reports cumulative budgeted public-client transport attempts
