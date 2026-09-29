@@ -5,6 +5,7 @@
   "type": "module",
   "description": "M8 static dashboard: no build step, no framework — plain HTML/CSS/JS served by a small dependency-free static file server, fetching JSON client-side from the api.",
   "scripts": {
-    "start": "node server.mjs"
+    "start": "node server.mjs",
+    "test": "node --test test/*.test.mjs"
   }
 }

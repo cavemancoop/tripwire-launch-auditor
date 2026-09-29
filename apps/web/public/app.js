@@ -276,6 +276,7 @@ function renderLaunches(rows) {
 
 function renderBenchmark(snapshot) {
   const wrap = document.getElementById('benchmark-wrap');
+  const laneWrap = document.getElementById('benchmark-lanes-wrap');
   // One cohort: live forecasts, eligible rows only — the rows the claims are made on.
   const bench = snapshot.live;
   const all = bench.sections.find((s) => s.splitBy === 'all');
@@ -283,6 +284,7 @@ function renderBenchmark(snapshot) {
   document.getElementById('min-claims').textContent = String(bench.minForClaims);
   if (!all) {
     wrap.innerHTML = '<p class="empty">no resolved outcomes yet</p>';
+    laneWrap.innerHTML = '<p class="empty">no resolved outcomes yet</p>';
     return;
   }
   const coverage = snapshot.coverage || {};
@@ -317,6 +319,28 @@ function renderBenchmark(snapshot) {
     <thead><tr><th>outcome</th><th>forecaster</th><th>n</th><th>positives</th><th>auroc</th><th>brier skill</th><th></th></tr></thead>
     <tbody>${rows.join('') || '<tr><td colspan="7" class="empty">no cells yet</td></tr>'}</tbody>
   </table>${snapshot.resolutionPolicy ? `<p class="note">${snapshot.resolutionPolicy}</p>` : ''}`;
+
+  const laneRows = [];
+  for (const section of bench.sections.filter((s) => s.splitBy === 'lane')) {
+    for (const [outcome, cells] of Object.entries(section.byOutcome)) {
+      for (const c of cells) {
+        const descriptive = DESCRIPTIVE_OUTCOMES[outcome];
+        laneRows.push(`<tr>
+          <td>${section.splitValue}</td>
+          <td>${outcome}${descriptive ? ' <span class="badge dim" title="' + descriptive + '">descriptive</span>' : ''}</td>
+          <td>${c.forecaster}</td>
+          <td>${c.n}${c.insufficientSample ? ' <span class="badge warn" title="Below the minimum sample: metrics withheld.">insufficient</span>' : ''}</td>
+          <td>${c.positives}</td>
+          <td>${c.auroc === null ? 'n/a' : c.auroc.toFixed(3)}</td>
+          <td>${c.brierSkill === null ? 'n/a' : c.brierSkill.toFixed(3)}</td>
+        </tr>`);
+      }
+    }
+  }
+  laneWrap.innerHTML = laneRows.length ? `<table>
+    <thead><tr><th>lane</th><th>outcome</th><th>forecaster</th><th>n</th><th>positives</th><th>auroc</th><th>brier skill</th></tr></thead>
+    <tbody>${laneRows.join('')}</tbody>
+  </table>` : '<p class="empty">lane breakdown will appear after a fresh scorer snapshot</p>';
 }
 
 const INVERTED_NOTE_URL =
@@ -450,6 +474,8 @@ async function loadAll() {
     } else {
       document.getElementById('benchmark-wrap').innerHTML =
         '<p class="empty">benchmark not yet computed — the worker writes a snapshot every 5 minutes</p>';
+      document.getElementById('benchmark-lanes-wrap').innerHTML =
+        '<p class="empty">lane breakdown not yet computed</p>';
     }
   } catch (err) {
     statusDot.className = 'status-dot bad';

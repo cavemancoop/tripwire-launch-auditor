@@ -1,8 +1,9 @@
 # Fable engineering release status
 
-Updated 2026-09-29 02:29 UTC. At that time public `main` was merge `590d79b`,
-including the bounded scorer-read repair ([PR #19](https://github.com/cavemancoop/tripwire-launch-auditor/pull/19))
-and staged M2 correction safety tooling ([PR #20](https://github.com/cavemancoop/tripwire-launch-auditor/pull/20)).
+Updated 2026-09-29 03:30 UTC. At that time public `main` was merge `e98d98b`,
+including the bounded scorer-read repair ([PR #19](https://github.com/cavemancoop/tripwire-launch-auditor/pull/19)),
+staged M2 correction safety tooling ([PR #20](https://github.com/cavemancoop/tripwire-launch-auditor/pull/20)),
+and lane-stratified benchmark sections ([PR #22](https://github.com/cavemancoop/tripwire-launch-auditor/pull/22)).
 Railway API, worker and web reached SUCCESS on that exact commit. This page
 records the current release boundary; a passed test suite is not a seven-day capacity
 or outcome-quality claim.
@@ -26,6 +27,9 @@ or outcome-quality claim.
 - PR #20 added an inactive correction ledger and manual, guarded preview,
   prepare, apply and revert commands. The ordinary worker does not call them.
   Public policy-excluded gauges remained zero after deployment.
+- PR #22 added index and qualified sections to the live benchmark without
+  changing outcome truth, score eligibility or provider limits. At the dated
+  public-main check above, the dashboard still showed only the pooled table.
 
 The scorer-read repair bounds snapshot reads. The preceding production
 worker fetched all validated reports before filtering against resolved
@@ -38,11 +42,34 @@ rows. After PR #20, the public benchmark generatedAt advanced to 02:26:43 UTC
 and the worker logged completion of its 79,010-row snapshot at 02:28 UTC.
 These successful passes confirm recovery of the immediate read failure, not indefinite scorer
 capacity as the dataset grows.
+After PR #22, the worker completed its first 79,184-row snapshot in about
+90 seconds. The public API exposed both launch lanes, and all 53 pooled
+outcome/forecaster cell counts equaled the sum of their lane counts.
+
+A separate read-only production aggregate revisited the September 28 UTC
+due-entry cohort at 03:18 UTC on September 29. All **39,006** rows in current
+resolver scope were still PENDING; none had a terminal result. Every linked
+launch had a completed T+10 feature timestamp at that read. All **4,136**
+terminal writes made during September 28 served rows first due on September
+16, 17, 18 or 21. The cohort query used
+`GREATEST(outcomes.horizonAt, outcomes.createdAt)` within the half-open day,
+current launch lane and policy scope, and a five-second statement timeout.
+This is a dated status observation, not a prediction of eventual completion.
+
+## Dashboard change in this release
+
+Panel 04 renders PR #22's lane sections below the existing pooled table as
+descriptive diagnostics without lane-specific beat badges. It labels their
+selected sample and current-lane limitations. This page records
+the local release candidate; the new dashboard view still requires an exact
+merge/deployment check and public render observation before it is called
+operationally verified.
 
 ## Verification
 
 Run `pnpm verify` for Prisma generation and validation, workspace typechecks
-and offline Vitest suites. PR #20 passed 625 worker tests. Its guarded
+and offline test suites. PR #22 passed 627 worker tests; the dashboard lane
+render has two focused Node tests. PR #20's guarded
 PostgreSQL 16 test passed separately with a real pre-change dump and restore.
 Foundry was unavailable, so contract tests were skipped. No contract
 changed.
@@ -54,9 +81,10 @@ operationally verified.
 
 - Measure Chainstack account request-unit burn with a second dated console
   reading. A worker attempt is not necessarily one billed request unit.
-- Observe live per-cell attempts and measure representative, matched
-  arrival/service windows. The public benchmark already discloses that
-  graded rows are selected, not a random sample.
+- Observe a full matched day of PR #17 per-cell RPC attempts and terminal
+  service, then repeat cohort completeness by due day. The September 28
+  cohort's zero terminal count shows why today's graded rows cannot be
+  treated as a random or recent sample.
 - Decide any prospective workload narrowing, horizon pause or v2 outcome rule
   against a frozen comparison cohort. Existing rows and the current provider
   cap remain unchanged until that decision.

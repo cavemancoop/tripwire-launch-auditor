@@ -498,13 +498,17 @@ vitest suites, and prints a green summary. No Docker, no network, no paid APIs.
 **Lane-stratified benchmark.** `GET /v1/benchmark` includes `live.sections`
 entries with `splitBy: "lane"` for index, qualified and (when present) unknown
 launches. These use the same resolved, commit-eligible report/outcome pairs as
-the pooled section, so a pooled ranking can be checked within each lane.
+the pooled section, for a descriptive breakdown of the currently graded rows.
 Lane comes from the linked outcome launch at snapshot time and is refreshed on
 every scorer pass; it is not a historical lane-at-report field. The minimum
-sample and paired-comparison gates still apply. A lane-specific score on the
+sample and paired-comparison gates still apply in the JSON; the dashboard does
+not show lane-specific beat claims because lane can change after the forecast.
+A lane-specific score on the
 currently graded subset does not establish population accuracy or remove the
-published backlog warning. Verify with `pnpm verify` and inspect the
-`live.sections` array after a fresh production scorer snapshot.
+published backlog warning. The dashboard shows the pooled table and a separate
+current-lane table with descriptive metrics; the pooled
+coverage figures are not lane denominators. Verify with `pnpm verify` and
+inspect the `live.sections` array after a fresh production scorer snapshot.
 
 **Outcome regression (F01).** A DRAWDOWN_80 row whose reference window has
 zero swaps is UNRESOLVABLE and makes no quoter call. This holds even when the
