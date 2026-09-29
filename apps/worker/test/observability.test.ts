@@ -39,6 +39,7 @@ describe('formatWorkerMetrics', () => {
   const samples = text.split('\n').filter((l) => l && !l.startsWith('#'));
 
   it('emits exactly the bounded fixed series whatever the input', () => {
+    expect(RPC_METHODS).toHaveLength(13); // update the public 82-series documentation deliberately
     expect(samples).toHaveLength(46 + RPC_METHODS.length);
     const many = formatWorkerMetrics(
       observe(() => Array.from({ length: 5 }, (_, i) => stats({ byPriority: { [100 + i]: 1 } }))),
