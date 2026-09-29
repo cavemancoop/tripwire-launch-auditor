@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-09-29 — Capture lane when a report is first stored
+
+New reports now store their linked launch's lane only after T+10 feature
+completion; early or unlinked reports keep the field null. A later upsert by
+report hash cannot rewrite the original lane. This is unsigned diagnostic
+metadata for future paired quality analysis, not a change to report hashes,
+benchmark grouping, eligibility, outcome resolution or public claims. The
+lane is read before the batch of insert attempts, so concurrent lane updates could
+still intervene; this is a stored-time observation, not signed forecast input.
+The nullable SQL column must already be live before this writer deploys.
+
 ## 2026-09-29 — Stage report lane-at-first-store column
 
 Add a nullable `reports.laneAtFirstStore` column for future lane provenance.
