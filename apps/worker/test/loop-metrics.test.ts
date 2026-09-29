@@ -2,6 +2,7 @@ import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
+import { RPC_METHODS } from '@launch-auditor/rpc-budget';
 import type { Benchmark } from '@launch-auditor/scoring';
 import { defaultWorkerMetrics } from '../src/health-server';
 import {
@@ -83,9 +84,9 @@ describe('formatLoopMetrics', () => {
     expect(text).not.toMatch(/SOMETHING_NEW|0xdeadbeef/);
   });
 
-  it('the /metrics default carries the 46 process series plus the 23 loop series', () => {
+  it('the /metrics default carries fixed process, method and loop series', () => {
     const text = defaultWorkerMetrics();
-    expect(samples(text)).toHaveLength(46 + 23);
+    expect(samples(text)).toHaveLength(46 + RPC_METHODS.length + 23);
     expect(text).toContain('tripwire_worker_rpc_started_total{tier="watcher"}');
     expect(text).toContain('tripwire_worker_loop_last_success_timestamp_seconds{loop="scorer"}');
   });

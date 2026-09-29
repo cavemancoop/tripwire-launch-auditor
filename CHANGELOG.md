@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-09-29 — Budgeted RPC attempts by method
+
+The worker now reports cumulative budgeted public-client transport attempts
+by fixed JSON-RPC method buckets in private `/metrics` and minute `[obs]`
+logs. Retries count; cache hits and requests cancelled before transport do
+not. Unknown methods use `other`, so labels cannot carry URLs or secrets.
+These are attempt counts, not Chainstack request units, and wallet/API calls
+outside this worker transport remain unmeasured. RPC admission, priorities,
+resolver behavior and outcome policy are unchanged. Per-outcome-cell attempt
+attribution is the next observation package.
+
+Verify with `pnpm verify`; after deployment compare the sum of `rpcMethods`
+in successive `[obs]` lines with the `rpcWire` attempt total.
+
 ## 2026-09-28 — Outcome service counts by cell and lane
 
 Each nonempty worker outcome sweep now logs bounded counts by outcome cell,

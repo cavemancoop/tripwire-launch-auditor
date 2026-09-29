@@ -9,7 +9,7 @@ vi.mock('viem', async (importOriginal) => ({
   http: () => () => ({ config: {}, request: (...a: unknown[]) => inner.request(...a), value: {} }),
 }));
 
-const { budgetedHttp, resetRpcWireStats, rpcWireStats } = await import('../src/transport');
+const { budgetedHttp, resetRpcWireStats, rpcWireStats, rpcMethodStats } = await import('../src/transport');
 const { RequestScheduler } = await import('../src/scheduler');
 const { RpcCancelledError, runCancellableRpc } = await import('../src/cancel');
 
@@ -47,6 +47,7 @@ describe('budgetedHttp — cancellation (Package 4b)', () => {
     await expect(work.result).rejects.toBeInstanceOf(RpcCancelledError);
     expect(fn).not.toHaveBeenCalled();
     expect(rpcWireStats().attempts).toBe(0);
+    expect(rpcMethodStats().eth_blockNumber).toBe(0);
   });
 
   it('cancelling during a rate-limit backoff stops further retries', async () => {
@@ -65,6 +66,7 @@ describe('budgetedHttp — cancellation (Package 4b)', () => {
     await settled;
     expect(fn).toHaveBeenCalledOnce();
     expect(rpcWireStats()).toEqual({ attempts: 1, providerFailures: 1, quotaFailures: 0 });
+    expect(rpcMethodStats().eth_blockNumber).toBe(1);
   });
 
   it('work not run under a signal is unaffected', async () => {

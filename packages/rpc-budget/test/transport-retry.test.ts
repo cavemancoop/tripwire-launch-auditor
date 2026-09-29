@@ -11,7 +11,7 @@ vi.mock('viem', async (importOriginal) => ({
   http: () => () => ({ config: {}, request: (...a: unknown[]) => inner.request(...a), value: {} }),
 }));
 
-const { budgetedHttp, resetRpcWireStats, rpcWireStats } = await import('../src/transport');
+const { budgetedHttp, resetRpcWireStats, rpcWireStats, rpcMethodStats } = await import('../src/transport');
 const { RequestScheduler } = await import('../src/scheduler');
 
 const QUOTA_18_SEP = "You've reached your monthly quota of Request Units";
@@ -50,6 +50,8 @@ describe('budgetedHttp — in-slot rate-limit retry (Package 4a)', () => {
     await expect(request()(args)).resolves.toBe('0x10');
     expect(fn).toHaveBeenCalledTimes(2);
     expect(rpcWireStats()).toEqual({ attempts: 2, providerFailures: 1, quotaFailures: 0 });
+    expect(rpcMethodStats().eth_blockNumber).toBe(2);
+    expect(Object.values(rpcMethodStats()).reduce((a, n) => a + n, 0)).toBe(rpcWireStats().attempts);
   });
 
   it('does not retry a quota refusal delivered as HTTP 429', async () => {
@@ -58,6 +60,7 @@ describe('budgetedHttp — in-slot rate-limit retry (Package 4a)', () => {
     await expect(request()(args)).rejects.toThrow(/monthly quota/);
     expect(fn).toHaveBeenCalledOnce();
     expect(rpcWireStats()).toEqual({ attempts: 1, providerFailures: 1, quotaFailures: 1 });
+    expect(rpcMethodStats().eth_blockNumber).toBe(1);
   });
 
   it('a 429 in the endpoint host does not make an archive miss retryable', async () => {
@@ -82,5 +85,12 @@ describe('budgetedHttp — in-slot rate-limit retry (Package 4a)', () => {
     await expect(request()(args)).rejects.toThrow(/missing trie node/);
     expect(fn).toHaveBeenCalledOnce();
     expect(rpcWireStats()).toEqual({ attempts: 1, providerFailures: 0, quotaFailures: 0 });
+  });
+
+  it('puts an unfamiliar method in a bounded other bucket without exposing its text', async () => {
+    inner.request = vi.fn().mockResolvedValue('ok');
+    await expect(request()({ method: 'secret-URL-123', params: [] })).resolves.toBe('ok');
+    expect(rpcMethodStats().other).toBe(1);
+    expect(JSON.stringify(rpcMethodStats())).not.toContain('secret-URL-123');
   });
 });

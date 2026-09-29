@@ -13,6 +13,20 @@ export interface RpcWireStats {
   quotaFailures: number;
 }
 
+/** Fixed, bounded method buckets; unknown methods never become metric labels. */
+export const RPC_METHODS = [
+  'eth_getLogs', 'eth_call', 'eth_getBlockByNumber', 'eth_getBlockByHash',
+  'eth_getTransactionReceipt', 'eth_getTransactionByHash', 'eth_blockNumber',
+  'eth_getCode', 'eth_getBalance', 'eth_getTransactionCount', 'eth_getStorageAt',
+  'eth_chainId', 'other',
+] as const;
+export type RpcMethod = (typeof RPC_METHODS)[number];
+const methodSet: ReadonlySet<string> = new Set(RPC_METHODS);
+const methodOf = (method: string): RpcMethod =>
+  methodSet.has(method) ? method as RpcMethod : 'other';
+const methodCounts = Object.fromEntries(RPC_METHODS.map((m) => [m, 0])) as Record<RpcMethod, number>;
+export const rpcMethodStats = (): Record<RpcMethod, number> => ({ ...methodCounts });
+
 const wireCounts: RpcWireStats = { attempts: 0, providerFailures: 0, quotaFailures: 0 };
 export const rpcWireStats = (): RpcWireStats => ({ ...wireCounts });
 /** Test hook; never reset counters while a production worker is running. */
@@ -20,10 +34,16 @@ export function resetRpcWireStats(): void {
   wireCounts.attempts = 0;
   wireCounts.providerFailures = 0;
   wireCounts.quotaFailures = 0;
+  for (const method of RPC_METHODS) methodCounts[method] = 0;
 }
 
-function recordWireFailure(err: unknown): void {
+function recordWireAttempt(method: string): void {
   wireCounts.attempts++;
+  methodCounts[methodOf(method)]++;
+}
+
+function recordWireFailure(err: unknown, method: string): void {
+  recordWireAttempt(method);
   const kinds = rpcErrorKinds(err);
   if (kinds.includes('quota')) wireCounts.quotaFailures++;
   if (kinds.some((kind) => kind === 'quota' || kind === 'rate_limit' || kind === 'transport')) {
@@ -131,10 +151,10 @@ export function budgetedHttp(rpcUrl: string, opts: BudgetedHttpOptions): Transpo
         throwIfRpcCancelled(signal);
         try {
           const result = await innerRequest(args, reqOpts);
-          wireCounts.attempts++;
+          recordWireAttempt((args as { method: string }).method);
           return result;
         } catch (err) {
-          recordWireFailure(err);
+          recordWireFailure(err, (args as { method: string }).method);
           if (n >= retryCount || !isTransientTransportError(err) || signal?.aborted) throw err;
           await sleep(transientDelayMs(err, n, RETRY_DELAY_MS), signal);
         }

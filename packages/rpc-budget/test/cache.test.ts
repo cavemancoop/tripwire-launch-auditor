@@ -88,7 +88,7 @@ describe('budgetedHttp — a null answer is never cached', () => {
   // cached under the tx hash, and every later poll for the whole deadline was
   // served "not found" from cache while the tx sat mined on-chain.
   it('re-asks the node after a null, and caches the first real answer', async () => {
-    const { budgetedHttp, resetRpcWireStats, rpcWireStats } = await import('../src/transport');
+    const { budgetedHttp, resetRpcWireStats, rpcWireStats, rpcMethodStats } = await import('../src/transport');
     resetRpcWireStats();
     const { RequestScheduler } = await import('../src/scheduler');
     const real = { blockNumber: '0x10', status: '0x1' };
@@ -116,6 +116,7 @@ describe('budgetedHttp — a null answer is never cached', () => {
       expect(await req(args)).toEqual(real);
       expect(calls).toBe(3); // the 4th is served from cache; the two nulls were not
       expect(rpcWireStats()).toEqual({ attempts: 3, providerFailures: 0, quotaFailures: 0 });
+      expect(rpcMethodStats().eth_getTransactionReceipt).toBe(3);
     } finally {
       vi.unstubAllGlobals();
     }

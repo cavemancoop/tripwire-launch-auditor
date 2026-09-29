@@ -1,6 +1,6 @@
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
-import { resetRpcBudget, schedulerFor, type SchedulerStats } from '@launch-auditor/rpc-budget';
+import { resetRpcBudget, schedulerFor, RPC_METHODS, type SchedulerStats } from '@launch-auditor/rpc-budget';
 import { startHealthServer } from '../src/health-server';
 import { formatWorkerMetrics, obsLogLine, observe, sumTiers, TIERS } from '../src/observability';
 
@@ -38,12 +38,13 @@ describe('formatWorkerMetrics', () => {
   const text = formatWorkerMetrics(o);
   const samples = text.split('\n').filter((l) => l && !l.startsWith('#'));
 
-  it('emits exactly the 46 fixed series whatever the input', () => {
-    expect(samples).toHaveLength(46);
+  it('emits exactly the bounded fixed series whatever the input', () => {
+    expect(RPC_METHODS).toHaveLength(13); // update the public 82-series documentation deliberately
+    expect(samples).toHaveLength(46 + RPC_METHODS.length);
     const many = formatWorkerMetrics(
       observe(() => Array.from({ length: 5 }, (_, i) => stats({ byPriority: { [100 + i]: 1 } }))),
     );
-    expect(many.split('\n').filter((l) => l && !l.startsWith('#'))).toHaveLength(46);
+    expect(many.split('\n').filter((l) => l && !l.startsWith('#'))).toHaveLength(46 + RPC_METHODS.length);
   });
 
   it('labels only with the fixed tier and memory-kind sets', () => {
@@ -51,6 +52,7 @@ describe('formatWorkerMetrics', () => {
     const allowed = new Set([
       ...TIERS.map((t) => `tier=${t}`),
       ...['rss', 'heap_used', 'heap_total', 'external', 'array_buffers'].map((k) => `kind=${k}`),
+      ...RPC_METHODS.map((m) => `method=${m}`),
     ]);
     for (const l of labels) expect(allowed.has(l)).toBe(true);
     expect(text).toContain('tripwire_worker_rpc_started_total{tier="outcomes"} 3');
@@ -76,10 +78,11 @@ describe('obsLogLine', () => {
     const line = obsLogLine(observe(() => [stats({ byPriority: { 0: 1 } })]));
     expect(line.startsWith('[obs] ')).toBe(true);
     const body = JSON.parse(line.slice(6));
-    expect(Object.keys(body)).toEqual(['rpc', 'rpcWire', 'memMb', 'uptimeS']);
+    expect(Object.keys(body)).toEqual(['rpc', 'rpcWire', 'rpcMethods', 'memMb', 'uptimeS']);
     expect(Object.keys(body.rpc)).toEqual([...TIERS]);
     expect(body.rpc.watcher).toEqual([1, 0, 0, 0, 0]);
     expect(body.rpcWire).toHaveLength(3);
+    expect(Object.keys(body.rpcMethods)).toEqual([...RPC_METHODS]);
     expect(Object.keys(body.memMb)).toEqual(['rss', 'heapUsed', 'heapTotal', 'maxRss']);
   });
 });
