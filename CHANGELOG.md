@@ -1,11 +1,13 @@
 # Changelog
 
-## 2026-09-29 — Stage report lane-at-issue column
+## 2026-09-29 — Stage report lane-at-first-store column
 
-Add a nullable `reports.laneAtIssue` column for future forecast-time lane
-provenance. Existing reports and signed payloads are untouched. The producer
-will be released separately after the worker has applied this migration, so
-the new Prisma schema cannot reach API reads before the database column exists.
+Add a nullable `reports.laneAtFirstStore` column for future lane provenance.
+Existing reports and signed payloads are untouched. This release intentionally
+does not add the field to the Prisma schema, so every service still builds a
+client that reads the old columns while the worker applies the SQL migration.
+The Prisma field and producer will follow only after the column is confirmed
+live.
 
 ## 2026-09-29 — Add external feed-silence check
 
