@@ -1,7 +1,8 @@
 # Fable engineering release status
 
 Updated 2026-09-29. Public `main` includes the independently reviewed Fable
-stabilization packages through [PR #16](https://github.com/cavemancoop/tripwire-launch-auditor/pull/16).
+stabilization packages, including the bounded scorer-read repair and the M2
+read paths from [PR #18](https://github.com/cavemancoop/tripwire-launch-auditor/pull/18).
 It is running on the Railway API, worker and web services. This page records
 the current release boundary; a passed test suite is not a seven-day capacity
 or outcome-quality claim.
@@ -20,20 +21,25 @@ or outcome-quality claim.
   counts, plus fixed JSON-RPC method attempt buckets. The first live 50-row
   cell log reconciled to its sweep summary; live method counts reconciled to
   the aggregate attempt counter.
+- Per-cell RPC attempt attribution from PR #17, and M2 policy-exclusion
+  benchmark/API read paths from PR #18. No historical row was reclassified.
 
-The current candidate attributes budgeted attempts to the outcome cell and
-launch lane active when each resolver ran. This counts attempts including
-retries, not provider-billed request units or wallet/API traffic. It does not
-change RPC admission, resolution, scoring, report commitments or the public API.
+The scorer-read repair bounds snapshot reads. The preceding production
+worker fetched all validated reports before filtering against resolved
+outcomes; its first post-PR #18 pass failed after about 18 minutes with a
+closed database connection, leaving `/v1/benchmark` stale. The repair
+narrows reports by the exact resolved observation key and batches baseline
+launch-source lookups. A fresh successful live snapshot is needed to confirm
+its operational effect.
 
 ## Verification
 
 Run `pnpm verify` for Prisma generation and validation, workspace typechecks
-and offline Vitest suites. The current candidate passed 622 worker tests;
+and offline Vitest suites. The PR #18 release passed 623 worker tests;
 Foundry is unavailable, so contract tests were skipped. No contract changed.
 Each public change requires an independent review of its exact candidate,
 merge-SHA deployment checks and a live observation before its status is called
-shipped. The per-cell attribution candidate still needs those release checks.
+operationally verified. The scorer-read repair still needs a fresh live snapshot.
 
 ## Open gates
 

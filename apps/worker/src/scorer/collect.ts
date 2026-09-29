@@ -16,6 +16,7 @@ import {
   type Eligibility,
   type ExclusionCounts,
 } from './eligibility';
+import { launchSource, readReportsForResolved, warmLaunchSources } from './read';
 
 /** OutcomeKey -> the Report probability column that holds that forecast. */
 const P_COL: Partial<Record<OutcomeKey, string>> = {
@@ -174,35 +175,9 @@ export async function collectScoreRows(opts: CollectOptions = {}): Promise<Colle
   /** `${obsKey}|${outcomeKey}` -> det_v0's class, which the computed forecasters inherit */
   const refClass = new Map<string, Eligibility>();
 
-  // report-backed forecasters, oldest first so each launch's scanner anchor is deterministic
-  const reports = await prisma.report.findMany({
-    where: { validatorPassed: true },
-    orderBy: [{ reportTime: 'asc' }, { createdAt: 'asc' }],
-    // canonicalJson, evidence, coverage, signatures and validatorFailures can
-    // be large. None participates in scoring, so never materialize it here.
-    select: {
-      chainId: true,
-      tokenAddress: true,
-      reportTime: true,
-      trigger: true,
-      forecaster: true,
-      launchId: true,
-      commitId: true,
-      pInsiderExit6h: true,
-      pInsiderExit24h: true,
-      pInsiderExit72h: true,
-      pSellImpaired1h: true,
-      pSellImpaired24h: true,
-      pLiqImpaired24h: true,
-      pLiqImpaired7d: true,
-      pDrawdown80_24h: true,
-      pDrawdown80_7d: true,
-      pTradingAlive24h: true,
-      pTradingAlive7d: true,
-      launch: { select: { source: true } },
-      commit: { select: { blockNumber: true } },
-    },
-  });
+  // report-backed forecasters, oldest first so each launch's scanner anchor is deterministic.
+  // Select only exact resolved observation keys before loading relations.
+  const reports = await readReportsForResolved(scope);
   // warm the block-time cache for every commit a scored report sits in, in parallel chunks
   const blocks = [
     ...new Set(
@@ -262,8 +237,9 @@ export async function collectScoreRows(opts: CollectOptions = {}): Promise<Colle
   }
 
   // base_rate / base_rate_fixed (one row per eligible obs/outcome)
+  await warmLaunchSources([...obs.values()].map((e) => e.launchId));
   for (const e of obs.values()) {
-    const source = await launchSource(e.launchId);
+    const source = launchSource(e.launchId);
     const k = obsKey(e.chainId, e.token, e.anchor);
     for (const [key, y] of e.labels) {
       // no committed det_v0 forecast for this observation → nothing to compare against
@@ -336,17 +312,6 @@ export async function collectScoreRows(opts: CollectOptions = {}): Promise<Colle
   }
 
   return { rows, exclusions };
-}
-
-const sourceCache = new Map<string, string>();
-async function launchSource(launchId: string | null): Promise<string> {
-  if (!launchId) return 'unknown';
-  const hit = sourceCache.get(launchId);
-  if (hit) return hit;
-  const l = await prisma.launch.findUnique({ where: { id: launchId }, select: { source: true } });
-  const s = l?.source ?? 'unknown';
-  sourceCache.set(launchId, s);
-  return s;
 }
 
 const round4 = (x: number): number => Math.round(x * 1e4) / 1e4;
