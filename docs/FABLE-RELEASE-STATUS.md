@@ -103,8 +103,10 @@ operationally verified.
   backup by restoring it and establish peak database/WAL headroom. The current
   5,000 MB volume was using about 2.52 GB; adding tables changed no outcome row.
 - Observe alerts, core-path health and cohort coverage for a full seven-day
-  window; configure external worker/feed-silence monitoring; test the event
-  index only if the measured gate warrants it.
+  window. The [external feed-silence monitor](FABLE-EXTERNAL-FEED-MONITOR.md)
+  is configured but needs a first successful scheduled run and owner
+  notification settings checked; test the event index only if the measured
+  gate warrants it.
 
 The original first-release record is in the Git history at PR #1. Its
 829-test count and pending-package list describe that earlier candidate, not

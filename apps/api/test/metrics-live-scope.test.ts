@@ -30,11 +30,12 @@ describe('live deterministic report metrics', () => {
       },
     }));
     const coverageQueries = db.launchCount.mock.calls.map(([query]) => query).filter((query) => query.where.launchAt);
-    expect(coverageQueries).toHaveLength(2);
+    expect(coverageQueries).toHaveLength(3);
     for (const query of coverageQueries) {
       expect(query.where.retrospective).toBe(false);
     }
-    expect(coverageQueries[1]?.where?.reports?.some).toEqual({
+    expect(coverageQueries.filter((query) => query.where.reports)).toHaveLength(1);
+    expect(coverageQueries.find((query) => query.where.reports)?.where?.reports?.some).toEqual({
       forecaster: 'det_v0', trigger: 'launch',
     });
   });

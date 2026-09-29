@@ -9,6 +9,7 @@ const SNAPSHOT: MetricsSnapshot = {
   idsOrPhantomFlagged: false,
   launches24h: 7,
   reports24h: 3,
+  launchesDue20to40m: 2,
 };
 
 describe('formatPrometheus', () => {
@@ -19,6 +20,7 @@ describe('formatPrometheus', () => {
     expect(text).toContain('launch_auditor_ids_or_phantom_flagged 0');
     expect(text).toContain('launch_auditor_launches_24h 7');
     expect(text).toContain('launch_auditor_reports_24h 3');
+    expect(text).toContain('launch_auditor_launches_due_20to40m 2');
     expect(text).toMatch(/^# HELP /m);
     expect(text).toMatch(/^# TYPE /m);
   });

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-09-29 — Add external feed-silence check
+
+A scheduled GitHub Actions workflow reads the public API metrics every 15
+minutes and fails visibly when the API, watcher cursor, due launch reports,
+commit batches or 1–2h report coverage signal feed silence. A new API metric
+counts live launches from 20–40 minutes ago so a quiet hour after an earlier
+burst does not trigger a report-age alarm. It runs outside
+the Railway worker, has a manual trigger and needs no secret or production
+write. GitHub schedule delays and notification settings remain operational
+limits. No forecast, outcome, provider or worker loop behavior changes.
+
 ## 2026-09-29 — Mark snapshot-lane benchmark cells diagnostic in the API
 
 Lane sections now carry `diagnosticOnly: true`; their comparison

@@ -12,6 +12,8 @@ export interface MetricsSnapshot {
   idsOrPhantomFlagged: boolean;
   launches24h: number;
   reports24h: number;
+  /** live launches from 20–40 minutes ago; their T+10 reports should now exist */
+  launchesDue20to40m?: number;
   /** per outcome label: horizon-due PENDING rows, of which deferred (retrying),
    *  and rows resolved in the trailing 24h. A label with a growing due backlog
    *  and ~0 resolved is a starved benchmark cell. Optional so older readers work. */
@@ -36,14 +38,17 @@ const age = (now: Date, at: Date | null | undefined): number | null =>
 export const prismaMetricsReader: MetricsReader = async () => {
   const now = new Date();
   const since24h = new Date(now.getTime() - 24 * 3_600_000);
+  const since20m = new Date(now.getTime() - 20 * 60_000);
+  const since40m = new Date(now.getTime() - 40 * 60_000);
 
-  const [watcherCursor, commit, lifecycle, epoch, launches24h, reports24h, due, deferred, resolved, policyExcluded] = await Promise.all([
+  const [watcherCursor, commit, lifecycle, epoch, launches24h, reports24h, launchesDue20to40m, due, deferred, resolved, policyExcluded] = await Promise.all([
     prisma.watcherCursor.findFirst({ orderBy: { updatedAt: 'desc' } }),
     prisma.commit.findFirst({ orderBy: { createdAt: 'desc' } }),
     prisma.lifecycleLog.findFirst({ orderBy: { createdAt: 'desc' } }),
     prisma.metabolismEpoch.findFirst({ orderBy: { at: 'desc' } }),
     prisma.launch.count({ where: { createdAt: { gte: since24h } } }),
     prisma.report.count({ where: { createdAt: { gte: since24h } } }),
+    prisma.launch.count({ where: { retrospective: false, launchAt: { gte: since40m, lt: since20m } } }),
     prisma.outcome.groupBy({
       by: ['label'],
       where: { status: 'PENDING', horizonAt: { lte: now } },
@@ -95,6 +100,7 @@ export const prismaMetricsReader: MetricsReader = async () => {
     idsOrPhantomFlagged: Boolean(lifecycle?.idsMismatch) || Boolean(epoch?.phantom),
     launches24h,
     reports24h,
+    launchesDue20to40m,
     newestDetReportAgeSec: age(now, newestDet?.createdAt),
     newestDetReportLagSec:
       newestDet?.createdAt && newestDet.launch?.launchAt
@@ -143,6 +149,9 @@ export function formatPrometheus(m: MetricsSnapshot): string {
   );
   gauge('launch_auditor_launches_24h', 'Launches indexed in the trailing 24h', m.launches24h);
   gauge('launch_auditor_reports_24h', 'Reports written in the trailing 24h', m.reports24h);
+  if (m.launchesDue20to40m !== undefined) {
+    gauge('launch_auditor_launches_due_20to40m', 'Live launches from 20-40m ago whose T+10 reports should now exist', m.launchesDue20to40m);
+  }
 
   lines.push('# HELP launch_auditor_metabolism_state Current metabolism state (1 = active, one series per known state)');
   lines.push('# TYPE launch_auditor_metabolism_state gauge');
