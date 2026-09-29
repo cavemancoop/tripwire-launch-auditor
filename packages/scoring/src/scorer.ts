@@ -75,6 +75,8 @@ export interface ForecasterCell {
 export interface BenchmarkSection {
   splitBy: 'all' | 'trigger' | 'source' | 'lane';
   splitValue: string;
+  /** Lane is read at snapshot time, so its cells are descriptive only. */
+  diagnosticOnly: boolean;
   byOutcome: Partial<Record<OutcomeKey, ForecasterCell[]>>;
 }
 
@@ -144,6 +146,7 @@ function cell(
   peers: Map<string, ScoreRow[]>,
   baselines: string[],
   thresholds: number[],
+  diagnosticOnly: boolean,
 ): ForecasterCell {
   const probs = rows.map((r) => r.prob);
   const labels = rows.map((r) => r.label);
@@ -193,7 +196,7 @@ function cell(
     // beating an inverted comparator is not a win: the forecaster must rank better than chance itself
     const ownAucAboveChance = auc !== null && auc > 0.5;
     const claimAllowed =
-      y.length >= MIN_FOR_CLAIMS && enoughPositives && ownAucAboveChance && dl.p < 0.05 && dl.diff > 0;
+      !diagnosticOnly && y.length >= MIN_FOR_CLAIMS && enoughPositives && ownAucAboveChance && dl.p < 0.05 && dl.diff > 0;
     comparisons.push({
       vs: base,
       n: y.length,
@@ -203,7 +206,9 @@ function cell(
       p: round4(dl.p),
       claimAllowed,
       note:
-        y.length < MIN_FOR_CLAIMS
+        diagnosticOnly
+          ? 'diagnostic only: lane is measured at snapshot time'
+          : y.length < MIN_FOR_CLAIMS
           ? `insufficient sample (${y.length} < ${MIN_FOR_CLAIMS})`
           : !enoughPositives
             ? `insufficient positives (${pairedPositives} < ${MIN_POSITIVES_FOR_CLAIMS})`
@@ -233,7 +238,7 @@ function cell(
       return { threshold: t, precision: nullableRound(r.precision), recall: nullableRound(r.recall) };
     }),
     insufficientSample: insufficient,
-    invertedRanking: isInvertedRanking(auc, rows.length, positives),
+    invertedRanking: !diagnosticOnly && isInvertedRanking(auc, rows.length, positives),
     comparisons,
   };
 }
@@ -245,6 +250,7 @@ function sectionFor(
   baselines: string[],
   thresholds: number[],
 ): BenchmarkSection {
+  const diagnosticOnly = splitBy === 'lane';
   const byOutcome: Partial<Record<OutcomeKey, ForecasterCell[]>> = {};
   const outcomeKeys = [...new Set(rows.map((r) => r.outcomeKey))];
   for (const ok of outcomeKeys) {
@@ -256,10 +262,10 @@ function sectionFor(
       peers.set(r.forecaster, list);
     }
     byOutcome[ok] = [...peers.entries()]
-      .map(([f, fr]) => cell(f, fr, peers, baselines, thresholds))
+      .map(([f, fr]) => cell(f, fr, peers, baselines, thresholds, diagnosticOnly))
       .sort((a, b) => (b.auroc ?? 0) - (a.auroc ?? 0));
   }
-  return { splitBy, splitValue, byOutcome };
+  return { splitBy, splitValue, diagnosticOnly, byOutcome };
 }
 
 /** Build the benchmark from the same eligible rows at each split. */
