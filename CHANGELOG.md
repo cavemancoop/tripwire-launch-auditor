@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-09-29 — Show launch-lane benchmark results on the dashboard
+
+Panel 04 now renders the live index and qualified benchmark sections below
+the existing pooled table, including each forecaster's sample, positives,
+AUROC and Brier skill. It withholds lane-specific beat badges because lane can
+change after forecast time. It labels lane at snapshot
+time and explains that the scored rows are a backlog-selected subset; pooled
+coverage counts are not lane denominators. Missing lane sections remain an
+explicit loading state. No scorer, outcome, RPC or production row
+behavior changes. Verify with `pnpm verify` and the public dashboard after
+the exact release deploys.
+
 ## 2026-09-29 — Lane-stratified benchmark sections
 
 The scorer now adds index, qualified and, where present, unknown launch-lane
