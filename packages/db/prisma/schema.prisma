@@ -265,6 +265,11 @@ model Report {
   launchId String?
   launch   Launch? @relation(fields: [launchId], references: [id], onDelete: SetNull)
 
+  // Unsigned diagnostic metadata read before the first-store batch. Null means
+  // T+10 lane was not final or no launch was linked. Never revise on upsert.
+  // The lane read and insert are not atomic, and this is not signed input.
+  laneAtFirstStore Lane?
+
   // §1.1 age-aware inputs, computed at reportTime. Null for launch-time reports
   // (their context lives in the linked Launch's Feature row).
   ageHours                       Float?

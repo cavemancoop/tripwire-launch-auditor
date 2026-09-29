@@ -11,8 +11,24 @@ import type { ReportDraft } from './types';
 export async function persistLaunchReports(
   drafts: ReportDraft[],
 ): Promise<{ stored: number; passed: number; failed: number }> {
+  // Observe the final lane before this batch's first-store attempts. The signed
+  // reportTime is a chain anchor that can precede storage by hours; this
+  // metadata is neither signed input nor atomic with the insert.
+  const launchIds = [...new Set(drafts.map((d) => d.content.launchId).filter((id): id is string => id !== null))];
+  const launches = launchIds.length === 0 ? [] : await prisma.launch.findMany({
+    where: { id: { in: launchIds } },
+    select: {
+      id: true,
+      lane: true,
+      lpLockedByConstruction: true,
+      retrospective: true,
+      feature: { select: { t10ComputedAt: true } },
+    },
+  });
+  const launchById = new Map(launches.map((launch) => [launch.id, launch]));
   let passed = 0;
   for (const d of drafts) {
+    const launch = d.content.launchId ? launchById.get(d.content.launchId) : undefined;
     const cols = probabilitiesToColumns(d.content.probabilities);
     const common = {
       eip712Signature: d.signature,
@@ -30,6 +46,7 @@ export async function persistLaunchReports(
         forecaster: d.content.forecaster as $Enums.ForecasterKind,
         forecasterVersion: d.content.forecasterVersion,
         launchId: d.content.launchId,
+        laneAtFirstStore: launch?.feature?.t10ComputedAt ? launch.lane : null,
         pInsiderExit6h: cols.pInsiderExit6h,
         pInsiderExit24h: cols.pInsiderExit24h,
         pInsiderExit72h: cols.pInsiderExit72h,
@@ -61,10 +78,7 @@ export async function persistLaunchReports(
   // shares (chainId, tokenAddress, reportTime, trigger, launchId).
   const first = drafts[0]?.content;
   if (first?.launchId) {
-    const launch = await prisma.launch.findUnique({
-      where: { id: first.launchId },
-      select: { lpLockedByConstruction: true, retrospective: true },
-    });
+    const launch = launchById.get(first.launchId);
     if (launch) {
       await ensureOutcomeRows({
         chainId: first.chainId,
