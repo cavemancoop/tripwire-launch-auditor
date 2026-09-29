@@ -265,6 +265,11 @@ model Report {
   launchId String?
   launch   Launch? @relation(fields: [launchId], references: [id], onDelete: SetNull)
 
+  // Unsigned diagnostic metadata captured at first insert. Null means the
+  // linked launch's T+10 lane was not final, or there was no linked launch.
+  // Never revise this field on a reportHash upsert: Launch.lane can change.
+  laneAtIssue Lane?
+
   // §1.1 age-aware inputs, computed at reportTime. Null for launch-time reports
   // (their context lives in the linked Launch's Feature row).
   ageHours                       Float?

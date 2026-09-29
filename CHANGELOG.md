@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-09-29 — Stage report lane-at-issue column
+
+Add a nullable `reports.laneAtIssue` column for future forecast-time lane
+provenance. Existing reports and signed payloads are untouched. The producer
+will be released separately after the worker has applied this migration, so
+the new Prisma schema cannot reach API reads before the database column exists.
+
 ## 2026-09-29 — Add external feed-silence check
 
 A scheduled GitHub Actions workflow reads the public API metrics every 15
