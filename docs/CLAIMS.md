@@ -110,15 +110,17 @@ cohort-completeness and quality result, not a larger selected resolved sample.
 
 ## 2026-09-29 outcome-boundary and funding-goal addendum
 
-The current resolver's `blockAtTime` helper searches from block 1 to chain
-head but stops after 18 midpoint probes, even if the interval has not
-converged. On a chain much taller than 262,144 blocks, it can return an early
-block and cache it. The [public feed](https://api-production-6a84.up.railway.app/v1/launches?limit=1)
-was above 75 million blocks on 29 Sep. An offline high-height replay reproduced
-early results; the precise number of affected production labels, elapsed-time
-shift and benchmark impact have **not** been measured. Until corrected and
-validated, interpret outcome-window boundaries with this limitation. This
-addendum neither rewrites old labels nor changes the live resolver.
+Earlier resolver versions stopped `blockAtTime` after 18 midpoint probes even
+when the interval had not converged, then cached the resulting early block.
+On 29 Sep, 120/120 uncached live-worker searches in one deployment hit this
+cap. [PR #35](https://github.com/cavemancoop/tripwire-launch-auditor/pull/35)
+merged as `89ca90f` and changed the resolver to complete the search or reject
+an unfinished result. Its first post-release worker snapshot showed completed
+lookups with zero early stops. Existing outcome rows were **not** remeasured;
+the precise number of affected production labels, elapsed-time shift and
+benchmark impact remain unknown. The dashboard now discloses this uncertainty
+next to the benchmark. This addendum changes neither historical labels nor
+the signed outcome-rule definitions.
 
 The baseline non-claim that Tripwire does not currently pay for itself remains
 true. Self-funding is an intended business result: earned revenue should
