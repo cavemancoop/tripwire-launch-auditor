@@ -532,4 +532,6 @@ URL and `DOCKER_EXE`; routine `pnpm verify` skips it.
 
 ## Milestones
 
-Tracked in [`CHANGELOG.md`](./CHANGELOG.md). Current: **M9 — Railway deploy**.
+M9 shipped. Current Fable stabilization status, evidence and open decisions are
+tracked in [`docs/FABLE-RELEASE-STATUS.md`](docs/FABLE-RELEASE-STATUS.md);
+completed implementation milestones are recorded in [`CHANGELOG.md`](./CHANGELOG.md).

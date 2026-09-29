@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-09-29 — Current Fable release-status documentation
+
+Updated the public status page with PR #19 scorer recovery, PR #20's staged
+correction tooling, exact production deployment and read-only candidate
+evidence. Corrected the README milestone label: M9 has shipped, while Fable
+stabilization and its production decisions remain open. This is a docs-only
+change. Verify with `pnpm verify`; the deployment observations and remaining
+checks are described on the status page.
+
 ## 2026-09-29 — Staged M2 correction ledger and guarded batches
 
 Added an additive run/candidate ledger, read-only candidate preview, frozen

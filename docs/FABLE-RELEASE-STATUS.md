@@ -1,10 +1,10 @@
 # Fable engineering release status
 
-Updated 2026-09-29. Public `main` includes the independently reviewed Fable
-stabilization packages, including the bounded scorer-read repair and the M2
-read paths from [PR #18](https://github.com/cavemancoop/tripwire-launch-auditor/pull/18).
-It is running on the Railway API, worker and web services. This page records
-the current release boundary; a passed test suite is not a seven-day capacity
+Updated 2026-09-29 02:29 UTC. At that time public `main` was merge `590d79b`,
+including the bounded scorer-read repair ([PR #19](https://github.com/cavemancoop/tripwire-launch-auditor/pull/19))
+and staged M2 correction safety tooling ([PR #20](https://github.com/cavemancoop/tripwire-launch-auditor/pull/20)).
+Railway API, worker and web reached SUCCESS on that exact commit. This page
+records the current release boundary; a passed test suite is not a seven-day capacity
 or outcome-quality claim.
 
 ## Shipped and observed
@@ -23,23 +23,32 @@ or outcome-quality claim.
   the aggregate attempt counter.
 - Per-cell RPC attempt attribution from PR #17, and M2 policy-exclusion
   benchmark/API read paths from PR #18. No historical row was reclassified.
+- PR #20 added an inactive correction ledger and manual, guarded preview,
+  prepare, apply and revert commands. The ordinary worker does not call them.
+  Public policy-excluded gauges remained zero after deployment.
 
 The scorer-read repair bounds snapshot reads. The preceding production
 worker fetched all validated reports before filtering against resolved
 outcomes; its first post-PR #18 pass failed after about 18 minutes with a
 closed database connection, leaving `/v1/benchmark` stale. The repair
 narrows reports by the exact resolved observation key and batches baseline
-launch-source lookups. A fresh successful live snapshot is needed to confirm
-its operational effect.
+launch-source lookups. Its first replacement-worker pass completed about
+78,736 score rows in roughly 86 seconds, a second pass completed about 78,775
+rows. After PR #20, the public benchmark generatedAt advanced to 02:26:43 UTC
+and the worker logged completion of its 79,010-row snapshot at 02:28 UTC.
+These successful passes confirm recovery of the immediate read failure, not indefinite scorer
+capacity as the dataset grows.
 
 ## Verification
 
 Run `pnpm verify` for Prisma generation and validation, workspace typechecks
-and offline Vitest suites. The PR #18 release passed 623 worker tests;
-Foundry is unavailable, so contract tests were skipped. No contract changed.
+and offline Vitest suites. PR #20 passed 625 worker tests. Its guarded
+PostgreSQL 16 test passed separately with a real pre-change dump and restore.
+Foundry was unavailable, so contract tests were skipped. No contract
+changed.
 Each public change requires an independent review of its exact candidate,
 merge-SHA deployment checks and a live observation before its status is called
-operationally verified. The scorer-read repair still needs a fresh live snapshot.
+operationally verified.
 
 ## Open gates
 
@@ -51,8 +60,12 @@ operationally verified. The scorer-read repair still needs a fresh live snapshot
 - Decide any prospective workload narrowing, horizon pause or v2 outcome rule
   against a frozen comparison cohort. Existing rows and the current provider
   cap remain unchanged until that decision.
-- Rehearse and authorize any historical M2 correction separately. The
-  additive enum schema alone did not rewrite production rows.
+- Decide and authorize any historical M2 correction separately. A read-only
+  preview with cutoff 02:28 UTC counted 755,834 PENDING rows for three labels,
+  linked to completed-T+10 index-lane launches and created by that cutoff.
+  Before any production write, verify an off-volume
+  backup by restoring it and establish peak database/WAL headroom. The current
+  5,000 MB volume was using about 2.52 GB; adding tables changed no outcome row.
 - Observe alerts, core-path health and cohort coverage for a full seven-day
   window; configure external worker/feed-silence monitoring; test the event
   index only if the measured gate warrants it.
