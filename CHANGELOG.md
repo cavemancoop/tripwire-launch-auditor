@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-09-29 — Staged M2 correction ledger and guarded batches
+
+Added an additive run/candidate ledger, read-only candidate preview, frozen
+cutoff manifest, bounded apply, summary and guarded compensating revert for
+historical PENDING outcomes linked to index-lane launches with completed T+10
+features; incomplete lane classification is excluded. The normal worker
+does not run the correction. The write CLI requires explicit operational
+flags and a pre-correction backup digest; production policy and backup gates
+remain separate decisions. A localhost-only PostgreSQL 16 test exercises
+backup/restore, stale claims and updates, batching and revert conflicts.
+
+Verify with `pnpm verify`; for the database rehearsal, see the M2 section in
+README. Deploying this package alone adds tables and tooling but does not
+change any production outcome row.
+
 ## 2026-09-29 — Bounded scorer snapshot reads
 
 The scorer now joins validated reports to resolved outcome keys in Postgres

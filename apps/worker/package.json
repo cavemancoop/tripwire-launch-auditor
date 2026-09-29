@@ -13,6 +13,7 @@
     "commit:verify": "tsx src/scripts/commit-verify.ts",
     "commit:reconcile": "tsx src/scripts/commit-reconcile.ts",
     "outcomes:run": "tsx src/scripts/outcomes-run.ts",
+    "outcomes:policy-correction": "tsx src/scripts/policy-correction.ts",
     "scorer:run": "tsx src/scripts/scorer-run.ts",
     "backfill": "tsx src/scripts/backfill.ts",
     "orbio:auth": "tsx src/scripts/orbio-auth.ts",
