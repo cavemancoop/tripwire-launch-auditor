@@ -20,7 +20,7 @@ export {
   throwIfRpcCancelled,
   type CancellableRpcWork,
 } from './cancel';
-export { budgetedHttp, rpcWireStats, rpcMethodStats, resetRpcWireStats, RPC_METHODS, type BudgetedHttpOptions, type RpcWireStats, type RpcMethod } from './transport';
+export { budgetedHttp, rpcWireStats, rpcMethodStats, rpcOutcomeCellStats, withRpcOutcomeCell, resetRpcWireStats, RPC_METHODS, type BudgetedHttpOptions, type RpcWireStats, type RpcMethod } from './transport';
 export {
   classifyRpcError,
   hasProviderFailure,

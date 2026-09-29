@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { HttpRequestError, http, type Transport } from 'viem';
 import { cacheKey, ResponseCache } from './cache';
 import { currentRpcSignal, throwIfRpcCancelled } from './cancel';
@@ -27,6 +28,15 @@ const methodOf = (method: string): RpcMethod =>
 const methodCounts = Object.fromEntries(RPC_METHODS.map((m) => [m, 0])) as Record<RpcMethod, number>;
 export const rpcMethodStats = (): Record<RpcMethod, number> => ({ ...methodCounts });
 
+/** Outcome tags are fixed cell/lane combinations, never addresses or URLs. */
+const outcomeCell = new AsyncLocalStorage<string>();
+const VALID_CELL = /^(live|retrospective):(INSIDER_EXIT|SELL_IMPAIRED|LIQ_IMPAIRED|DRAWDOWN_80|TRADING_ALIVE)@(1h|6h|24h|72h|7d):(index|qualified|unknown)$/;
+const cellCounts: Record<string, number> = {};
+export const rpcOutcomeCellStats = (): Record<string, number> => ({ ...cellCounts });
+export function withRpcOutcomeCell<T>(cell: string, work: () => Promise<T>): Promise<T> {
+  return outcomeCell.run(VALID_CELL.test(cell) ? cell : 'other', work);
+}
+
 const wireCounts: RpcWireStats = { attempts: 0, providerFailures: 0, quotaFailures: 0 };
 export const rpcWireStats = (): RpcWireStats => ({ ...wireCounts });
 /** Test hook; never reset counters while a production worker is running. */
@@ -35,11 +45,14 @@ export function resetRpcWireStats(): void {
   wireCounts.providerFailures = 0;
   wireCounts.quotaFailures = 0;
   for (const method of RPC_METHODS) methodCounts[method] = 0;
+  for (const cell of Object.keys(cellCounts)) delete cellCounts[cell];
 }
 
 function recordWireAttempt(method: string): void {
   wireCounts.attempts++;
   methodCounts[methodOf(method)]++;
+  const cell = outcomeCell.getStore();
+  if (cell) cellCounts[cell] = (cellCounts[cell] ?? 0) + 1;
 }
 
 function recordWireFailure(err: unknown, method: string): void {

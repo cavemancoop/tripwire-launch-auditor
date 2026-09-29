@@ -1,5 +1,5 @@
 import { Prisma, prisma, type $Enums } from '@launch-auditor/db';
-import { classifyRpcError, hasProviderFailure, redactRpcDiagnostic } from '@launch-auditor/rpc-budget';
+import { classifyRpcError, hasProviderFailure, redactRpcDiagnostic, withRpcOutcomeCell } from '@launch-auditor/rpc-budget';
 import { recordFailure } from '../failures';
 import { loopMetrics, observeSafely, type LoopObserver } from '../loop-metrics';
 import { DeadlineError, withDeadline } from '../watcher/retry';
@@ -245,11 +245,12 @@ export async function sweepDueOutcomes(
     lostClaim: 0,
   };
 
-  const cellCounts = (row: (typeof due)[number]): CellServiceCounts => {
+  const cellKey = (row: (typeof due)[number]): string => {
     const lane = row.launch?.lane === 'index' || row.launch?.lane === 'qualified' ? row.launch.lane : 'unknown';
-    const key = `${row.retrospective ? 'retrospective' : 'live'}:${row.label}@${row.horizon}:${lane}`;
-    return (out.byCellLane![key] ??= emptyCellCounts());
+    return `${row.retrospective ? 'retrospective' : 'live'}:${row.label}@${row.horizon}:${lane}`;
   };
+  const cellCounts = (row: (typeof due)[number]): CellServiceCounts =>
+    (out.byCellLane![cellKey(row)] ??= emptyCellCounts());
   for (const row of due) cellCounts(row).picked++;
 
   type DeferEvidence = { firstDeferredAt?: string; deferrals?: number; quotaPausedMs?: number };
@@ -363,7 +364,7 @@ export async function sweepDueOutcomes(
       // result discarded, so the RPC its resolution would still issue is
       // cancelled rather than spent — no next chunk, retry or queued request.
       const res = await withDeadline(
-        () => resolveOneOutcome(client, row as OutcomeRow),
+        () => withRpcOutcomeCell(cellKey(row), () => resolveOneOutcome(client, row as OutcomeRow)),
         OUTCOME_DEADLINE_MS,
         `${row.label}@${row.horizon} ${row.tokenAddress}`,
         { cancelRpc: true },

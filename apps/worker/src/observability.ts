@@ -6,7 +6,7 @@
  * RPC URL (URLs embed provider keys), address, row id or error message.
  */
 import { getHeapStatistics } from 'node:v8';
-import { allSchedulerStats, PRIORITY, rpcWireStats, rpcMethodStats, RPC_METHODS, type RpcWireStats, type RpcMethod, type SchedulerStats } from '@launch-auditor/rpc-budget';
+import { allSchedulerStats, PRIORITY, rpcWireStats, rpcMethodStats, rpcOutcomeCellStats, RPC_METHODS, type RpcWireStats, type RpcMethod, type SchedulerStats } from '@launch-auditor/rpc-budget';
 
 export const TIERS = ['watcher', 'commit', 'outcomes', 'assess', 'deepdive', 'backfill', 'other'] as const;
 export type Tier = (typeof TIERS)[number];
@@ -28,6 +28,7 @@ export interface WorkerObservation {
   tiers: Record<Tier, TierStats>;
   wire: RpcWireStats;
   methods: Record<RpcMethod, number>;
+  outcomeCells: Record<string, number>;
   memory: Record<(typeof MEMORY_KINDS)[number], number>;
   maxRssBytes: number;
   heapLimitBytes: number;
@@ -58,6 +59,7 @@ export function observe(schedulers: () => SchedulerStats[] = allSchedulerStats):
     tiers: sumTiers(schedulers()),
     wire: rpcWireStats(),
     methods: rpcMethodStats(),
+    outcomeCells: rpcOutcomeCellStats(),
     memory: {
       rss: m.rss,
       heap_used: m.heapUsed,
@@ -123,6 +125,7 @@ export function obsLogLine(o: WorkerObservation): string {
     rpc,
     rpcWire: [o.wire.attempts, o.wire.providerFailures, o.wire.quotaFailures],
     rpcMethods: o.methods,
+    rpcOutcomeCells: o.outcomeCells,
     memMb: { rss: mb(o.memory.rss), heapUsed: mb(o.memory.heap_used), heapTotal: mb(o.memory.heap_total), maxRss: mb(o.maxRssBytes) },
     uptimeS: o.uptimeSeconds,
   })}`;

@@ -1,7 +1,7 @@
 # Fable engineering release status
 
 Updated 2026-09-29. Public `main` includes the independently reviewed Fable
-stabilization packages through [PR #15](https://github.com/cavemancoop/tripwire-launch-auditor/pull/15).
+stabilization packages through [PR #16](https://github.com/cavemancoop/tripwire-launch-auditor/pull/16).
 It is running on the Railway API, worker and web services. This page records
 the current release boundary; a passed test suite is not a seven-day capacity
 or outcome-quality claim.
@@ -17,17 +17,19 @@ or outcome-quality claim.
   durable alert state, live deterministic report-lag checks, and a provider
   quota/failure alert. These alerts cannot detect a worker that is itself down.
 - Budgeted worker transport attempt totals and per-outcome-cell sweep-service
-  counts. The first live 50-row cell log reconciled to its sweep summary.
+  counts, plus fixed JSON-RPC method attempt buckets. The first live 50-row
+  cell log reconciled to its sweep summary; live method counts reconciled to
+  the aggregate attempt counter.
 
-The current candidate adds fixed JSON-RPC method buckets to the existing
-budgeted transport counters. These count attempts including retries, not
-provider-billed request units or wallet/API traffic. They do not change RPC
-admission, resolution, scoring, report commitments or the public API.
+The current candidate attributes budgeted attempts to the outcome cell and
+launch lane active when each resolver ran. This counts attempts including
+retries, not provider-billed request units or wallet/API traffic. It does not
+change RPC admission, resolution, scoring, report commitments or the public API.
 
 ## Verification
 
 Run `pnpm verify` for Prisma generation and validation, workspace typechecks
-and offline Vitest suites. The current candidate passed 621 worker tests;
+and offline Vitest suites. The current candidate passed 622 worker tests;
 Foundry is unavailable, so contract tests were skipped. No contract changed.
 Each public change requires an independent review of its exact candidate,
 merge-SHA deployment checks and a live observation before its status is called
@@ -37,7 +39,7 @@ shipped. The new method counters still need those release checks.
 
 - Measure Chainstack account request-unit burn with a second dated console
   reading. A worker attempt is not necessarily one billed request unit.
-- Attribute attempts to outcome cells and measure representative, matched
+- Observe live per-cell attempts and measure representative, matched
   arrival/service windows. The public benchmark already discloses that
   graded rows are selected, not a random sample.
 - Decide any prospective workload narrowing, horizon pause or v2 outcome rule

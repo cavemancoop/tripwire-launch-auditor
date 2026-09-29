@@ -7,6 +7,7 @@ const db = vi.hoisted(() => ({
   rows: [] as Array<{ id: string; label: string; horizon: string; tokenAddress: string; evidence: unknown; retrospective: boolean; launch: { lane: 'index' | 'qualified' } | null }>,
   findMany: [] as unknown[],
   updates: [] as Array<{ where: { id: string }; data: { status?: string; claimToken?: string | null } }>,
+  rpcEnabled: false,
 }));
 vi.mock('@launch-auditor/db', () => ({
   Prisma: { JsonNull: null },
@@ -29,6 +30,12 @@ vi.mock('@launch-auditor/db', () => ({
 }));
 vi.mock('../src/outcomes/resolve', () => ({
   resolveOneOutcome: async (_client: unknown, row: { id: string; label: string }) => {
+    if (db.rpcEnabled) {
+      const { budgetedHttp, RequestScheduler } = await import('@launch-auditor/rpc-budget');
+      await budgetedHttp('http://rpc.test', {
+        scheduler: new RequestScheduler({ rpm: 6000 }), priority: 2, chainId: 4663,
+      })({}).request({ method: 'eth_blockNumber', params: [] });
+    }
     switch (row.label) {
       case 'INSIDER_EXIT':
         return { status: 'RESOLVED', value: row.id === 'i2' ? null : true, evidence: {} };
@@ -65,9 +72,28 @@ beforeEach(() => {
   db.rows = [];
   db.findMany = [];
   db.updates = [];
+  db.rpcEnabled = false;
 });
 
 describe('sweepDueOutcomes — Package 2b counts', () => {
+  it('attributes the resolver’s budgeted request to its selected cell and lane', async () => {
+    const { resetRpcWireStats, rpcOutcomeCellStats } = await import('@launch-auditor/rpc-budget');
+    resetRpcWireStats();
+    db.rows = [row('i1', 'INSIDER_EXIT', 'qualified')];
+    db.rpcEnabled = true;
+    vi.stubGlobal('fetch', async () => new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: '0x10' }), {
+      headers: { 'content-type': 'application/json' },
+    }));
+    try {
+      const r = await sweepDueOutcomes({} as never, 25, { order: 'fair' });
+      expect(r.resolved).toBe(1);
+      expect(rpcOutcomeCellStats()).toEqual({ 'live:INSIDER_EXIT@24h:qualified': 1 });
+    } finally {
+      vi.unstubAllGlobals();
+      resetRpcWireStats();
+    }
+  });
+
   it('an empty sweep reports zero picks and an empty label split', async () => {
     const r = await sweepDueOutcomes({} as never, 25, { order: 'fair' });
     expect(r).toEqual({
