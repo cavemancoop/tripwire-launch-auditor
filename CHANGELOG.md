@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-09-29 — Stage report lane-at-first-store column
+
+Add a nullable `reports.laneAtFirstStore` column for future lane provenance.
+Existing reports and signed payloads are untouched. This release intentionally
+does not add the field to the Prisma schema, so every service still builds a
+client that reads the old columns while the worker applies the SQL migration.
+The Prisma field and producer will follow only after the column is confirmed
+live.
+
 ## 2026-09-29 — Add external feed-silence check
 
 A scheduled GitHub Actions workflow reads the public API metrics every 15
